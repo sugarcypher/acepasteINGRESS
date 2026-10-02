@@ -1,6 +1,6 @@
 {
   "name": "@acepaste/gate-http",
-  "version": "0.4.0",
+  "version": "0.5.0",
   "description": "AcePaste Gate as a metered HTTP service: /v1/fetch, /v1/scan, /v1/verify, /v1/feed.",
   "type": "module",
   "main": "dist/server.js",
@@ -12,11 +12,15 @@
     "start": "node dist/server.js"
   },
   "dependencies": {
-    "@acepaste/gate-core": "0.4.0"
+    "@acepaste/gate-core": "0.5.0"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",
     "typescript": "^5.5.0"
   },
-  "license": "Apache-2.0"
+  "license": "Apache-2.0",
+  "files": [
+    "dist",
+    "public"
+  ]
 }

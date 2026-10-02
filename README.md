@@ -52,7 +52,7 @@ Every verdict issues a signed, versioned, hash-chained receipt (`engineVersion`,
 ```
 packages/core   engine, passes, normalizer, taint guard, policy loader, CLI   @acepaste/gate-core
 packages/mcp    Model Context Protocol server                                 @acepaste/gate-mcp
-packages/http   metered HTTP service + public attack feed                     @acepaste/gate-http
+packages/http   metered HTTP service, public attack feed, audit console        @acepaste/gate-http
 packages/core/eval   attack + benign + ambiguous corpus and the harness
 fixtures/            one clean page, one hostile page
 ```
@@ -95,7 +95,11 @@ Tools: `gate_fetch(url, override?)`, `gate_scan(content, source?, contentType?, 
 PORT=8787 GATE_KEYS="key1:acme,key2:globex" GATE_SIGNING_KEY=… node packages/http/dist/server.js
 ```
 
-`POST /v1/fetch`, `POST /v1/scan`, `POST /v1/verify`, `GET /v1/feed`, `GET /healthz`. Bearer-key auth (`GATE_KEYS` or `GATE_KEYS_FILE` with per-key rpm/daily limits), in-memory rate limiting and metering, refused verdicts returned as HTTP 422. The feed exposes attacking hosts, finding kinds, decoded payload excerpts and outbound hosts — never customer fetch context. Swap the in-memory `Meter` and feed buffer for a database in production.
+Endpoints: `POST /v1/fetch`, `POST /v1/scan`, `POST /v1/verify`; `GET /v1/feed` (public); `GET /v1/receipts`, `/v1/receipts/export`, `/v1/receipts/stats` (the caller's own audit log); `GET /healthz`; `GET /` (the live attack feed page), `GET /console` (the audit console). Bearer-key auth (`GATE_KEYS` or `GATE_KEYS_FILE` with per-key rpm/daily limits); audit reads do not consume the scan quota; refused verdicts return HTTP 422.
+
+**The audit plane is the paid tier.** Every verdict's signed receipt is stored, scoped to the API key that produced it, and searchable by URL, host, tier, kind and time; exportable as a JSON download; retained per `GATE_RETENTION_DAYS`. This is the record an enterprise security review asks for — proof of what untrusted content its agents ingested and what the gate did about it. The store is an append-only file behind a `ReceiptStore` interface; swap it for Postgres/ClickHouse for volume. The public feed exposes attacking hosts, finding kinds, payload excerpts and outbound hosts — never customer content.
+
+**Deploy:** `Dockerfile`, `fly.toml` and `DEPLOY.md` stand up a single small host. The public instance runs with the sandbox off (no Chromium shipped); the paid/self-hosted tier turns `GATE_SANDBOX=escalate` on. `LAUNCH.md` has the launch copy and the MCP install snippet.
 
 ## As a library, with the taint guard
 
@@ -140,6 +144,10 @@ new GateEngine({ detectors: [brand] });
 - Taint and capability control ship as opt-in middleware in the same package.
 - AcePaste product line; attack feed exposes attacking domains, never customer fetches.
 - Attack log carries payloads, excerpts and outbound hosts; receipts carry digests only.
+
+## Business shape
+
+Open core. The gate, the Model Context Protocol proxy and the library are free and are the distribution: the one-line install an agent builder drops in. The paid tier is what a free tool cannot give — hosted deployment, the browser sandbox, and the **audit plane** (stored, searchable, exportable, retained signed receipts) plus the private threat feed. The receipt is the differentiator: incumbents classify at the prompt boundary and discard the decision; only this produces a tamper-evident provenance record at the ingestion boundary, which is the artifact a security review actually buys. The public attack feed is the top of funnel; see `LAUNCH.md`.
 
 ## Open items
 

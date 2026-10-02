@@ -1,0 +1,35 @@
+# fly deploy  (after: fly launch --no-deploy to create the app + volume)
+app = "acepaste-gate"
+primary_region = "sjc"
+
+[build]
+  dockerfile = "Dockerfile"
+
+[env]
+  PORT = "8787"
+  GATE_SANDBOX = "off"
+  GATE_RECEIPTS_FILE = "/data/receipts.jsonl"
+  GATE_RETENTION_DAYS = "30"
+
+[[mounts]]
+  source = "gate_data"
+  destination = "/data"
+
+[http_service]
+  internal_port = 8787
+  force_https = true
+  auto_stop_machines = "stop"
+  auto_start_machines = true
+  min_machines_running = 0
+
+  [[http_service.checks]]
+    method = "GET"
+    path = "/healthz"
+    interval = "30s"
+    timeout = "5s"
+    grace_period = "10s"
+
+# Secrets (set once, never in this file):
+#   fly secrets set GATE_SIGNING_KEY=<random 32+ chars>
+#   fly secrets set GATE_KEYS="<key1>:design-partner-a,<key2>:design-partner-b"
+# Leave GATE_KEYS unset only for a throwaway open demo.

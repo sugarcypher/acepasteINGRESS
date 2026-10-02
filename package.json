@@ -1,7 +1,7 @@
 {
   "name": "acepaste-gate",
   "private": true,
-  "version": "0.4.0",
+  "version": "0.5.0",
   "description": "AcePaste Gate: a security gate between internet content and AI ingestion. One engine, many frontends.",
   "workspaces": [
     "packages/*"
