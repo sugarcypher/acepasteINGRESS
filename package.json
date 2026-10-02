@@ -1,0 +1,19 @@
+{
+  "name": "acepaste-gate",
+  "private": true,
+  "version": "0.4.0",
+  "description": "AcePaste Gate: a security gate between internet content and AI ingestion. One engine, many frontends.",
+  "workspaces": [
+    "packages/*"
+  ],
+  "scripts": {
+    "build": "npm run build -w @acepaste/gate-core && npm run build -w @acepaste/gate-mcp && npm run build -w @acepaste/gate-http",
+    "test": "npm test -w @acepaste/gate-core",
+    "demo": "node packages/core/dist/src/cli.js",
+    "eval": "node packages/core/dist/eval/run.js"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "license": "Apache-2.0"
+}
