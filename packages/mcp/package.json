@@ -13,7 +13,7 @@
   },
   "dependencies": {
     "@acepaste/gate-core": "0.5.0",
-    "@modelcontextprotocol/sdk": "^1.12.0",
+    "@modelcontextprotocol/sdk": "^1.32.0",
     "zod": "^3.23.0"
   },
   "devDependencies": {
