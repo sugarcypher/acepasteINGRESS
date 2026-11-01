@@ -18,4 +18,4 @@ Tools: `ingress_fetch(url, override?)`, `ingress_scan(content, source?, contentT
 
 Environment: `INGRESS_SIGNING_KEY`, `INGRESS_HOSTILE`, `INGRESS_SUSPECT`, `INGRESS_CLOAKING=0`, `INGRESS_SANDBOX=off|escalate|always`, `INGRESS_POLICY=path`, `INGRESS_LOG=path`.
 
-Full documentation: https://github.com/sugarcypher/acepasteGATE
+Full documentation: https://github.com/sugarcypher/acepasteINGRESS

@@ -26,7 +26,7 @@ It runs three ways from one engine: a Model Context Protocol proxy you drop in f
 Honest about the numbers: against my own corpus (85 attack cases, 45 benign, hardened over three adversarial review passes) it refuses every attack with zero false positives — but that's a regression floor on fixtures I wrote, not a claim about the open web. The live feed below shows what it actually catches in the wild; that's the real test, and I'd rather you watch that than trust my corpus.
 
 Live feed: <https://YOUR-APP.fly.dev/>
-Repo: <https://github.com/sugarcypher/acepasteGATE>
+Repo: <https://github.com/sugarcypher/acepasteINGRESS>
 
 I built this because I've been on the receiving end of the invisible kind of attack. Feedback welcome, especially bypasses — there's a taint/capability layer and a sandbox I'd like to stress against real traffic.
 
@@ -53,7 +53,7 @@ What it doesn't do, on purpose: argue with plain visible text. Your model alread
 One engine, three shapes: a Model Context Protocol proxy in front of an agent's fetch tool, a library, a hosted service. The receipts are the part that matters for anyone who has to prove to a security review what their agents ingested.
 
 **7/**
-I built this because I spent years as the target of the invisible kind of attack and learned forensics the hard way. Watch it work on live traffic: <https://YOUR-APP.fly.dev/> · Code: <https://github.com/sugarcypher/acepasteGATE>
+I built this because I spent years as the target of the invisible kind of attack and learned forensics the hard way. Watch it work on live traffic: <https://YOUR-APP.fly.dev/> · Code: <https://github.com/sugarcypher/acepasteINGRESS>
 
 ---
 

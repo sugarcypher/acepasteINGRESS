@@ -13,4 +13,4 @@ Verdicts: `clean` (delivered with a signed receipt), `suspect` (refused, human-o
 
 CLI: `npx @acepaste/ingress https://example.com` or `ingress --text < page.html`.
 
-Full documentation: https://github.com/sugarcypher/acepasteGATE
+Full documentation: https://github.com/sugarcypher/acepasteINGRESS

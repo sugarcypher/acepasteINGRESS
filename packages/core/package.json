@@ -34,12 +34,12 @@
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/sugarcypher/acepasteGATE.git",
+    "url": "git+https://github.com/sugarcypher/acepasteINGRESS.git",
     "directory": "packages/core"
   },
-  "homepage": "https://github.com/sugarcypher/acepasteGATE#readme",
+  "homepage": "https://github.com/sugarcypher/acepasteINGRESS#readme",
   "bugs": {
-    "url": "https://github.com/sugarcypher/acepasteGATE/issues"
+    "url": "https://github.com/sugarcypher/acepasteINGRESS/issues"
   },
   "author": "Briar Morgan Greenway (ThinkWell Labs LLC)",
   "engines": {
