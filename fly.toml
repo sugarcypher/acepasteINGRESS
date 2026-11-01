@@ -1,36 +1,41 @@
-# fly deploy  (after: fly launch --no-deploy to create the app + volume)
-app = "acepaste-ingress"
-primary_region = "sjc"
+# fly.toml app configuration file generated for acepaste-ingress on 2026-11-01T14:33:19-08:00
+#
+# See https://fly.io/docs/reference/configuration/ for information about how to use this file.
+#
+
+app = 'acepaste-ingress'
+primary_region = 'sjc'
 
 [build]
-  dockerfile = "Dockerfile"
+  dockerfile = 'Dockerfile'
 
 [env]
-  PORT = "8787"
-  INGRESS_SANDBOX = "off"
-  INGRESS_RECEIPTS_FILE = "/data/receipts.jsonl"
-  INGRESS_FEED_FILE = "/data/feed.jsonl"
-  INGRESS_RETENTION_DAYS = "30"
+  INGRESS_FEED_FILE = '/data/feed.jsonl'
+  INGRESS_RECEIPTS_FILE = '/data/receipts.jsonl'
+  INGRESS_RETENTION_DAYS = '30'
+  INGRESS_SANDBOX = 'off'
+  PORT = '8787'
 
 [[mounts]]
-  source = "ingress_data"
-  destination = "/data"
+  source = 'ingress_data'
+  destination = '/data'
 
 [http_service]
   internal_port = 8787
   force_https = true
-  auto_stop_machines = "stop"
+  auto_stop_machines = 'stop'
   auto_start_machines = true
   min_machines_running = 0
 
   [[http_service.checks]]
-    method = "GET"
-    path = "/healthz"
-    interval = "30s"
-    timeout = "5s"
-    grace_period = "10s"
+    interval = '30s'
+    timeout = '5s'
+    grace_period = '10s'
+    method = 'GET'
+    path = '/healthz'
 
-# Secrets (set once, never in this file):
-#   fly secrets set INGRESS_SIGNING_KEY=<random 32+ chars>
-#   fly secrets set INGRESS_KEYS="<key1>:design-partner-a,<key2>:design-partner-b"
-# Leave INGRESS_KEYS unset only for a throwaway open demo.
+[[vm]]
+  memory = '1gb'
+  cpu_kind = 'shared'
+  cpus = 1
+  memory_mb = 1024

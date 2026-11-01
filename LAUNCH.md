@@ -25,7 +25,7 @@ It runs three ways from one engine: a Model Context Protocol proxy you drop in f
 
 Honest about the numbers: against my own corpus (85 attack cases, 45 benign, hardened over three adversarial review passes) it refuses every attack with zero false positives — but that's a regression floor on fixtures I wrote, not a claim about the open web. The live feed below shows what it actually catches in the wild; that's the real test, and I'd rather you watch that than trust my corpus.
 
-Live feed: <https://YOUR-APP.fly.dev/>
+Live feed: <https://acepaste-ingress.fly.dev/>
 Repo: <https://github.com/sugarcypher/acepasteINGRESS>
 
 I built this because I've been on the receiving end of the invisible kind of attack. Feedback welcome, especially bypasses — there's a taint/capability layer and a sandbox I'd like to stress against real traffic.
@@ -53,13 +53,13 @@ What it keeps narrow, on purpose: judging plain visible text. Your model already
 One engine, three shapes: a Model Context Protocol proxy in front of an agent's fetch tool, a library, a hosted service. Every verdict gets a receipt anyone can verify with a public key: the part that matters if you have to prove to a security review what your agents ingested. Prior art and neighbours are credited in the README.
 
 **7/**
-I built this because I spent years as the target of the invisible kind of attack and learned forensics the hard way. Watch it work on live traffic: <https://YOUR-APP.fly.dev/> · Code: <https://github.com/sugarcypher/acepasteINGRESS>
+I built this because I spent years as the target of the invisible kind of attack and learned forensics the hard way. Watch it work on live traffic: <https://acepaste-ingress.fly.dev/> · Code: <https://github.com/sugarcypher/acepasteINGRESS>
 
 ---
 
 ## For the acepaste.xyz "For developers" link
 
-> **AcePaste Ingress** — the same invisible-text defense that powers the cleaner, as a security gate in front of your AI. Drop it between the web and your agent: it strips the hidden channels a model can't see and hands back clean text with a signed receipt. Free to use. [See what it catches, live →](https://YOUR-APP.fly.dev/)
+> **AcePaste Ingress** — the same invisible-text defense that powers the cleaner, as a security gate in front of your AI. Drop it between the web and your agent: it strips the hidden channels a model can't see and hands back clean text with a signed receipt. Free to use. [See what it catches, live →](https://acepaste-ingress.fly.dev/)
 
 ---
 
@@ -86,6 +86,6 @@ Then the agent fetches the web through `ingress_fetch` / `ingress_scan` instead 
 ## Sequencing when you post
 
 1. Deploy first (DEPLOY.md), confirm the feed page loads and `/v1/scan` works, and let a little real traffic through so the feed isn't empty on launch day.
-2. Fill the two `YOUR-APP.fly.dev` placeholders and the npm name.
+2. Live service: https://acepaste-ingress.fly.dev/ (deployed 2026-11-01). Publish the npm packages before posting so the install snippet works.
 3. Post the Show HN in the morning US time; put the thread up the same hour and link the HN post from it.
 4. The ask in every one is the same: send bypasses. Every bypass that comes in is a corpus case and a reason for the next person to trust the feed.
