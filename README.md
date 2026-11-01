@@ -106,7 +106,7 @@ PORT=8787 INGRESS_KEYS="key1:acme,key2:globex" INGRESS_SIGNING_PRIVATE_KEY_FILE=
 
 Endpoints: `POST /v1/fetch`, `POST /v1/scan`, `POST /v1/verify`; `GET /v1/feed` (public); `GET /v1/receipts`, `/v1/receipts/export`, `/v1/receipts/stats` (the caller's own audit log); `GET /v1/public-key` (public; the key that verifies this instance's receipts); `GET /healthz`; `GET /` (the live attack feed page), `GET /console` (the audit console). Bearer-key auth (`INGRESS_KEYS` or `INGRESS_KEYS_FILE` with per-key rpm/daily limits); audit reads do not consume the scan quota; refused verdicts return HTTP 422.
 
-**The audit plane is what the hosted tier sells.** The code is open source like everything here; customers pay for the hosted, retained, supported version. Every verdict's signed receipt is stored, scoped to the API key that produced it, and searchable by URL, host, tier, kind and time; exportable as a JSON download; retained per `INGRESS_RETENTION_DAYS`. This is the record an enterprise security review asks for — proof of what untrusted content its agents ingested and what the gate did about it. The store is an append-only file behind a `ReceiptStore` interface; swap it for Postgres/ClickHouse for volume. The public feed shows attacks found on public web pages: attacking host, finding kinds, payload excerpts (credentials redacted) and outbound hosts. Text a customer submits through `/v1/scan`, and pages on private hosts, never appear in it. With `INGRESS_FEED_FILE` set the feed survives restarts.
+**The audit plane is what the hosted tier sells.** The code is public under the licence below; customers pay for the hosted, retained, supported version. Every verdict's signed receipt is stored, scoped to the API key that produced it, and searchable by URL, host, tier, kind and time; exportable as a JSON download; retained per `INGRESS_RETENTION_DAYS`. This is the record an enterprise security review asks for — proof of what untrusted content its agents ingested and what the gate did about it. The store is an append-only file behind a `ReceiptStore` interface; swap it for Postgres/ClickHouse for volume. The public feed shows attacks found on public web pages: attacking host, finding kinds, payload excerpts (credentials redacted) and outbound hosts. Text a customer submits through `/v1/scan`, and pages on private hosts, never appear in it. With `INGRESS_FEED_FILE` set the feed survives restarts.
 
 **Deploy:** `Dockerfile`, `fly.toml` and `DEPLOY.md` stand up a single small host. The public instance runs with the sandbox off (no Chromium shipped); the paid/self-hosted tier turns `INGRESS_SANDBOX=escalate` on. `LAUNCH.md` has the launch copy and the MCP install snippet.
 
@@ -182,7 +182,7 @@ See `tools/underlight/README.md`. It is untested on a real macOS fleet; treat fi
 
 ## Business shape
 
-Open core. The gate, the Model Context Protocol proxy and the library are free and are the distribution: the one-line install an agent builder drops in. The paid tier is what a free tool cannot give — hosted deployment, the browser sandbox, and the **audit plane** (stored, searchable, exportable, retained signed receipts) plus the private threat feed. What the paid tier sells is the record, not the detection: a refuse-by-default verdict at the ingestion boundary, plus a publicly verifiable signed receipt for every page an agent took in, kept per customer, searchable and exportable for a security review. Other tools now sign their decisions too (see Related work); the case for this one is that the receipt, the page-level analysis and the refusal come from one engine, so the record says exactly what was seen, what was withheld and why. The public attack feed is the top of funnel; see `LAUNCH.md`.
+Source-available, free to use. The gate, the Model Context Protocol proxy and the library are free for any use except offering a competing product, and are the distribution: the one-line install an agent builder drops in. The paid tier is what a free tool cannot give — hosted deployment, the browser sandbox, and the **audit plane** (stored, searchable, exportable, retained signed receipts) plus the private threat feed. What the paid tier sells is the record, not the detection: a refuse-by-default verdict at the ingestion boundary, plus a publicly verifiable signed receipt for every page an agent took in, kept per customer, searchable and exportable for a security review. Other tools now sign their decisions too (see Related work); the case for this one is that the receipt, the page-level analysis and the refusal come from one engine, so the record says exactly what was seen, what was withheld and why. The public attack feed is the top of funnel; see `LAUNCH.md`.
 
 ## Related work
 
@@ -212,7 +212,7 @@ Three rounds of adversarial review by an independent agent, each attacking both 
 
 ## Provenance
 
-Designed and directed by Briar Morgan Greenway (ThinkWell Labs); the code was written with Claude (Anthropic). Ratified design decisions are listed above.
+Created by Briar Greenway (ThinkWell Labs). Built with Claude. Ratified design decisions are listed above.
 
 ## Provenance of the detectors
 
@@ -220,4 +220,4 @@ The hostile-invisible alphabet (`acepaste-alphabet.ts`) is ported verbatim from 
 
 ## License
 
-Apache-2.0 (proposed; open core, hosted gate commercial).
+[Functional Source License 1.1, Apache 2.0 future licence](LICENSE) (FSL-1.1-ALv2). In plain terms: you may use, modify and redistribute this, including inside your own commercial products and at work, for any purpose except offering a product or service that competes with it. Each version becomes Apache 2.0, with no restrictions, two years after its release. Copyright 2026 ThinkWell Labs LLC.

@@ -20,9 +20,26 @@ import type { ContentKind, Finding, TextSegment } from "./types.js";
 /** scripts that run when a package is installed as a dependency (underlight CONSUMER_LIFECYCLE) */
 const CONSUMER_LIFECYCLE = ["preinstall", "install", "postinstall", "prepare"] as const;
 
-/** underlight SUSPICIOUS_SCRIPT_RE, split into execution/network and credential reach */
-const EXEC_RE = /(curl\b|wget\b|fetch\(|https?:\/\/|child_process|\bexec\(|\bspawn\(|node\s+-e\b|base64|\batob\(|\beval\(|\bFunction\(|powershell|\/bin\/sh|bash\s+-c|python[23]?\s+-c|Invoke-WebRequest|certutil)/i;
+/**
+ * underlight SUSPICIOUS_SCRIPT_RE, split three ways after adversarial review (2026-11-01):
+ *   strong  — fetches, opens a socket, or runs decoded or generated code: flags on its own
+ *   weak    — inline interpreters, shells and URLs: common in harmless scripts ("node -e" feature checks,
+ *             husky recipes, an echoed docs link), so they flag only in combination
+ *   cred    — reaches for credentials
+ */
+const STRONG_RE = /(\bcurl\b|\bwget\b|\/dev\/(tcp|udp)\/|\bnc(at)?\s|\bsocat\b|\bnslookup\b|\bdig\s|\bfetch\(|child_process|\bexec(Sync)?\(|\bspawn(Sync)?\(|powershell|Invoke-WebRequest|\biwr\b|certutil|\beval\(|\bFunction\(|\batob\(|base64\s+(-d|--decode|-D)\b|\b(perl|ruby)\s+-e\b|\bphp\s+-r\b|\\x[0-9a-fA-F]{2}|require\(\s*["'](https?|net|dgram|dns|tls)["']\s*\))/i;
+/** unambiguous on install: a socket back to a host, a decoded or downloaded payload handed straight to a shell */
+const CRITICAL_RE = /(\/dev\/(tcp|udp)\/|\bnc(at)?\s[^\n]{0,120}\s-(e|c)\s|\bsocat\b[^\n]{0,120}exec|\b(curl|wget)\b[^\n|]{0,300}\|\s*(sudo\s+)?(ba|z)?sh\b|base64\s+(-d|--decode|-D)\b[^\n]{0,80}\|\s*(ba|z)?sh\b|\\x[0-9a-fA-F]{2}[^\n]{0,200}\|\s*(ba|z)?sh\b)/i;
+const WEAK_RE = /(\bnode\s+-e\b|\b(ba|z)?sh\s+-c\b|\bpython[23]?\s+-c\b|https?:\/\/|\$\()/gi;
 const CRED_RE = /(\$\{?HOME\b|~\/\.ssh|\.ssh\/id_|\.npmrc|\.aws\/|\.config\/gh|\.git-credentials|\bAWS_[A-Z_]+|GITHUB_TOKEN|NPM_TOKEN|\bprintenv\b|\benv\s*\|)/i;
+
+function execSignal(script: string): boolean {
+  if (STRONG_RE.test(script)) return true;
+  const weak = new Set((script.match(WEAK_RE) ?? []).map((w) => w.toLowerCase().replace(/\s+/g, " ").replace(/^(ba|z)sh/, "sh")));
+  // a URL inside an echo or a comment is a message to the installer, not an action
+  if (weak.size === 1 && [...weak][0].startsWith("http") && /\becho\b|^\s*#/.test(script)) return false;
+  return weak.size >= 2;
+}
 
 /** underlight URL_SPEC_RE */
 const URL_SPEC_RE = /^(https?:\/\/|git\+|git:\/\/|ssh:\/\/|github:|gitlab:|bitbucket:|gist:|[\w.-]+\/[\w.-]+(#.*)?$|.*\.tgz$|.*\.tar\.gz$)/i;
@@ -30,17 +47,27 @@ const URL_SPEC_RE = /^(https?:\/\/|git\+|git:\/\/|ssh:\/\/|github:|gitlab:|bitbu
 const REGISTRY_HOSTS = new Set(["registry.npmjs.org", "registry.yarnpkg.com", "registry.npmjs.com", "registry.npmmirror.com"]);
 
 /** install / execute commands an agent might be talked into running */
+const SUDO = String.raw`(sudo(\s+-[A-Za-z]+)*\s+)?`;
 const INSTALL_PATTERNS: Array<{ re: RegExp; what: string }> = [
-  { re: /\b(curl|wget)\b[^\n|;]{0,300}\|\s*(sudo\s+)?(ba|z|da|k)?sh\b/i, what: "download piped to a shell" },
+  { re: new RegExp(String.raw`\b(curl|wget|fetch)\b[^\n|;]{0,300}\|\s*` + SUDO + String.raw`(ba|z|da|k|fi)?sh\b`, "i"), what: "download piped to a shell" },
+  { re: new RegExp(String.raw`\b(curl|wget)\b[^\n|;]{0,300}\|\s*` + SUDO + String.raw`(python[23]?|node|perl|ruby|php|deno|bun)\b`, "i"), what: "download piped to an interpreter" },
+  { re: /\b(ba|z)?sh\s{1,4}<\(\s{0,4}(curl|wget)\b/i, what: "download run through process substitution" },
+  { re: /\b(ba|z)?sh\s{1,4}-c\s{1,4}["']?\$\(\s{0,4}(curl|wget)\b/i, what: "download run through command substitution" },
+  { re: /\b(curl|wget)\b[^\n;&|]{0,200}\s(-o|-O|--output)\s{0,3}\S{1,200}[^\n]{0,60}(&&|;)\s{0,4}(sudo\s+)?((ba|z)?sh|chmod\s+\+x|\.\/)/i, what: "download saved and then run" },
   { re: /\b(iwr|irm|Invoke-WebRequest|Invoke-RestMethod)\b[^\n|]{0,300}\|\s*(iex|Invoke-Expression)\b/i, what: "PowerShell download piped to Invoke-Expression" },
+  { re: /\b(iex|Invoke-Expression)\s{0,4}\(\s{0,4}(iwr|irm|Invoke-WebRequest|Invoke-RestMethod|\(?\s{0,4}New-Object\s+Net\.WebClient)/i, what: "PowerShell expression evaluating a download" },
+  { re: /\.DownloadString\s{0,3}\(/i, what: "PowerShell DownloadString" },
   { re: /\bbase64\s+(-d|--decode|-D)\b[^\n]{0,80}\|\s*(ba|z)?sh\b/i, what: "base64-decoded payload piped to a shell" },
   { re: /\b(npm|pnpm|yarn|bun)\s+(i|install|add)\s+[^\n]{0,80}(https?:\/\/|git\+|github:|gist:|\.tgz\b)/i, what: "package install from a URL instead of a registry" },
   { re: /\bnpx\s+(-y\s+|--yes\s+)?(https?:\/\/|github:|gist:)/i, what: "npx executing code from a URL" },
+  { re: /\bdeno\s+run\s+(-A|--allow-all)\b[^\n]{0,60}https?:\/\//i, what: "deno running remote code with all permissions" },
+  { re: /\b(uvx|pipx\s+run)\s+(--from|--spec)\s+(git\+|https?:\/\/)/i, what: "Python tool run from a URL" },
   { re: /\bpip3?\s+install\s+[^\n]{0,80}(git\+|https?:\/\/)/i, what: "pip install from a URL" },
-  { re: /\bpython3?\s+-c\s+["'][^\n]{0,200}(urllib|requests|socket|exec\()/i, what: "inline Python that fetches or executes" },
   { re: /\b(env|printenv|set)\s*\|\s*(curl|wget|nc|ncat)\b/i, what: "environment variables piped to the network" },
   { re: /\b(cat|tar|zip)\b[^\n|]{0,120}(\.ssh|\.npmrc|\.aws|\.git-credentials|\.config\/gh|id_rsa|id_ed25519)[^\n|]{0,80}\|\s*(curl|wget|nc|ncat)\b/i, what: "credential files piped to the network" },
-  { re: /\b(curl|wget)\b[^\n]{0,200}(-d|--data(-binary|-raw|-urlencode)?|-F|--form|-T|--upload-file|--post-file)[=\s]+["']?@?[^\s"']*(\.ssh|\.npmrc|\.aws|\.git-credentials|id_rsa|id_ed25519|\.env\b|@-)/i, what: "upload of local secrets or stdin to a remote host" },
+  { re: /\b(curl|wget)\b[^\n]{0,200}\s(-d|--data(-binary|-raw|-urlencode)?|-F|--form|-T|--upload-file|--post-file)[=\s]{1,3}["']?@?[^\s"']{0,200}(\.ssh|\.npmrc|\.aws|\.git-credentials|id_rsa|id_ed25519|\.env\b|@-)/i, what: "upload of local secrets or stdin to a remote host" },
+  { re: /\/dev\/(tcp|udp)\/[\w.-]{1,253}\/\d{1,5}/i, what: "shell socket to a remote host (reverse shell)" },
+  { re: /\bpython3?\s+-c\s+["'][^\n]{0,200}(urllib|requests|socket|exec\()/i, what: "inline Python that fetches or executes" },
   { re: /\bnode\s+-e\s+["'][^\n]{0,200}(child_process|https?\.get|fetch\(|eval\()/i, what: "inline Node that fetches or executes" },
 ];
 
@@ -69,13 +96,13 @@ function manifestFindings(doc: any): Finding[] {
   for (const k of CONSUMER_LIFECYCLE) {
     const v = scripts[k];
     if (typeof v !== "string" || !v.trim()) continue;
-    const cred = CRED_RE.test(v), exec = EXEC_RE.test(v);
+    const cred = CRED_RE.test(v), critical = CRITICAL_RE.test(v), exec = critical || execSignal(v);
     if (!cred && !exec) continue;
     out.push({
       pass: "supplychain", kind: "supplychain.lifecycle_script",
-      confidence: cred && exec ? 0.95 : cred ? 0.85 : 0.65,
-      severity: cred ? 0.95 : 0.6,
-      message: `${k} script runs on install and ${cred ? "reaches for credentials" : "fetches or executes code"}`,
+      confidence: cred && exec ? 0.95 : cred || critical ? 0.9 : 0.65,
+      severity: cred || critical ? 0.95 : 0.6,
+      message: `${k} script runs on install and ${cred ? "reaches for credentials" : critical ? "opens a shell to a remote host or pipes a payload into a shell" : "fetches or executes code"}`,
       excerpt: clip(v), location: `$.scripts.${k}`, action: "none",
     });
   }
@@ -139,7 +166,8 @@ export function scanSupplyChain(input: SupplyChainInput): Finding[] {
   // manifests carry their scripts as JSON strings; those were judged above, so skip segment scanning of $.scripts
   for (const s of input.segments) {
     if (s.path.startsWith("$.scripts.")) continue;
-    findings.push(...installFindings(s.text, s.visibility !== "visible", s.path));
+    // collapsed <details> and hidden tab panels are revealed by one click: install docs live there, so weigh them as visible
+    findings.push(...installFindings(s.text, s.visibility !== "visible" && !s.path.includes("~revealable"), s.path));
   }
   for (const p of input.decodedPayloads) findings.push(...installFindings(p, true, "decoded payload"));
   return findings;

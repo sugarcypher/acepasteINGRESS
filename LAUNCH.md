@@ -21,7 +21,7 @@ So it checks the places the model is blind to. Invisible and smuggled Unicode (t
 
 What it deliberately keeps narrow: judging plain visible prose. A modern model already resists most "ignore previous instructions" text in the body, so visible text only gets a check for the strongest instruction shapes (and those are refused as overridable, not hostile). The weight of the gate is on what the model can't see.
 
-It runs three ways from one engine: a Model Context Protocol proxy you drop in front of an agent's fetch tool, a library, and a hosted HTTP service. Every verdict comes with a receipt signed with a public key, so a security reviewer can check what an agent took in without trusting me. Open core, Apache-2.0.
+It runs three ways from one engine: a Model Context Protocol proxy you drop in front of an agent's fetch tool, a library, and a hosted HTTP service. Every verdict comes with a receipt signed with a public key, so a security reviewer can check what an agent took in without trusting me. Source-available and free to use (FSL: anything except a competing product; each version turns Apache 2.0 after two years).
 
 Honest about the numbers: against my own corpus (85 attack cases, 45 benign, hardened over three adversarial review passes) it refuses every attack with zero false positives — but that's a regression floor on fixtures I wrote, not a claim about the open web. The live feed below shows what it actually catches in the wild; that's the real test, and I'd rather you watch that than trust my corpus.
 
@@ -35,7 +35,7 @@ I built this because I've been on the receiving end of the invisible kind of att
 ## LinkedIn / X thread
 
 **1/**
-Prompt injection isn't usually in the text you can see. It's in the gap between what a page displays and what the AI actually reads. I built a gate that lives in that gap. Open source. 🧵
+Prompt injection isn't usually in the text you can see. It's in the gap between what a page displays and what the AI actually reads. I built a gate that lives in that gap. Free to use, source on GitHub. 🧵
 
 **2/**
 A classifier that only reads extracted text has already lost part of the evidence: the off-screen div, the white-on-white line, the script that served your agent a different page than it served you. Some newer tools look at the page itself; this one does that and refuses by default.
@@ -59,7 +59,7 @@ I built this because I spent years as the target of the invisible kind of attack
 
 ## For the acepaste.xyz "For developers" link
 
-> **AcePaste Ingress** — the same invisible-text defense that powers the cleaner, as a security gate in front of your AI. Drop it between the web and your agent: it strips the hidden channels a model can't see and hands back clean text with a signed receipt. Open source. [See what it catches, live →](https://YOUR-APP.fly.dev/)
+> **AcePaste Ingress** — the same invisible-text defense that powers the cleaner, as a security gate in front of your AI. Drop it between the web and your agent: it strips the hidden channels a model can't see and hands back clean text with a signed receipt. Free to use. [See what it catches, live →](https://YOUR-APP.fly.dev/)
 
 ---
 

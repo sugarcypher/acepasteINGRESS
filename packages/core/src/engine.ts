@@ -19,7 +19,7 @@ import { countHostileInvisibles } from "./acepaste-alphabet.js";
 import { analyzeScripts } from "./script.js";
 import { scanMeaning, neutralizeMeaning } from "./meaning.js";
 import { scanSupplyChain } from "./supplychain.js";
-import { scanSecrets, redactSecrets } from "./secrets.js";
+import { scanSecrets, redactSecrets, collectSecrets, scrubExcerpt } from "./secrets.js";
 import { attachEvidence } from "./evidence.js";
 import { adaptJavascript, adaptJson, adaptMarkdown, adaptText, decodeEntities, detectKind } from "./adapters.js";
 import { runSandbox } from "./sandbox.js";
@@ -320,7 +320,10 @@ export class IngressEngine {
     // secrets pass (Kith & Revere lineage): find credentials, then make sure no excerpt can carry one
     const tse = performance.now();
     findings.push(...scanSecrets(cleanedSegments, charAll.decodedPayloads));
-    for (const f of findings) if (f.excerpt) f.excerpt = redactSecrets(f.excerpt);
+    // known credential values, found on the full texts, so excerpts that were cut or altered before this point still get scrubbed
+    const knownSecrets = collectSecrets([raw, ...segments.map((s) => s.text), ...cleanedSegments.map((s) => s.text), ...charAll.decodedPayloads]);
+    for (const f of findings) if (f.excerpt) f.excerpt = scrubExcerpt(f.excerpt, knownSecrets);
+    const safePayloads = charAll.decodedPayloads.map((p) => scrubExcerpt(p, knownSecrets));
     timings.secrets = performance.now() - tse;
     passesRun.push("secrets");
 
@@ -341,14 +344,14 @@ export class IngressEngine {
       const keep = cleanedSegments.filter((s) => s.visibility === "visible" || (tier === "clean" && s.visibility === "attribute" && s.path.endsWith("@alt")));
       delivered = keep.map((s) => (s.visibility === "attribute" ? `[image alt: ${s.text.trim()}]` : s.text)).join("\n").replace(/[ \t]+/g, " ").replace(/\n{3,}/g, "\n\n").trim();
       if (overridden) delivered = neutralizeMeaning(delivered);
-      delivered = redactSecrets(delivered);
+      delivered = scrubExcerpt(delivered, knownSecrets);
     }
 
     const receipt = this.receipt({ url: a.url, finalUrl: a.finalUrl, redirectChain: a.redirectChain, kind: a.kind, raw: a.raw, delivered, tier, score, findings, overridden, passesRun, acepasteInvisibleCount: countHostileInvisibles(a.raw) });
     const envelope = buildEnvelope(a.finalUrl, tier, delivered, findings, receipt, overridden);
     timings.total = performance.now() - a.t0;
 
-    if (tier !== "clean") this.deps.log(buildLogEntry(a.finalUrl, tier, score, findings, charAll.decodedPayloads, receipt, overridden));
+    if (tier !== "clean") this.deps.log(buildLogEntry(a.finalUrl, tier, score, findings, safePayloads, receipt, overridden));
 
     return { tier, score, contentKind: a.kind, delivered, envelope, findings, receipt, timings, overridden };
   }
@@ -602,8 +605,8 @@ export function buildLogEntry(url: string, tier: Tier, score: number, findings: 
     url, sourceHost, redirectChain: receipt.redirectChain, contentKind: receipt.contentKind,
     rawDigest: receipt.rawDigest, receiptDigest: receipt.digest,
     passes: [...new Set(findings.map((f) => f.pass))],
-    findings: findings.map((f) => ({ kind: f.kind, evidenceClass: f.evidenceClass, band: f.band, confidence: +f.confidence.toFixed(2), severity: f.severity, message: f.message, excerpt: f.excerpt ? redactSecrets(f.excerpt.slice(0, 300)) : undefined, location: f.location, artifactDigest: f.artifactDigest, altExplanation: f.altExplanation })),
-    decodedPayloads: decodedPayloads.map((p) => redactSecrets(p.slice(0, 1000))),
+    findings: findings.map((f) => ({ kind: f.kind, evidenceClass: f.evidenceClass, band: f.band, confidence: +f.confidence.toFixed(2), severity: f.severity, message: f.message, excerpt: f.excerpt ? redactSecrets(f.excerpt).slice(0, 300) : undefined, location: f.location, artifactDigest: f.artifactDigest, altExplanation: f.altExplanation })),
+    decodedPayloads: decodedPayloads.map((p) => redactSecrets(p).slice(0, 1000)),
     outboundHosts: [...outbound],
   };
 }

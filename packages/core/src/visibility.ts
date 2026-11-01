@@ -50,7 +50,7 @@ export function classifyStyle(style: string): TextSegment["visibility"] | null {
   // a custom property driving display/visibility/opacity/transform cannot be resolved statically; treat as hidden (hidden text is never delivered, so the cost of being wrong is low)
   if (/(display|visibility|opacity|transform|clip-path|font-size|scale|translate):var\(/.test(s)) return "css_hidden";
   if (/transform:[^;]*translate(x|y|3d)?\(-?\d{3,}(px|em|rem|vw|vh)/.test(s)) return "offscreen";
-  { const fg = s.match(/(?:^|;)color:(#[0-9a-f]{3,8}|[a-z]+|rgba?\([^)]*\))/); const bg = s.match(/background(?:-color)?:(#[0-9a-f]{3,8}|[a-z]+|rgba?\([^)]*\))/); if (fg && bg && fg[1] === bg[1]) return "tiny_or_transparent"; }
+  // same-colour text is judged by contrast in the cascade (color.ts), not by comparing two strings here
   if (/-webkit-text-fill-color:transparent/.test(s)) return "tiny_or_transparent";
   if (/(left|top|right|bottom|margin-left|margin-top|text-indent):-\d{3,}(px|em|rem|%|vw|vh)/.test(s)) return "offscreen";
   if (/text-indent:(1\d\d|[2-9]\d\d|\d{4,})%/.test(s) || /text-indent:\d{4,}px/.test(s)) return "offscreen";
@@ -122,7 +122,13 @@ export function colorRulesFromCss(cssIn: string): ColorRule[] {
     if (c.fg === undefined && c.bg === undefined && c.fill === undefined) continue;
     for (const sel of m[1].split(",")) {
       const t = sel.trim().toLowerCase();
-      if (/^([.#][\w-]+|[a-z][\w-]*|:root)$/.test(t)) rules.push({ selector: t === ":root" ? "html" : t, ...c });
+      if (/^([.#][\w-]+|[a-z][\w-]*|:root)$/.test(t)) { rules.push({ selector: t === ":root" ? "html" : t, ...c }); continue; }
+      // a colour set through a compound, attribute or pseudo selector cannot be resolved statically: mark the colour
+      // unknown on the element it keys on, so the element is never judged hidden on a guess (over-matching only loses detection)
+      const last = t.split(/[\s>+~]+/).pop() ?? "";
+      const key = (last.match(/[.#][\w-]+/g) ?? []).pop() ?? (last.match(/^[a-z][\w-]*/) ?? [])[0];
+      if (!key) continue;
+      rules.push({ selector: key, ...(c.fg !== undefined ? { fg: null } : {}), ...(c.fill !== undefined ? { fill: null } : {}), ...(c.bg !== undefined ? { bg: null } : {}) });
     }
   }
   return rules;
@@ -173,7 +179,7 @@ export function findStylesheetLinks(html: string): string[] {
   return out;
 }
 
-interface Frame { node: Node; vis: TextSegment["visibility"]; path: string; depth: number; inA11y: boolean; fg: RGBA | null; bg: RGBA | null; cr?: number }
+interface Frame { node: Node; vis: TextSegment["visibility"]; path: string; depth: number; inA11y: boolean; fg: RGBA | null; bg: RGBA | null; fill?: RGBA | null }
 
 const BROWSER_FG: RGBA = { r: 0, g: 0, b: 0, a: 1 };
 const BROWSER_BG: RGBA = { r: 255, g: 255, b: 255, a: 1 };
@@ -188,6 +194,7 @@ export function analyzeHtml(html: string, externalRules: HiddenRule[] = [], exte
   const colorRules: ColorRule[] = [...externalColorRules];
   /** segments hidden by colour, with the measured contrast */
   const lowContrast = new Map<TextSegment, number>();
+  const lowContrastRatio = new Map<string, number>();
   let maxDepth = 0;
 
   // pass 1: <style> rules and stylesheet links (iterative)
@@ -216,7 +223,7 @@ export function analyzeHtml(html: string, externalRules: HiddenRule[] = [], exte
   const byId = colorRules.filter((r) => r.selector.startsWith("#"));
   const a11yShort = new Set<TextSegment>();
   while (stack.length) {
-    const { node: n, vis: inherited, path, depth, inA11y, fg: inFg, bg: inBg, cr: inCr } = stack.pop()!;
+    const { node: n, vis: inherited, path, depth, inA11y, fg: inFg, bg: inBg, fill: inFill } = stack.pop()!;
     if (depth > maxDepth) maxDepth = depth;
 
     if (defaultTreeAdapter.isCommentNode(n)) {
@@ -227,22 +234,34 @@ export function analyzeHtml(html: string, externalRules: HiddenRule[] = [], exte
     if (defaultTreeAdapter.isTextNode(n)) {
       const text = n.value;
       if (text.trim()) {
-        const seg: TextSegment = { text, visibility: inherited, path };
+        // colour is judged where the text is: the colour it inherits against the background it sits on
+        let visibility = inherited;
+        const textColor = inFill ?? inFg;
+        if (visibility === "visible" && textColor && inBg) {
+          const ratio = contrastRatio(textColor, inBg);
+          if (ratio <= INVISIBLE_CONTRAST) { visibility = "tiny_or_transparent"; lowContrastRatio.set(path + "\u0000" + segments.length, ratio); }
+        }
+        const seg: TextSegment = { text, visibility, path };
+        const key = path + "\u0000" + segments.length;
         segments.push(seg);
-        if (inherited === "tiny_or_transparent" && inCr !== undefined) lowContrast.set(seg, inCr);
+        if (lowContrastRatio.has(key)) lowContrast.set(seg, lowContrastRatio.get(key)!);
         if (inA11y) a11yShort.add(seg);
       }
       continue;
     }
     if (!defaultTreeAdapter.isElementNode(n)) {
       const kids = children(n);
-      for (let i = kids.length - 1; i >= 0; i--) stack.push({ node: kids[i], vis: inherited, path, depth, inA11y, fg: inFg, bg: inBg, cr: inCr });
+      for (let i = kids.length - 1; i >= 0; i--) stack.push({ node: kids[i], vis: inherited, path, depth, inA11y, fg: inFg, bg: inBg, fill: inFill });
       continue;
     }
 
     const el = n;
     const tag = el.tagName;
-    const myPath = `${path}/${tag}`;
+    // content a reader reveals with one click (a collapsed <details>, a hidden tab panel) is marked so passes that
+    // weigh visibility can treat it as documentation rather than concealment
+    const revealable = (tag === "details" && attr(el, "open") === undefined) ||
+      (attr(el, "hidden") !== undefined && (/^(tabpanel|region)$/i.test(attr(el, "role") ?? "") || /\b(tab|panel|accordion|collapse)/i.test(attr(el, "class") ?? "")));
+    const myPath = `${path}/${tag}${revealable ? "~revealable" : ""}`;
 
     if (tag === "script") {
       const src = attr(el, "src");
@@ -270,7 +289,7 @@ export function analyzeHtml(html: string, externalRules: HiddenRule[] = [], exte
     if (tag === "svg" && inherited === "visible") {
       // SVG text renders, but as graphics: scan it as its own channel, do not deliver it as page copy
       const kids = el.childNodes;
-      for (let i = kids.length - 1; i >= 0; i--) stack.push({ node: kids[i], vis: "attribute", path: `${myPath}@svg`, depth: depth + 1, inA11y, fg: inFg, bg: inBg });
+      for (let i = kids.length - 1; i >= 0; i--) stack.push({ node: kids[i], vis: "attribute", path: `${myPath}@svg`, depth: depth + 1, inA11y, fg: inFg, bg: inBg, fill: inFill });
       continue;
     }
 
@@ -285,7 +304,7 @@ export function analyzeHtml(html: string, externalRules: HiddenRule[] = [], exte
     let a11y = inA11y;
 
     // colour: resolve this element's text colour and the background it sits on
-    let fg = inFg, bg = inBg, fill: RGBA | null | undefined, cr = inCr;
+    let fg = inFg, bg = inBg, fill: RGBA | null | undefined = inFill;
     const apply = (c: { fg?: RGBA | null; bg?: RGBA | null; fill?: RGBA | null }) => {
       if (c.fg !== undefined) fg = c.fg;
       if (c.fill !== undefined) fill = c.fill;
@@ -306,13 +325,7 @@ export function analyzeHtml(html: string, externalRules: HiddenRule[] = [], exte
     if (pres("bgcolor")) apply({ bg: pres("bgcolor") });
     const inlineStyle = attr(el, "style");
     if (inlineStyle) apply(colorsFromStyle(inlineStyle));
-    if (vis === "visible") {
-      const textColor = fill ?? fg;
-      if (textColor && bg) {
-        const ratio = contrastRatio(textColor, bg);
-        if (ratio <= INVISIBLE_CONTRAST) { vis = "tiny_or_transparent"; cr = ratio; }
-      }
-    }
+
     if (vis === "visible") {
       if (attr(el, "hidden") !== undefined || attr(el, "aria-hidden") === "true" || attr(el, "inert") !== undefined) vis = "css_hidden";
       if (HIDDEN_CONTAINER_TAGS.has(tag)) vis = "css_hidden";
@@ -331,7 +344,7 @@ export function analyzeHtml(html: string, externalRules: HiddenRule[] = [], exte
       const c = kids[i];
       // the <summary> of a collapsed <details> is visible
       const childVis = tag === "details" && defaultTreeAdapter.isElementNode(c) && c.tagName === "summary" && inherited === "visible" ? "visible" : vis;
-      stack.push({ node: c, vis: childVis, path: myPath, depth: depth + 1, inA11y: a11y, fg, bg, cr });
+      stack.push({ node: c, vis: childVis, path: myPath, depth: depth + 1, inA11y: a11y, fg, bg, fill });
     }
   }
 

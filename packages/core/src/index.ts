@@ -11,7 +11,7 @@ export { scanCharacters } from "./character.js";
 export { analyzeScripts, analyzeScript } from "./script.js";
 export { scanMeaning, neutralizeMeaning } from "./meaning.js";
 export { scanSupplyChain } from "./supplychain.js";
-export { scanSecrets, redactSecrets } from "./secrets.js";
+export { scanSecrets, redactSecrets, collectSecrets, scrubExcerpt } from "./secrets.js";
 export { attachEvidence, alternativeFor, bandOf } from "./evidence.js";
 export type { EvidenceClass, ConfidenceBand } from "./evidence.js";
 export { detectKind, decodeEntities, adaptMarkdown, adaptJson, adaptText, adaptJavascript } from "./adapters.js";

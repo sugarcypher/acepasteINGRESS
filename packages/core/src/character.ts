@@ -174,6 +174,8 @@ export function scanCharacters(text: string): CharacterResult {
     const odd = [...cleaned.matchAll(ODD)].filter((m) => {
       const i = m.index!, prev = cleaned[i - 1] ?? "", next = cleaned[i + 1] ?? "";
       if (!prev || !next || /\s/.test(prev) || /\s/.test(next)) return false;
+      // a word-gap channel sits between letters; typeset maths, ranges and units put fine spaces next to symbols and digits
+      if (!/\p{L}/u.test(prev) || !/\p{L}/u.test(next)) return false;
       if (/[;:!?»%€]/.test(next) || prev === "«") return false;
       if (/\d/.test(prev) && /\d/.test(next)) return false;
       return true;

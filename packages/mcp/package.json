@@ -20,7 +20,7 @@
     "@types/node": "^22.0.0",
     "typescript": "^5.5.0"
   },
-  "license": "Apache-2.0",
+  "license": "FSL-1.1-ALv2",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/sugarcypher/acepasteINGRESS.git",

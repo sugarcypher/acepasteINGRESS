@@ -85,7 +85,7 @@ export function colorsFromStyle(style: string): { fg?: RGBA | null; bg?: RGBA | 
     else if (prop === "-webkit-text-fill-color") out.fill = parseColor(val);
     else if (prop === "background-color") out.bg = parseColor(val);
     else if (prop === "background") {
-      if (/url\(|gradient\(/i.test(val)) { out.bg = null; continue; }
+      if (/url\(|gradient\(|var\(|image-set\(/i.test(val)) { out.bg = null; continue; }
       // the shorthand's colour is any token that parses as one
       let found: RGBA | null | undefined;
       for (const tok of val.match(/#[0-9a-f]{3,8}\b|(?:rgba?|hsla?)\([^)]*\)|[a-z]+/gi) ?? []) { const c = parseColor(tok); if (c) { found = c; break; } }
