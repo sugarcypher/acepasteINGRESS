@@ -99,7 +99,7 @@ server.registerTool(
 
 server.registerTool(
   "gate_verify_receipt",
-  { title: "Verify a gate receipt", description: "Checks a receipt's digest and, when this server has the signing key, its signature.", inputSchema: { receipt: z.record(z.any()) } },
+  { title: "Verify a gate receipt", description: "Checks a receipt's digest and, its signature against this server's public key (ECDSA) or shared secret (HMAC).", inputSchema: { receipt: z.record(z.string(), z.any()) } },
   async ({ receipt }) => {
     const v = GateEngine.verifyReceipt(receipt as unknown as TaintReceipt, (receipt as unknown as TaintReceipt).signatureAlg === "ecdsa-p256-sha256" ? (env.GATE_VERIFY_PUBLIC_KEY ?? engine.publicKey()?.publicKeyPem) : env.GATE_SIGNING_KEY);
     return { content: [{ type: "text", text: JSON.stringify(v) }], structuredContent: v };
