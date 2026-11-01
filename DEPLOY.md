@@ -8,8 +8,8 @@ browser sandbox off, so there is no Chromium to ship and the image is small.
 ```sh
 fly launch --no-deploy          # creates the app; keep the generated name or set it in fly.toml
 fly volumes create ingress_data --size 1 --region sjc
-node packages/core/dist/src/cli.js --keygen > ingress-keys.txt   # keep the private key secret; publish the public key
-fly secrets set INGRESS_SIGNING_PRIVATE_KEY="$(awk '/BEGIN PRIVATE/,/END PRIVATE/' ingress-keys.txt)"
+node packages/core/dist/src/cli.js --keygen > ~/ingress-keys.txt   # outside the project folder; keep it secret
+fly secrets set INGRESS_SIGNING_PRIVATE_KEY="$(awk '/BEGIN PRIVATE/,/END PRIVATE/' ~/ingress-keys.txt)"
 fly secrets set INGRESS_KEYS="$(openssl rand -hex 16):design-partner-a"
 fly deploy
 ```

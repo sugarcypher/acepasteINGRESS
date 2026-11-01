@@ -1,2 +1,8 @@
 node_modules/
 dist/
+
+# signing keys and local data: never commit
+*.pem
+*keys*.txt
+*.jsonl
+.env
