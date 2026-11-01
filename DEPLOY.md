@@ -7,10 +7,10 @@ browser sandbox off, so there is no Chromium to ship and the image is small.
 
 ```sh
 fly launch --no-deploy          # creates the app; keep the generated name or set it in fly.toml
-fly volumes create gate_data --size 1 --region sjc
-node packages/core/dist/src/cli.js --keygen > gate-keys.txt   # keep the private key secret; publish the public key
-fly secrets set GATE_SIGNING_PRIVATE_KEY="$(awk '/BEGIN PRIVATE/,/END PRIVATE/' gate-keys.txt)"
-fly secrets set GATE_KEYS="$(openssl rand -hex 16):design-partner-a"
+fly volumes create ingress_data --size 1 --region sjc
+node packages/core/dist/src/cli.js --keygen > ingress-keys.txt   # keep the private key secret; publish the public key
+fly secrets set INGRESS_SIGNING_PRIVATE_KEY="$(awk '/BEGIN PRIVATE/,/END PRIVATE/' ingress-keys.txt)"
+fly secrets set INGRESS_KEYS="$(openssl rand -hex 16):design-partner-a"
 fly deploy
 ```
 
@@ -21,13 +21,13 @@ Then:
 
 ## Any container host
 
-`docker build -t acepaste-gate . && docker run -p 8787:8787 -e GATE_SIGNING_KEY=… -e GATE_KEYS="k:name" -v $PWD/data:/data -e GATE_RECEIPTS_FILE=/data/receipts.jsonl acepaste-gate`
+`docker build -t acepaste-ingress . && docker run -p 8787:8787 -e INGRESS_SIGNING_KEY=… -e INGRESS_KEYS="k:name" -v $PWD/data:/data -e INGRESS_RECEIPTS_FILE=/data/receipts.jsonl acepaste-ingress`
 
 ## Turning the browser sandbox on
 
 For a deployment that needs the sandbox (cloaking / post-load injection), set
-`GATE_SANDBOX=escalate`, add a Chromium install layer to the Dockerfile, and
-point `GATE_CHROMIUM` at the binary. Keep that off the public free instance —
+`INGRESS_SANDBOX=escalate`, add a Chromium install layer to the Dockerfile, and
+point `INGRESS_CHROMIUM` at the binary. Keep that off the public free instance —
 it is slow and is what the paid tier runs.
 
 ## Scaling the audit store

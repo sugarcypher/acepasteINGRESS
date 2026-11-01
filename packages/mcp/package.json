@@ -1,18 +1,18 @@
 {
-  "name": "@acepaste/gate-mcp",
-  "version": "0.6.0",
-  "description": "AcePaste Gate as a Model Context Protocol server: gate_fetch and gate_scan tools.",
+  "name": "@acepaste/ingress-mcp",
+  "version": "0.7.0",
+  "description": "AcePaste Ingress as a Model Context Protocol server: ingress_fetch and ingress_scan tools.",
   "type": "module",
   "main": "dist/server.js",
   "bin": {
-    "gate-mcp": "dist/server.js"
+    "ingress-mcp": "dist/server.js"
   },
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "start": "node dist/server.js"
   },
   "dependencies": {
-    "@acepaste/gate-core": "0.6.0",
+    "@acepaste/ingress": "0.7.0",
     "@modelcontextprotocol/sdk": "^1.12.0",
     "zod": "^4.6.7"
   },

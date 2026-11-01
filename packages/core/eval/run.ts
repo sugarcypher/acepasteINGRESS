@@ -7,12 +7,12 @@
  *   node dist/eval/run.js --verbose  every case
  *   node dist/eval/run.js --json     machine-readable
  */
-import { GateEngine } from "../src/index.js";
+import { IngressEngine } from "../src/index.js";
 import { ATTACKS, ATTACKS_R2, BENIGN, SUPPLY, SUPPLY_BENIGN, COLOR, COLOR_BENIGN, type Case } from "./corpus.js";
 
 const verbose = process.argv.includes("--verbose");
 const json = process.argv.includes("--json");
-const engine = new GateEngine({ cloakingCheck: false, cacheTtlSeconds: 0, sandbox: "off", fetchStylesheets: false }, { log: () => {} });
+const engine = new IngressEngine({ cloakingCheck: false, cacheTtlSeconds: 0, sandbox: "off", fetchStylesheets: false }, { log: () => {} });
 
 interface Row { id: string; label: Case["label"]; tier: string; score: number; ok: boolean; kinds: string[]; note: string; ms: number }
 

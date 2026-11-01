@@ -8,7 +8,7 @@
  * integrator wraps around tool dispatch.
  */
 
-import type { GateResult, Tier } from "./types.js";
+import type { IngressResult, Tier } from "./types.js";
 
 export interface TaintPolicy {
   /** tier at which the session becomes tainted; default "suspect" */
@@ -21,7 +21,7 @@ export interface TaintPolicy {
 
 export interface TaintGuard {
   /** record a gate result; returns the session's taint state */
-  ingest(result: GateResult): { tainted: boolean; sources: string[] };
+  ingest(result: IngressResult): { tainted: boolean; sources: string[] };
   /** true if this tool call may proceed now */
   allow(toolName: string): boolean;
   /** user confirmed a side-effect; unlocks sideEffectTools for the TTL */

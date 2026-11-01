@@ -1,9 +1,9 @@
 #!/usr/bin/env node
 /**
- * AcePaste Gate — HTTP service. This is the metered product.
+ * AcePaste Ingress — HTTP service. This is the metered product.
  *
- *   POST /v1/fetch   { url, override? }                          -> GateResult
- *   POST /v1/scan    { content, source?, contentType?, override?}-> GateResult
+ *   POST /v1/fetch   { url, override? }                          -> IngressResult
+ *   POST /v1/scan    { content, source?, contentType?, override?}-> IngressResult
  *   POST /v1/verify  { receipt }                                 -> { digestOk, signatureOk }
  *   GET  /v1/feed                 recent non-clean verdicts, anonymized (public)
  *   GET  /v1/receipts             the caller's own receipts, searchable (audit plane)
@@ -13,19 +13,19 @@
  *   GET  /            -> the public attack feed page
  *   GET  /console     -> the audit console
  *
- * Auth: `Authorization: Bearer <key>`. Keys from GATE_KEYS ("k:name,k2:name2")
- * or GATE_KEYS_FILE (JSON { key: { name, rpm, daily } }). No key configured =
+ * Auth: `Authorization: Bearer <key>`. Keys from INGRESS_KEYS ("k:name,k2:name2")
+ * or INGRESS_KEYS_FILE (JSON { key: { name, rpm, daily } }). No key configured =
  * open (development only; logs a warning). The public feed and pages need no key.
  *
- * Config: GATE_SIGNING_KEY, GATE_SANDBOX, GATE_CLOAKING, GATE_POLICY, GATE_LOG,
- * GATE_RECEIPTS_FILE (audit store path; omit for in-memory), GATE_RETENTION_DAYS.
+ * Config: INGRESS_SIGNING_KEY, INGRESS_SANDBOX, INGRESS_CLOAKING, INGRESS_POLICY, INGRESS_LOG,
+ * INGRESS_RECEIPTS_FILE (audit store path; omit for in-memory), INGRESS_RETENTION_DAYS.
  */
 
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { appendFileSync, readFileSync, existsSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join, normalize } from "node:path";
-import { GateEngine, loadPolicyFile, type GateConfig, type GateResult, type TaintReceipt } from "@acepaste/gate-core";
+import { IngressEngine, loadPolicyFile, type IngressConfig, type IngressResult, type TaintReceipt } from "@acepaste/ingress";
 import { JsonlReceiptStore, toStored, type ReceiptStore } from "./store.js";
 
 const env = process.env;
@@ -34,24 +34,24 @@ const MAX_BODY = 6 * 1024 * 1024;
 const PUBLIC_DIR = join(dirname(fileURLToPath(import.meta.url)), "..", "public");
 
 // ---------- config ----------
-const cfg: Partial<GateConfig> = env.GATE_POLICY ? loadPolicyFile(env.GATE_POLICY) : {};
-if (env.GATE_SIGNING_KEY) cfg.signingKey = env.GATE_SIGNING_KEY;
+const cfg: Partial<IngressConfig> = env.INGRESS_POLICY ? loadPolicyFile(env.INGRESS_POLICY) : {};
+if (env.INGRESS_SIGNING_KEY) cfg.signingKey = env.INGRESS_SIGNING_KEY;
 // ECDSA P-256 private key (PEM, or a path to one). Preferred: receipts become verifiable by anyone with the public key.
 {
-  const k = env.GATE_SIGNING_PRIVATE_KEY_FILE ? readFileSync(env.GATE_SIGNING_PRIVATE_KEY_FILE, "utf8") : env.GATE_SIGNING_PRIVATE_KEY;
+  const k = env.INGRESS_SIGNING_PRIVATE_KEY_FILE ? readFileSync(env.INGRESS_SIGNING_PRIVATE_KEY_FILE, "utf8") : env.INGRESS_SIGNING_PRIVATE_KEY;
   if (k) cfg.signingPrivateKey = k.includes("BEGIN") ? k.replace(/\\n/g, "\n") : readFileSync(k, "utf8");
 }
-if (env.GATE_SANDBOX === "off" || env.GATE_SANDBOX === "escalate" || env.GATE_SANDBOX === "always") cfg.sandbox = env.GATE_SANDBOX;
-if (env.GATE_CLOAKING === "0") cfg.cloakingCheck = false;
+if (env.INGRESS_SANDBOX === "off" || env.INGRESS_SANDBOX === "escalate" || env.INGRESS_SANDBOX === "always") cfg.sandbox = env.INGRESS_SANDBOX;
+if (env.INGRESS_CLOAKING === "0") cfg.cloakingCheck = false;
 
 // ---------- attack log + feed ----------
 const FEED_MAX = 500;
 const feed: Record<string, unknown>[] = [];
-const logPath = env.GATE_LOG;
+const logPath = env.INGRESS_LOG;
 const log = (e: Record<string, unknown>) => {
   const line = JSON.stringify(e) + "\n";
   if (logPath) { try { appendFileSync(logPath, line); } catch { /* best effort */ } } else process.stderr.write(line);
-  if (e.event === "gate.verdict") {
+  if (e.event === "ingress.verdict") {
     feed.unshift({
       at: e.at, tier: e.tier, score: e.score, sourceHost: e.sourceHost, contentKind: e.contentKind,
       kinds: (e.findings as Array<{ kind: string }>).map((f) => f.kind),
@@ -65,30 +65,30 @@ const log = (e: Record<string, unknown>) => {
   }
 };
 
-const engine = new GateEngine(cfg, { log });
+const engine = new IngressEngine(cfg, { log });
 
 // ---------- audit store ----------
-const store: ReceiptStore = new JsonlReceiptStore({ path: env.GATE_RECEIPTS_FILE });
-const retentionDays = Number(env.GATE_RETENTION_DAYS ?? 0);
+const store: ReceiptStore = new JsonlReceiptStore({ path: env.INGRESS_RECEIPTS_FILE });
+const retentionDays = Number(env.INGRESS_RETENTION_DAYS ?? 0);
 if (retentionDays > 0) {
   store.prune(retentionDays);
   setInterval(() => store.prune(retentionDays), 6 * 3600 * 1000).unref();
 }
-function record(keyName: string, r: GateResult) {
+function record(keyName: string, r: IngressResult) {
   try { store.put(toStored(keyName, r.receipt, [...new Set(r.findings.map((f) => f.kind))])); } catch { /* audit is best-effort, never blocks a verdict */ }
 }
 
 // ---------- keys + metering ----------
 interface KeyInfo { name: string; rpm: number; daily: number }
 const keys = new Map<string, KeyInfo>();
-if (env.GATE_KEYS_FILE) {
-  const j = JSON.parse(readFileSync(env.GATE_KEYS_FILE, "utf8")) as Record<string, Partial<KeyInfo>>;
+if (env.INGRESS_KEYS_FILE) {
+  const j = JSON.parse(readFileSync(env.INGRESS_KEYS_FILE, "utf8")) as Record<string, Partial<KeyInfo>>;
   for (const [k, v] of Object.entries(j)) keys.set(k, { name: v.name ?? k.slice(0, 6), rpm: v.rpm ?? 60, daily: v.daily ?? 5000 });
-} else if (env.GATE_KEYS) {
-  for (const pair of env.GATE_KEYS.split(",")) { const [k, name] = pair.split(":"); if (k) keys.set(k.trim(), { name: (name ?? k.slice(0, 6)).trim(), rpm: 60, daily: 5000 }); }
+} else if (env.INGRESS_KEYS) {
+  for (const pair of env.INGRESS_KEYS.split(",")) { const [k, name] = pair.split(":"); if (k) keys.set(k.trim(), { name: (name ?? k.slice(0, 6)).trim(), rpm: 60, daily: 5000 }); }
 }
 const open = keys.size === 0;
-if (open) process.stderr.write(JSON.stringify({ event: "gate.warn", message: "no API keys configured; server is open (development only)" }) + "\n");
+if (open) process.stderr.write(JSON.stringify({ event: "ingress.warn", message: "no API keys configured; server is open (development only)" }) + "\n");
 
 class Meter {
   private minute = new Map<string, { win: number; n: number }>();
@@ -145,9 +145,9 @@ const server = createServer(async (req, res) => {
   try {
     // public, no key
     // public: the key that verifies this instance's receipts. It can verify, never sign.
-    if (req.method === "GET" && (path === "/v1/public-key" || path === "/.well-known/gate-receipt-key")) {
+    if (req.method === "GET" && (path === "/v1/public-key" || path === "/.well-known/ingress-receipt-key")) {
       const pk = engine.publicKey();
-      return pk ? send(res, 200, pk) : send(res, 404, { error: "this instance signs receipts with a shared secret (HMAC), not a public key; set GATE_SIGNING_PRIVATE_KEY" });
+      return pk ? send(res, 200, pk) : send(res, 404, { error: "this instance signs receipts with a shared secret (HMAC), not a public key; set INGRESS_SIGNING_PRIVATE_KEY" });
     }
     if (req.method === "GET" && path === "/healthz") return send(res, 200, { ok: true, sandbox: engine.config.sandbox, keys: keys.size, receipts: store.stats("").total });
     if (req.method === "GET" && (path === "/" || path === "/feed")) return sendFile(res, "feed.html");
@@ -189,7 +189,7 @@ const server = createServer(async (req, res) => {
     if (path === "/v1/verify") {
       const body = await readJson(req);
       if (!body.receipt || typeof body.receipt !== "object") return send(res, 400, { error: "receipt required" });
-      return send(res, 200, GateEngine.verifyReceipt(body.receipt as TaintReceipt, (body.receipt as TaintReceipt).signatureAlg === "ecdsa-p256-sha256" ? engine.publicKey()?.publicKeyPem : env.GATE_SIGNING_KEY));
+      return send(res, 200, IngressEngine.verifyReceipt(body.receipt as TaintReceipt, (body.receipt as TaintReceipt).signatureAlg === "ecdsa-p256-sha256" ? engine.publicKey()?.publicKeyPem : env.INGRESS_SIGNING_KEY));
     }
 
     // scan / fetch consume the quota
@@ -201,14 +201,14 @@ const server = createServer(async (req, res) => {
       if (typeof body.url !== "string") return send(res, 400, { error: "url required" });
       const r = await engine.fetch(body.url, { override: body.override === true });
       record(a.info.name, r);
-      log({ event: "gate.usage", key: a.info.name, op: "fetch", tier: r.tier, ms: Date.now() - started, usage: meter.usage(a.key) });
+      log({ event: "ingress.usage", key: a.info.name, op: "fetch", tier: r.tier, ms: Date.now() - started, usage: meter.usage(a.key) });
       return send(res, r.tier === "clean" || r.overridden ? 200 : 422, r);
     }
     if (path === "/v1/scan") {
       if (typeof body.content !== "string") return send(res, 400, { error: "content required" });
       const r = await engine.scan(body.content, { url: body.source, contentType: body.contentType, isHtml: body.isHtml, override: body.override === true });
       record(a.info.name, r);
-      log({ event: "gate.usage", key: a.info.name, op: "scan", tier: r.tier, ms: Date.now() - started, usage: meter.usage(a.key) });
+      log({ event: "ingress.usage", key: a.info.name, op: "scan", tier: r.tier, ms: Date.now() - started, usage: meter.usage(a.key) });
       return send(res, r.tier === "clean" || r.overridden ? 200 : 422, r);
     }
     return send(res, 404, { error: "not found" });
@@ -218,4 +218,4 @@ const server = createServer(async (req, res) => {
   }
 });
 
-server.listen(PORT, () => process.stderr.write(JSON.stringify({ event: "gate.listen", port: PORT, open, sandbox: engine.config.sandbox, audit: !!env.GATE_RECEIPTS_FILE }) + "\n"));
+server.listen(PORT, () => process.stderr.write(JSON.stringify({ event: "ingress.listen", port: PORT, open, sandbox: engine.config.sandbox, audit: !!env.INGRESS_RECEIPTS_FILE }) + "\n"));

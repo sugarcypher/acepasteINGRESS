@@ -105,7 +105,7 @@ export async function runSandbox(opts: {
   staticVisibleText: string;
   timeoutMs: number;
   allowedScriptHosts?: string[];
-  /** path to a Chromium binary; defaults to GATE_CHROMIUM or Playwright's bundled browser */
+  /** path to a Chromium binary; defaults to INGRESS_CHROMIUM or Playwright's bundled browser */
   executablePath?: string;
 }): Promise<SandboxResult> {
   const t0 = performance.now();
@@ -123,7 +123,7 @@ export async function runSandbox(opts: {
   try {
     browser = await pw.chromium.launch({
       headless: true,
-      executablePath: opts.executablePath ?? process.env.GATE_CHROMIUM ?? undefined,
+      executablePath: opts.executablePath ?? process.env.INGRESS_CHROMIUM ?? undefined,
       args: ["--disable-gpu", "--no-sandbox", "--disable-dev-shm-usage", "--disable-extensions", "--no-first-run"],
     });
   } catch (e) {

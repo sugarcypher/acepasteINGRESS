@@ -1,21 +1,21 @@
-# @acepaste/gate-mcp
+# @acepaste/ingress-mcp
 
-AcePaste Gate as a Model Context Protocol server. Put it in front of an agent's web access: hostile pages are refused and never reach the model; every verdict leaves a signed receipt.
+AcePaste Ingress as a Model Context Protocol server. Put it in front of an agent's web access: hostile pages are refused and never reach the model; every verdict leaves a signed receipt.
 
 ```json
 {
   "mcpServers": {
-    "acepaste-gate": {
+    "acepaste-ingress": {
       "command": "npx",
-      "args": ["-y", "@acepaste/gate-mcp"],
-      "env": { "GATE_SANDBOX": "off" }
+      "args": ["-y", "@acepaste/ingress-mcp"],
+      "env": { "INGRESS_SANDBOX": "off" }
     }
   }
 }
 ```
 
-Tools: `gate_fetch(url, override?)`, `gate_scan(content, source?, contentType?, override?)`, `gate_status()`, `gate_confirm()`, `gate_verify_receipt(receipt)`.
+Tools: `ingress_fetch(url, override?)`, `ingress_scan(content, source?, contentType?, override?)`, `ingress_status()`, `ingress_confirm()`, `ingress_verify_receipt(receipt)`.
 
-Environment: `GATE_SIGNING_KEY`, `GATE_HOSTILE`, `GATE_SUSPECT`, `GATE_CLOAKING=0`, `GATE_SANDBOX=off|escalate|always`, `GATE_POLICY=path`, `GATE_LOG=path`.
+Environment: `INGRESS_SIGNING_KEY`, `INGRESS_HOSTILE`, `INGRESS_SUSPECT`, `INGRESS_CLOAKING=0`, `INGRESS_SANDBOX=off|escalate|always`, `INGRESS_POLICY=path`, `INGRESS_LOG=path`.
 
 Full documentation: https://github.com/sugarcypher/acepasteGATE

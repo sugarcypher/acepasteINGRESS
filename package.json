@@ -1,14 +1,14 @@
 {
-  "name": "acepaste-gate",
+  "name": "acepaste-ingress",
   "private": true,
-  "version": "0.6.0",
-  "description": "AcePaste Gate: a security gate between internet content and AI ingestion. One engine, many frontends.",
+  "version": "0.7.0",
+  "description": "AcePaste Ingress: a security gate between internet content and AI ingestion. One engine, many frontends.",
   "workspaces": [
     "packages/*"
   ],
   "scripts": {
-    "build": "npm run build -w @acepaste/gate-core && npm run build -w @acepaste/gate-mcp && npm run build -w @acepaste/gate-http",
-    "test": "npm test -w @acepaste/gate-core",
+    "build": "npm run build -w @acepaste/ingress && npm run build -w @acepaste/ingress-mcp && npm run build -w @acepaste/ingress-http",
+    "test": "npm test -w @acepaste/ingress",
     "demo": "node packages/core/dist/src/cli.js",
     "eval": "node packages/core/dist/eval/run.js"
   },

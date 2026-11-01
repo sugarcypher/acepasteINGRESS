@@ -1,5 +1,5 @@
-export { GateEngine, aggregate, buildEnvelope, buildLogEntry } from "./engine.js";
-export type { EngineDeps, GateOptions } from "./engine.js";
+export { IngressEngine, aggregate, buildEnvelope, buildLogEntry } from "./engine.js";
+export type { EngineDeps, IngressOptions } from "./engine.js";
 export { acquire, AcquireError, MAX_REDIRECTS } from "./acquire.js";
 export type { FetchLike } from "./acquire.js";
 export { checkTarget, isPrivateIP, isPrivateIPv4, isPrivateIPv6, NetPolicyError, DEFAULT_NET_POLICY } from "./netpolicy.js";
@@ -22,3 +22,6 @@ export type { TaintGuard, TaintPolicy } from "./taint.js";
 export { loadPolicyFile } from "./policyfile.js";
 export { countHostileInvisibles, ACEPASTE_INVISIBLE_SOURCE, ACEPASTE_INVISIBLE_SUPPL_SOURCE } from "./acepaste-alphabet.js";
 export * from "./types.js";
+
+/** @deprecated renamed to IngressEngine in 0.7.0 (AcePaste Gate -> AcePaste Ingress) */
+export { IngressEngine as GateEngine } from "./engine.js";

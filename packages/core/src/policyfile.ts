@@ -14,11 +14,11 @@
  * }
  */
 import { readFileSync } from "node:fs";
-import type { GateConfig } from "./types.js";
+import type { IngressConfig } from "./types.js";
 
-export function loadPolicyFile(path: string): Partial<GateConfig> {
+export function loadPolicyFile(path: string): Partial<IngressConfig> {
   const raw = JSON.parse(readFileSync(path, "utf8")) as Record<string, any>;
-  const out: Partial<GateConfig> = {};
+  const out: Partial<IngressConfig> = {};
   const num = (v: unknown) => (typeof v === "number" && v >= 0 && v <= 1 ? v : undefined);
   if (raw.thresholds) {
     const s = num(raw.thresholds.suspect), h = num(raw.thresholds.hostile);

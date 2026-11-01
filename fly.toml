@@ -1,5 +1,5 @@
 # fly deploy  (after: fly launch --no-deploy to create the app + volume)
-app = "acepaste-gate"
+app = "acepaste-ingress"
 primary_region = "sjc"
 
 [build]
@@ -7,12 +7,12 @@ primary_region = "sjc"
 
 [env]
   PORT = "8787"
-  GATE_SANDBOX = "off"
-  GATE_RECEIPTS_FILE = "/data/receipts.jsonl"
-  GATE_RETENTION_DAYS = "30"
+  INGRESS_SANDBOX = "off"
+  INGRESS_RECEIPTS_FILE = "/data/receipts.jsonl"
+  INGRESS_RETENTION_DAYS = "30"
 
 [[mounts]]
-  source = "gate_data"
+  source = "ingress_data"
   destination = "/data"
 
 [http_service]
@@ -30,6 +30,6 @@ primary_region = "sjc"
     grace_period = "10s"
 
 # Secrets (set once, never in this file):
-#   fly secrets set GATE_SIGNING_KEY=<random 32+ chars>
-#   fly secrets set GATE_KEYS="<key1>:design-partner-a,<key2>:design-partner-b"
-# Leave GATE_KEYS unset only for a throwaway open demo.
+#   fly secrets set INGRESS_SIGNING_KEY=<random 32+ chars>
+#   fly secrets set INGRESS_KEYS="<key1>:design-partner-a,<key2>:design-partner-b"
+# Leave INGRESS_KEYS unset only for a throwaway open demo.

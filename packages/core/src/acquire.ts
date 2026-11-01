@@ -12,7 +12,7 @@
 
 import { Agent, fetch as undiciFetch, type Dispatcher } from "undici";
 import { checkTarget, NetPolicyError, type NetPolicy } from "./netpolicy.js";
-import type { AcquireResult, GateConfig } from "./types.js";
+import type { AcquireResult, IngressConfig } from "./types.js";
 
 const HUMAN_HEADERS: Record<string, string> = {
   "user-agent":
@@ -28,7 +28,7 @@ const HUMAN_HEADERS: Record<string, string> = {
 };
 
 const AGENT_HEADERS: Record<string, string> = {
-  "user-agent": "AcePasteGate/0.3 (+https://acepaste.xyz/gate)",
+  "user-agent": "AcePasteIngress/0.7 (+https://acepaste.xyz/ingress)",
   accept: "text/html,application/xhtml+xml,text/markdown,text/plain;q=0.9,application/json;q=0.8,*/*;q=0.5",
 };
 
@@ -59,7 +59,7 @@ function pinnedFetch(addrs: string[]): FetchLike {
 export async function acquire(
   url: string,
   fingerprint: "human" | "agent",
-  config: GateConfig,
+  config: IngressConfig,
   policy: NetPolicy,
   fetchImpl?: FetchLike,
   resolver?: (host: string) => Promise<string[]>,

@@ -8,14 +8,14 @@ Drafts to send as yourself. Edit freely; these are built from your stated regist
 
 **Title** (80 char limit; pick one):
 
-- `Show HN: AcePaste Gate – a security gate between web content and AI ingestion`
+- `Show HN: AcePaste Ingress – a security gate between web content and AI ingestion`
 - `Show HN: Catch prompt injection in the gap between what a page shows and what an AI reads`
 
 **Body:**
 
 I spent five years as the target of an intrusion and taught myself forensics to understand it; one of the things that stuck with me is that the dangerous payload is almost never the part you can see. It's in the gap between what something displays and what a machine actually ingests.
 
-Prompt injection lives in exactly that gap. Most defenses classify the prompt after extraction, at the model boundary. AcePaste Gate works one step earlier, on the page itself, and its whole design follows a single rule: anything a model would receive that a human looking at the same source would not see is suspect by default.
+Prompt injection lives in exactly that gap. Most defenses classify the prompt after extraction, at the model boundary. AcePaste Ingress works one step earlier, on the page itself, and its whole design follows a single rule: anything a model would receive that a human looking at the same source would not see is suspect by default.
 
 So it checks the places the model is blind to. Invisible and smuggled Unicode (tag characters, zero-width channels, look-alike spaces, bidi overrides, variation-selector encoding, homoglyphs). Text hidden by CSS, or coloured to match its background, off-screen, in attributes, comments, SVG, srcdoc. Scripts that detect automation and serve agents a different page than humans (it fetches twice and diffs; optionally renders in a disposable headless browser and diffs again). Then it hands the model the clean text inside a provenance envelope and a signed, tamper-evident receipt of what it stripped and why.
 
@@ -41,7 +41,7 @@ Prompt injection isn't usually in the text you can see. It's in the gap between 
 Everyone's classifier sits at the prompt boundary — it reads the text after it's already extracted. By then the invisible part is gone: the zero-width characters, the off-screen div, the script that served your agent a different page than it served you.
 
 **3/**
-AcePaste Gate works one step earlier, on the page itself. One rule generates the whole thing: anything the model would receive that a human looking at the same source would not see is suspect by default.
+AcePaste Ingress works one step earlier, on the page itself. One rule generates the whole thing: anything the model would receive that a human looking at the same source would not see is suspect by default.
 
 **4/**
 Invisible Unicode. CSS-hidden and off-screen text. Attribute, comment, SVG and srcdoc carriers. Agent-targeted cloaking (it fetches twice and compares; renders in a throwaway browser and compares again). Then it wraps the clean text in a provenance envelope and a signed receipt of what it stripped.
@@ -59,7 +59,7 @@ I built this because I spent years as the target of the invisible kind of attack
 
 ## For the acepaste.xyz "For developers" link
 
-> **AcePaste Gate** — the same invisible-text defense that powers the cleaner, as a security gate in front of your AI. Drop it between the web and your agent: it strips the hidden channels a model can't see and hands back clean text with a signed receipt. Open source. [See what it catches, live →](https://YOUR-APP.fly.dev/)
+> **AcePaste Ingress** — the same invisible-text defense that powers the cleaner, as a security gate in front of your AI. Drop it between the web and your agent: it strips the hidden channels a model can't see and hands back clean text with a signed receipt. Open source. [See what it catches, live →](https://YOUR-APP.fly.dev/)
 
 ---
 
@@ -70,16 +70,16 @@ For an agent builder to paste. Replace the path once published to npm.
 ```json
 {
   "mcpServers": {
-    "acepaste-gate": {
+    "acepaste-ingress": {
       "command": "npx",
-      "args": ["-y", "@acepaste/gate-mcp"],
-      "env": { "GATE_SANDBOX": "escalate" }
+      "args": ["-y", "@acepaste/ingress-mcp"],
+      "env": { "INGRESS_SANDBOX": "escalate" }
     }
   }
 }
 ```
 
-Then the agent fetches the web through `gate_fetch` / `gate_scan` instead of a raw fetch tool; hostile pages are refused and never reach the model, and every verdict leaves a receipt.
+Then the agent fetches the web through `ingress_fetch` / `ingress_scan` instead of a raw fetch tool; hostile pages are refused and never reach the model, and every verdict leaves a receipt.
 
 ---
 

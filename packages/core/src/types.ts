@@ -1,5 +1,5 @@
 /**
- * AcePaste Gate — shared types.
+ * AcePaste Ingress — shared types.
  *
  * Governing principle: anything the model would receive that a human looking
  * at the same source would not see is suspect by default.
@@ -7,7 +7,7 @@
 
 import type { NetPolicy } from "./netpolicy.js";
 
-export const ENGINE_VERSION = "0.6.0";
+export const ENGINE_VERSION = "0.7.0";
 /** bump whenever a detector's behavior changes; receipts carry it so verdicts are reproducible */
 export const RULESET_VERSION = "2026.10.31-1";
 
@@ -163,7 +163,7 @@ export interface DomainRule {
   cloakingCheck?: boolean;
 }
 
-export interface GatePolicy {
+export interface IngressPolicy {
   domains: DomainRule[];
 }
 
@@ -201,7 +201,7 @@ export interface TaintReceipt {
   signature?: string;
 }
 
-export interface GateResult {
+export interface IngressResult {
   tier: Tier;
   /** aggregate attack score, 0..1 */
   score: number;
@@ -218,7 +218,7 @@ export interface GateResult {
   timings: Partial<Record<PassName | "total", number>>;
 }
 
-export interface GateConfig {
+export interface IngressConfig {
   /** score at or above which the page is refused and cannot be overridden */
   hostileThreshold: number;
   /** score at or above which the page is refused but may be overridden */
@@ -246,14 +246,14 @@ export interface GateConfig {
   /** network policy: what the gate itself may connect to */
   net: NetPolicy;
   /** per-domain rules */
-  policy: GatePolicy;
+  policy: IngressPolicy;
   /** custom detectors */
   detectors: Detector[];
   /** chain receipts: each receipt carries the digest of the previous one */
   chainReceipts: boolean;
 }
 
-export const DEFAULT_CONFIG: GateConfig = {
+export const DEFAULT_CONFIG: IngressConfig = {
   hostileThreshold: 0.7,
   suspectThreshold: 0.25,
   cloakingCheck: true,

@@ -15,7 +15,7 @@
 
 import { appendFileSync, mkdirSync, readFileSync, existsSync, writeFileSync, renameSync } from "node:fs";
 import { dirname } from "node:path";
-import type { TaintReceipt } from "@acepaste/gate-core";
+import type { TaintReceipt } from "@acepaste/ingress";
 
 export interface StoredReceipt {
   /** API key name that produced this verdict (never the raw key) */

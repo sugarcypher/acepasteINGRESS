@@ -1,8 +1,8 @@
-# AcePaste Gate
+# AcePaste Ingress
 
 A security gate between internet content and AI ingestion. One engine, many frontends.
 
-Working name (ratified 2026-10-01; a rename is under consideration). Everything here is Claude-generated (through 2026-10-31) and awaiting Axel's objections; ratified decisions are listed at the end. The non-English detection gap and the per-language pattern sets are explicitly **not** marked verified — they need native-speaker review before any ruleset is called that.
+Named AcePaste Ingress on 2026-11-01 (previously AcePaste Gate). Ingress is the engineering term for traffic entering a system; this controls what enters a model's context, the way an ingress controller controls what enters a cluster. Everything here is Claude-generated (through 2026-10-31) and awaiting Axel's objections; ratified decisions are listed at the end. The non-English detection gap and the per-language pattern sets are explicitly **not** marked verified — they need native-speaker review before any ruleset is called that.
 
 ## Principle
 
@@ -49,16 +49,16 @@ The corpus covers: Unicode tag characters, zero-width binary channels, bidi over
 
 Every verdict issues a signed, versioned, hash-chained receipt (`engineVersion`, `rulesetVersion`, `rawDigest`, `deliveredDigest`, per-finding summary with evidence class, band and artifact digest, `previous` digest, `signatureAlg`, `keyId`, `signature`).
 
-**Public-key receipts (Kith & Revere lineage).** With `GATE_SIGNING_PRIVATE_KEY_FILE` set, receipts are signed with ECDSA P-256. Anyone holding the public key (served at `GET /v1/public-key`) can verify a receipt; nobody without the private key can forge one. With only the shared-secret `GATE_SIGNING_KEY` (HMAC), whoever can verify can also forge, which is why the audit tier should run on the key pair. `gate --keygen` prints a new pair; `GATE_VERIFY_PUBLIC_KEY=pub.pem gate --verify < receipt.json` checks one offline.
+**Public-key receipts (Kith & Revere lineage).** With `INGRESS_SIGNING_PRIVATE_KEY_FILE` set, receipts are signed with ECDSA P-256. Anyone holding the public key (served at `GET /v1/public-key`) can verify a receipt; nobody without the private key can forge one. With only the shared-secret `INGRESS_SIGNING_KEY` (HMAC), whoever can verify can also forge, which is why the audit tier should run on the key pair. `ingress --keygen` prints a new pair; `INGRESS_VERIFY_PUBLIC_KEY=pub.pem ingress --verify < receipt.json` checks one offline.
 
-**Evidence model (Kith & Revere lineage).** A finding is a conclusion, never a fact: each is labeled `inference` or, when its confidence is in the low band, `hypothesis`; carries a confidence band (high at 0.8 and above, medium at 0.5, low below); cites its artifact by digest (the excerpt it matched, or the whole body); and states the benign explanation a reviewer should rule out (`altExplanation`). The envelope the model sees prints the class beside each finding. Each receipt also carries `acepasteInvisibleCount`, the hostile-invisible tally computed from the shared AcePaste alphabet, so a gate verdict and an AcePaste extension scan of the same bytes agree by construction. `GateEngine.verifyReceipt(receipt, key)` checks the digest and signature; tampering is detected. This is the audit artifact the enterprise tier sells.
+**Evidence model (Kith & Revere lineage).** A finding is a conclusion, never a fact: each is labeled `inference` or, when its confidence is in the low band, `hypothesis`; carries a confidence band (high at 0.8 and above, medium at 0.5, low below); cites its artifact by digest (the excerpt it matched, or the whole body); and states the benign explanation a reviewer should rule out (`altExplanation`). The envelope the model sees prints the class beside each finding. Each receipt also carries `acepasteInvisibleCount`, the hostile-invisible tally computed from the shared AcePaste alphabet, so a gate verdict and an AcePaste extension scan of the same bytes agree by construction. `IngressEngine.verifyReceipt(receipt, key)` checks the digest and signature; tampering is detected. This is the audit artifact the enterprise tier sells.
 
 ## Layout
 
 ```
-packages/core   engine, passes, normalizer, taint guard, policy loader, CLI   @acepaste/gate-core
-packages/mcp    Model Context Protocol server                                 @acepaste/gate-mcp
-packages/http   metered HTTP service, public attack feed, audit console        @acepaste/gate-http
+packages/core   engine, passes, normalizer, taint guard, policy loader, CLI   @acepaste/ingress
+packages/mcp    Model Context Protocol server                                 @acepaste/ingress-mcp
+packages/http   metered HTTP service, public attack feed, audit console        @acepaste/ingress-http
 packages/core/eval   attack + benign + ambiguous corpus and the harness
 fixtures/            one clean page, one hostile page
 tools/underlight     the endpoint companion: inventories JavaScript that can execute on this machine (Python, standard library only)
@@ -78,43 +78,43 @@ node packages/core/dist/src/cli.js --text --sandbox=always < fixtures/hostile-ke
 node packages/core/dist/src/cli.js --verify < receipt.json
 ```
 
-The browser sandbox needs a Chromium binary. Playwright is an optional dependency; set `GATE_CHROMIUM` to an existing binary to skip the download. Without one, the sandbox reports itself not-run and the static passes proceed.
+The browser sandbox needs a Chromium binary. Playwright is an optional dependency; set `INGRESS_CHROMIUM` to an existing binary to skip the download. Without one, the sandbox reports itself not-run and the static passes proceed.
 
 ## As a Model Context Protocol server
 
 ```json
 {
   "mcpServers": {
-    "acepaste-gate": {
+    "acepaste-ingress": {
       "command": "node",
-      "args": ["/abs/acepaste-gate/packages/mcp/dist/server.js"],
-      "env": { "GATE_SIGNING_KEY": "change-me", "GATE_SANDBOX": "escalate", "GATE_LOG": "/var/log/gate.jsonl" }
+      "args": ["/abs/acepaste-ingress/packages/mcp/dist/server.js"],
+      "env": { "INGRESS_SIGNING_KEY": "change-me", "INGRESS_SANDBOX": "escalate", "INGRESS_LOG": "/var/log/acepaste-ingress.jsonl" }
     }
   }
 }
 ```
 
-Tools: `gate_fetch(url, override?)`, `gate_scan(content, source?, contentType?, override?)`, `gate_status()`, `gate_confirm()`, `gate_verify_receipt(receipt)`. Refused verdicts return `isError: true`. Env: `GATE_SIGNING_KEY`, `GATE_HOSTILE`, `GATE_SUSPECT`, `GATE_CLOAKING=0`, `GATE_SANDBOX=off|escalate|always`, `GATE_POLICY=path`, `GATE_LOG=path`.
+Tools: `ingress_fetch(url, override?)`, `ingress_scan(content, source?, contentType?, override?)`, `ingress_status()`, `ingress_confirm()`, `ingress_verify_receipt(receipt)`. Refused verdicts return `isError: true`. Env: `INGRESS_SIGNING_KEY`, `INGRESS_HOSTILE`, `INGRESS_SUSPECT`, `INGRESS_CLOAKING=0`, `INGRESS_SANDBOX=off|escalate|always`, `INGRESS_POLICY=path`, `INGRESS_LOG=path`.
 
 ## As the metered HTTP service
 
 ```sh
-PORT=8787 GATE_KEYS="key1:acme,key2:globex" GATE_SIGNING_KEY=… node packages/http/dist/server.js
+PORT=8787 INGRESS_KEYS="key1:acme,key2:globex" INGRESS_SIGNING_KEY=… node packages/http/dist/server.js
 ```
 
-Endpoints: `POST /v1/fetch`, `POST /v1/scan`, `POST /v1/verify`; `GET /v1/feed` (public); `GET /v1/receipts`, `/v1/receipts/export`, `/v1/receipts/stats` (the caller's own audit log); `GET /healthz`; `GET /` (the live attack feed page), `GET /console` (the audit console). Bearer-key auth (`GATE_KEYS` or `GATE_KEYS_FILE` with per-key rpm/daily limits); audit reads do not consume the scan quota; refused verdicts return HTTP 422.
+Endpoints: `POST /v1/fetch`, `POST /v1/scan`, `POST /v1/verify`; `GET /v1/feed` (public); `GET /v1/receipts`, `/v1/receipts/export`, `/v1/receipts/stats` (the caller's own audit log); `GET /healthz`; `GET /` (the live attack feed page), `GET /console` (the audit console). Bearer-key auth (`INGRESS_KEYS` or `INGRESS_KEYS_FILE` with per-key rpm/daily limits); audit reads do not consume the scan quota; refused verdicts return HTTP 422.
 
-**The audit plane is the paid tier.** Every verdict's signed receipt is stored, scoped to the API key that produced it, and searchable by URL, host, tier, kind and time; exportable as a JSON download; retained per `GATE_RETENTION_DAYS`. This is the record an enterprise security review asks for — proof of what untrusted content its agents ingested and what the gate did about it. The store is an append-only file behind a `ReceiptStore` interface; swap it for Postgres/ClickHouse for volume. The public feed exposes attacking hosts, finding kinds, payload excerpts and outbound hosts — never customer content.
+**The audit plane is the paid tier.** Every verdict's signed receipt is stored, scoped to the API key that produced it, and searchable by URL, host, tier, kind and time; exportable as a JSON download; retained per `INGRESS_RETENTION_DAYS`. This is the record an enterprise security review asks for — proof of what untrusted content its agents ingested and what the gate did about it. The store is an append-only file behind a `ReceiptStore` interface; swap it for Postgres/ClickHouse for volume. The public feed exposes attacking hosts, finding kinds, payload excerpts and outbound hosts — never customer content.
 
-**Deploy:** `Dockerfile`, `fly.toml` and `DEPLOY.md` stand up a single small host. The public instance runs with the sandbox off (no Chromium shipped); the paid/self-hosted tier turns `GATE_SANDBOX=escalate` on. `LAUNCH.md` has the launch copy and the MCP install snippet.
+**Deploy:** `Dockerfile`, `fly.toml` and `DEPLOY.md` stand up a single small host. The public instance runs with the sandbox off (no Chromium shipped); the paid/self-hosted tier turns `INGRESS_SANDBOX=escalate` on. `LAUNCH.md` has the launch copy and the MCP install snippet.
 
 ## As a library, with the taint guard
 
 ```ts
-import { GateEngine, createTaintGuard } from "@acepaste/gate-core";
-const gate = new GateEngine({ signingKey: process.env.KEY });
+import { IngressEngine, createTaintGuard } from "@acepaste/ingress";
+const ingress = new IngressEngine({ signingKey: process.env.KEY });
 const guard = createTaintGuard();
-const r = await gate.fetch("https://example.com/doc");
+const r = await ingress.fetch("https://example.com/doc");
 guard.ingest(r);
 model.push(r.envelope);                 // hand the envelope to the model verbatim
 if (!guard.allow("send_email")) { /* ask the human, then guard.confirm() */ }
@@ -124,7 +124,7 @@ if (!guard.allow("send_email")) { /* ask the human, then guard.confirm() */ }
 
 ```ts
 const brand = { name: "brand", version: "1", run: (ctx) => /acme/i.test(ctx.raw) ? [{ pass: "plugin", kind: "plugin.brand", confidence: 0.9, severity: 0.8, message: "mentions acme", action: "none" }] : [] };
-new GateEngine({ detectors: [brand] });
+new IngressEngine({ detectors: [brand] });
 ```
 
 ## Policy file
@@ -154,6 +154,10 @@ python3 tools/underlight/underlight.py explain node_modules/some-pkg/index.js
 
 See `tools/underlight/README.md`. It is untested on a real macOS fleet; treat findings as leads.
 
+## Changes in 0.7.0 (2026-11-01)
+
+- Renamed AcePaste Gate to AcePaste Ingress: packages `@acepaste/ingress`, `@acepaste/ingress-mcp`, `@acepaste/ingress-http`; commands `ingress`, `ingress-mcp`, `ingress-http`; Model Context Protocol server `acepaste-ingress` with tools `ingress_fetch`, `ingress_scan`, `ingress_status`, `ingress_confirm`, `ingress_verify_receipt`; envelope marker `<<acepaste-ingress …>>`; environment variables `INGRESS_*` (formerly `GATE_*`); class `IngressEngine` (`GateEngine` kept as a deprecated alias).
+
 ## Changes in 0.6.0 (2026-10-31)
 
 - Supply-chain pass (underlight lineage): `supplychain.lifecycle_script`, `supplychain.url_dependency`, `supplychain.offregistry_resolution`, `supplychain.install_instruction`.
@@ -162,7 +166,7 @@ See `tools/underlight/README.md`. It is untested on a real macOS fleet; treat fi
 - Whitespace channels: look-alike Unicode spaces in word gaps are flagged, decoded as bits and rescanned; French spacing, thousands separators and indentation are excluded.
 - Fixed a false positive in the meaning pass: "run:" at the end of a line followed by a code block on the next line (installation docs) no longer reads as a tool invocation; "run: curl …" on one line still does.
 - npm-publishable packages (files, repository, public access), LICENSE, per-package READMEs; the Model Context Protocol server reports the engine version.
-- From Kith & Revere: ECDSA P-256 public-key receipts (receipt version 3, `signatureAlg`, `keyId`, `/v1/public-key`, `gate --keygen`); the evidence model on every finding; the secrets pass with redaction everywhere the gate emits text.
+- From Kith & Revere: ECDSA P-256 public-key receipts (receipt version 3, `signatureAlg`, `keyId`, `/v1/public-key`, `ingress --keygen`); the evidence model on every finding; the secrets pass with redaction everywhere the gate emits text.
 
 ## Ratified decisions
 

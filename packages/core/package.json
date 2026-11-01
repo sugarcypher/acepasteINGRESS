@@ -1,12 +1,12 @@
 {
-  "name": "@acepaste/gate-core",
-  "version": "0.6.0",
-  "description": "AcePaste Gate engine: acquire, visibility, character, script, supply-chain, sandbox, meaning, verdict, envelope, receipts.",
+  "name": "@acepaste/ingress",
+  "version": "0.7.0",
+  "description": "AcePaste Ingress engine: acquire, visibility, character, script, supply-chain, sandbox, meaning, verdict, envelope, receipts.",
   "type": "module",
   "main": "dist/src/index.js",
   "types": "dist/src/index.d.ts",
   "bin": {
-    "gate": "dist/src/cli.js"
+    "ingress": "dist/src/cli.js"
   },
   "scripts": {
     "build": "tsc -p tsconfig.json",
