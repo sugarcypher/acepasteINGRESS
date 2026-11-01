@@ -8,7 +8,8 @@ browser sandbox off, so there is no Chromium to ship and the image is small.
 ```sh
 fly launch --no-deploy          # creates the app; keep the generated name or set it in fly.toml
 fly volumes create gate_data --size 1 --region sjc
-fly secrets set GATE_SIGNING_KEY="$(openssl rand -hex 32)"
+node packages/core/dist/src/cli.js --keygen > gate-keys.txt   # keep the private key secret; publish the public key
+fly secrets set GATE_SIGNING_PRIVATE_KEY="$(awk '/BEGIN PRIVATE/,/END PRIVATE/' gate-keys.txt)"
 fly secrets set GATE_KEYS="$(openssl rand -hex 16):design-partner-a"
 fly deploy
 ```

@@ -36,6 +36,11 @@ const PUBLIC_DIR = join(dirname(fileURLToPath(import.meta.url)), "..", "public")
 // ---------- config ----------
 const cfg: Partial<GateConfig> = env.GATE_POLICY ? loadPolicyFile(env.GATE_POLICY) : {};
 if (env.GATE_SIGNING_KEY) cfg.signingKey = env.GATE_SIGNING_KEY;
+// ECDSA P-256 private key (PEM, or a path to one). Preferred: receipts become verifiable by anyone with the public key.
+{
+  const k = env.GATE_SIGNING_PRIVATE_KEY_FILE ? readFileSync(env.GATE_SIGNING_PRIVATE_KEY_FILE, "utf8") : env.GATE_SIGNING_PRIVATE_KEY;
+  if (k) cfg.signingPrivateKey = k.includes("BEGIN") ? k.replace(/\\n/g, "\n") : readFileSync(k, "utf8");
+}
 if (env.GATE_SANDBOX === "off" || env.GATE_SANDBOX === "escalate" || env.GATE_SANDBOX === "always") cfg.sandbox = env.GATE_SANDBOX;
 if (env.GATE_CLOAKING === "0") cfg.cloakingCheck = false;
 
@@ -139,6 +144,11 @@ const server = createServer(async (req, res) => {
   const path = url.pathname;
   try {
     // public, no key
+    // public: the key that verifies this instance's receipts. It can verify, never sign.
+    if (req.method === "GET" && (path === "/v1/public-key" || path === "/.well-known/gate-receipt-key")) {
+      const pk = engine.publicKey();
+      return pk ? send(res, 200, pk) : send(res, 404, { error: "this instance signs receipts with a shared secret (HMAC), not a public key; set GATE_SIGNING_PRIVATE_KEY" });
+    }
     if (req.method === "GET" && path === "/healthz") return send(res, 200, { ok: true, sandbox: engine.config.sandbox, keys: keys.size, receipts: store.stats("").total });
     if (req.method === "GET" && (path === "/" || path === "/feed")) return sendFile(res, "feed.html");
     if (req.method === "GET" && path === "/console") return sendFile(res, "console.html");
@@ -179,7 +189,7 @@ const server = createServer(async (req, res) => {
     if (path === "/v1/verify") {
       const body = await readJson(req);
       if (!body.receipt || typeof body.receipt !== "object") return send(res, 400, { error: "receipt required" });
-      return send(res, 200, GateEngine.verifyReceipt(body.receipt as TaintReceipt, env.GATE_SIGNING_KEY));
+      return send(res, 200, GateEngine.verifyReceipt(body.receipt as TaintReceipt, (body.receipt as TaintReceipt).signatureAlg === "ecdsa-p256-sha256" ? engine.publicKey()?.publicKeyPem : env.GATE_SIGNING_KEY));
     }
 
     // scan / fetch consume the quota

@@ -22,6 +22,7 @@ export type PassName =
   | "character"
   | "script"
   | "supplychain"
+  | "secrets"
   | "meaning"
   | "cloaking"
   | "sandbox"
@@ -61,6 +62,8 @@ export type FindingKind =
   | "supplychain.url_dependency"
   | "supplychain.offregistry_resolution"
   | "supplychain.install_instruction"
+  // secrets pass (Kith & Revere lineage)
+  | "secrets.credential_in_content"
   // sandbox pass
   | "sandbox.text_injected_after_load"
   | "sandbox.webdriver_keyed_divergence"
@@ -93,6 +96,14 @@ export interface Finding {
   location?: string;
   /** what the engine did about it */
   action: "none" | "neutralized" | "quarantined";
+  /** Kith & Revere evidence model, attached by the engine: a finding is a conclusion, never a Fact */
+  evidenceClass?: "inference" | "hypothesis";
+  /** confidence band: high >= 0.8, medium >= 0.5, low below */
+  band?: "high" | "medium" | "low";
+  /** sha256 of the artifact the finding cites: its excerpt, or the whole acquired body */
+  artifactDigest?: string;
+  /** the benign explanation a reviewer should rule out before acting */
+  altExplanation?: string;
 }
 
 export interface AcquireResult {
@@ -157,7 +168,7 @@ export interface GatePolicy {
 }
 
 export interface TaintReceipt {
-  version: "2";
+  version: "3";
   engineVersion: string;
   rulesetVersion: string;
   issuedAt: string;
@@ -177,7 +188,11 @@ export interface TaintReceipt {
   overridden: boolean;
   /** which passes actually ran (sandbox may not have) */
   passesRun: PassName[];
-  findings: Array<Pick<Finding, "pass" | "kind" | "confidence" | "severity" | "action">>;
+  findings: Array<Pick<Finding, "pass" | "kind" | "confidence" | "severity" | "action" | "evidenceClass" | "band" | "artifactDigest">>;
+  /** how `signature` was made: a shared-secret HMAC (only the key holder can verify) or ECDSA P-256 (anyone with the public key can verify, nobody without the private key can forge) */
+  signatureAlg?: "hmac-sha256" | "ecdsa-p256-sha256";
+  /** first 16 hex characters of sha256 over the signer's public key (ECDSA only) */
+  keyId?: string;
   /** sha256 of the previous receipt in this session, for audit chains */
   previous?: string;
   /** sha256 of this receipt's canonical body (without signature) */
@@ -214,8 +229,10 @@ export interface GateConfig {
   maxBodyBytes: number;
   /** fetch timeout, milliseconds */
   fetchTimeoutMs: number;
-  /** optional HMAC key for signing receipts */
+  /** optional HMAC key for signing receipts (shared secret: verifiers can also forge) */
   signingKey?: string;
+  /** optional ECDSA P-256 private key, PEM (PKCS#8). Preferred over signingKey: receipts become publicly verifiable and unforgeable */
+  signingPrivateKey?: string;
   /** cache verdicts by url for this many seconds; 0 disables */
   cacheTtlSeconds: number;
   /** "off": static only. "escalate": run when the static script pass is suspicious. "always": every HTML page. */

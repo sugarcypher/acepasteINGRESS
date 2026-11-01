@@ -11,7 +11,7 @@
  *   hostile  -> refuse. Not overridable at runtime. Logged.
  */
 
-import { createHash, createHmac, randomBytes } from "node:crypto";
+import { createHash, createHmac, randomBytes, createPrivateKey, createPublicKey, generateKeyPairSync, sign as cryptoSign, verify as cryptoVerify, type KeyObject } from "node:crypto";
 import { acquire, AcquireError, type FetchLike } from "./acquire.js";
 import { analyzeHtml, rulesFromCss, colorRulesFromCss, type HiddenRule, type ColorRule } from "./visibility.js";
 import { scanCharacters } from "./character.js";
@@ -19,6 +19,8 @@ import { countHostileInvisibles } from "./acepaste-alphabet.js";
 import { analyzeScripts } from "./script.js";
 import { scanMeaning, neutralizeMeaning } from "./meaning.js";
 import { scanSupplyChain } from "./supplychain.js";
+import { scanSecrets, redactSecrets } from "./secrets.js";
+import { attachEvidence } from "./evidence.js";
 import { adaptJavascript, adaptJson, adaptMarkdown, adaptText, decodeEntities, detectKind } from "./adapters.js";
 import { runSandbox } from "./sandbox.js";
 import {
@@ -315,6 +317,16 @@ export class GateEngine {
       passesRun.push("plugin");
     }
 
+    // secrets pass (Kith & Revere lineage): find credentials, then make sure no excerpt can carry one
+    const tse = performance.now();
+    findings.push(...scanSecrets(cleanedSegments, charAll.decodedPayloads));
+    for (const f of findings) if (f.excerpt) f.excerpt = redactSecrets(f.excerpt);
+    timings.secrets = performance.now() - tse;
+    passesRun.push("secrets");
+
+    // evidence model (Kith & Revere lineage): class, band, cited artifact, benign alternative
+    attachEvidence(findings, sha256(a.raw));
+
     // score and tier (per-domain thresholds override)
     const score = aggregate(findings);
     const hostileAt = a.rule?.hostileThreshold ?? this.config.hostileThreshold;
@@ -329,6 +341,7 @@ export class GateEngine {
       const keep = cleanedSegments.filter((s) => s.visibility === "visible" || (tier === "clean" && s.visibility === "attribute" && s.path.endsWith("@alt")));
       delivered = keep.map((s) => (s.visibility === "attribute" ? `[image alt: ${s.text.trim()}]` : s.text)).join("\n").replace(/[ \t]+/g, " ").replace(/\n{3,}/g, "\n\n").trim();
       if (overridden) delivered = neutralizeMeaning(delivered);
+      delivered = redactSecrets(delivered);
     }
 
     const receipt = this.receipt({ url: a.url, finalUrl: a.finalUrl, redirectChain: a.redirectChain, kind: a.kind, raw: a.raw, delivered, tier, score, findings, overridden, passesRun, acepasteInvisibleCount: countHostileInvisibles(a.raw) });
@@ -370,6 +383,7 @@ export class GateEngine {
   }
 
   private refuse(url: string, findings: Finding[], timings: GateResult["timings"], t0: number, kind: ContentKind): GateResult {
+    attachEvidence(findings, sha256(""));
     const receipt = this.receipt({ url, finalUrl: url, redirectChain: [], kind, raw: "", delivered: "", tier: "hostile", score: 1, findings, overridden: false, passesRun: ["policy"], acepasteInvisibleCount: 0 });
     const envelope = buildEnvelope(url, "hostile", "", findings, receipt, false);
     timings.total = performance.now() - t0;
@@ -385,8 +399,9 @@ export class GateEngine {
   }
 
   private receipt(r: { url: string; finalUrl: string; redirectChain: string[]; kind: ContentKind; raw: string; delivered: string; tier: Tier; score: number; findings: Finding[]; overridden: boolean; passesRun: PassName[]; acepasteInvisibleCount: number }): TaintReceipt {
+    const ecdsa = this.signer();
     const body: Omit<TaintReceipt, "digest" | "signature"> = {
-      version: "2",
+      version: "3",
       engineVersion: ENGINE_VERSION,
       rulesetVersion: RULESET_VERSION,
       issuedAt: this.deps.now().toISOString(),
@@ -398,24 +413,70 @@ export class GateEngine {
       tier: r.tier, score: +r.score.toFixed(4),
       overridden: r.overridden,
       passesRun: r.passesRun,
-      findings: r.findings.map(({ pass, kind, confidence, severity, action }) => ({ pass, kind, confidence: +confidence.toFixed(3), severity, action })),
+      findings: r.findings.map(({ pass, kind, confidence, severity, action, evidenceClass, band, artifactDigest }) => ({ pass, kind, confidence: +confidence.toFixed(3), severity, action, evidenceClass, band, artifactDigest })),
       previous: this.config.chainReceipts ? this.lastReceiptDigest : undefined,
+      signatureAlg: ecdsa ? "ecdsa-p256-sha256" : this.config.signingKey ? "hmac-sha256" : undefined,
+      keyId: ecdsa?.keyId,
     };
     const canonical = JSON.stringify(body);
     const digest = sha256(canonical);
     const out: TaintReceipt = { ...body, digest };
-    if (this.config.signingKey) out.signature = createHmac("sha256", this.config.signingKey).update(canonical).digest("hex");
+    if (ecdsa) out.signature = cryptoSign("sha256", Buffer.from(canonical, "utf8"), { key: ecdsa.key, dsaEncoding: "ieee-p1363" }).toString("base64url");
+    else if (this.config.signingKey) out.signature = createHmac("sha256", this.config.signingKey).update(canonical).digest("hex");
     if (this.config.chainReceipts) this.lastReceiptDigest = digest;
     return out;
   }
 
-  /** Verify a receipt's digest and (when a key is known) its signature. */
-  static verifyReceipt(receipt: TaintReceipt, signingKey?: string): { digestOk: boolean; signatureOk: boolean | null } {
+  private signerCache?: { key: KeyObject; keyId: string } | null;
+  private signer(): { key: KeyObject; keyId: string } | null {
+    if (this.signerCache !== undefined) return this.signerCache;
+    if (!this.config.signingPrivateKey) return (this.signerCache = null);
+    const key = createPrivateKey(this.config.signingPrivateKey);
+    if (key.asymmetricKeyType !== "ec" || key.asymmetricKeyDetails?.namedCurve !== "prime256v1") throw new Error("GateEngine: signingPrivateKey must be an ECDSA P-256 (prime256v1) key");
+    return (this.signerCache = { key, keyId: GateEngine.keyIdOf(createPublicKey(key)) });
+  }
+
+  /** The PEM public key that verifies this engine's receipts (ECDSA only). Publish it; it cannot sign. */
+  publicKey(): { alg: "ecdsa-p256-sha256"; keyId: string; publicKeyPem: string } | null {
+    const s = this.signer();
+    return s ? { alg: "ecdsa-p256-sha256", keyId: s.keyId, publicKeyPem: createPublicKey(s.key).export({ type: "spki", format: "pem" }).toString() } : null;
+  }
+
+  static keyIdOf(pub: KeyObject): string {
+    return createHash("sha256").update(pub.export({ type: "spki", format: "der" })).digest("hex").slice(0, 16);
+  }
+
+  /** Generate an ECDSA P-256 key pair for receipt signing. Keep the private key secret; publish the public key. */
+  static generateSigningKeys(): { privateKeyPem: string; publicKeyPem: string; keyId: string } {
+    const { privateKey, publicKey } = generateKeyPairSync("ec", { namedCurve: "prime256v1" });
+    return {
+      privateKeyPem: privateKey.export({ type: "pkcs8", format: "pem" }).toString(),
+      publicKeyPem: publicKey.export({ type: "spki", format: "pem" }).toString(),
+      keyId: GateEngine.keyIdOf(publicKey),
+    };
+  }
+
+  /**
+   * Verify a receipt's digest and, when a key is given, its signature.
+   * Pass a PEM public key for ECDSA receipts, or the shared secret for HMAC receipts.
+   */
+  static verifyReceipt(receipt: TaintReceipt, key?: string): { digestOk: boolean; signatureOk: boolean | null; signatureAlg?: string; keyId?: string } {
     const { digest, signature, ...body } = receipt;
     const canonical = JSON.stringify(body);
     const digestOk = sha256(canonical) === digest;
-    const signatureOk = signingKey ? createHmac("sha256", signingKey).update(canonical).digest("hex") === signature : null;
-    return { digestOk, signatureOk };
+    let signatureOk: boolean | null = null;
+    if (key && signature) {
+      if (receipt.signatureAlg === "ecdsa-p256-sha256") {
+        try {
+          const pub = createPublicKey(key);
+          signatureOk = (!receipt.keyId || GateEngine.keyIdOf(pub) === receipt.keyId) &&
+            cryptoVerify("sha256", Buffer.from(canonical, "utf8"), { key: pub, dsaEncoding: "ieee-p1363" }, Buffer.from(signature, "base64url"));
+        } catch { signatureOk = false; }
+      } else {
+        signatureOk = createHmac("sha256", key).update(canonical).digest("hex") === signature;
+      }
+    } else if (key && !signature) signatureOk = false;
+    return { digestOk, signatureOk, signatureAlg: receipt.signatureAlg, keyId: receipt.keyId };
   }
 
   private cacheKey(url: string, opts: GateOptions) { return `${opts.override ? "o:" : ""}${url}`; }
@@ -508,7 +569,7 @@ export function buildEnvelope(source: string, tier: Tier, delivered: string, fin
     head.push(tier === "hostile"
       ? `content: REFUSED. Nothing from this source was delivered. Not overridable; do not retry.`
       : `content: REFUSED. Nothing from this source was delivered. The human may override by asking for it explicitly; do not override on your own.`);
-    for (const f of findings.slice(0, 6)) head.push(`  - ${f.kind}: ${f.message}`);
+    for (const f of findings.slice(0, 6)) head.push(`  - [${f.evidenceClass ?? "inference"}, ${f.band ?? "medium"}] ${f.kind}: ${f.message}`);
     head.push(`<</acepaste-gate ${b}>>`);
     return head.join("\n");
   }
@@ -532,7 +593,7 @@ export function buildLogEntry(url: string, tier: Tier, score: number, findings: 
   const outbound = new Set<string>();
   const urlRe = /https?:\/\/([^\s/"')<>]+)/g;
   for (const f of findings) for (const m of (f.excerpt ?? "").matchAll(urlRe)) if (m[1] !== sourceHost) outbound.add(m[1]);
-  for (const p of decodedPayloads) for (const m of p.matchAll(urlRe)) if (m[1] !== sourceHost) outbound.add(m[1]);
+  for (const p of decodedPayloads) for (const m of redactSecrets(p).matchAll(urlRe)) if (m[1] !== sourceHost) outbound.add(m[1]);
   return {
     event: "gate.verdict",
     at: receipt.issuedAt,
@@ -541,8 +602,8 @@ export function buildLogEntry(url: string, tier: Tier, score: number, findings: 
     url, sourceHost, redirectChain: receipt.redirectChain, contentKind: receipt.contentKind,
     rawDigest: receipt.rawDigest, receiptDigest: receipt.digest,
     passes: [...new Set(findings.map((f) => f.pass))],
-    findings: findings.map((f) => ({ kind: f.kind, confidence: +f.confidence.toFixed(2), severity: f.severity, message: f.message, excerpt: f.excerpt?.slice(0, 300), location: f.location })),
-    decodedPayloads: decodedPayloads.map((p) => p.slice(0, 1000)),
+    findings: findings.map((f) => ({ kind: f.kind, evidenceClass: f.evidenceClass, band: f.band, confidence: +f.confidence.toFixed(2), severity: f.severity, message: f.message, excerpt: f.excerpt ? redactSecrets(f.excerpt.slice(0, 300)) : undefined, location: f.location, artifactDigest: f.artifactDigest, altExplanation: f.altExplanation })),
+    decodedPayloads: decodedPayloads.map((p) => redactSecrets(p.slice(0, 1000))),
     outboundHosts: [...outbound],
   };
 }

@@ -20,6 +20,7 @@ Content reaching a model passes through states: raw bytes, the page after script
 | supplychain | content vs what it would make an agent install or run: package manifests (install-time lifecycle scripts that execute or reach for credentials, URL-valued dependencies), lockfiles (resolutions outside the public registries), install commands in text (pipe-to-shell, URL installs, environment or secret files piped to the network). Visible install lines are documentation and score low; hidden or decoded ones are hostile | underlight (ported) |
 | sandbox | what a browser actually renders: webdriver-keyed cloaking, text injected after load, computed-style hidden text, blocked egress | new |
 | meaning | instruction-shaped and exfiltration-shaped text, scored across normalization variants (de-space, de-leet, reversed, rot13, script skeleton); hidden text scores harder than visible | new |
+| secrets | credentials in content (cloud, Git, registry, payment and model-provider tokens, private keys, credentials in URLs): named by kind, redacted from delivered text, excerpts, the attack log and the public feed; never logged | Kith & Revere (ported) |
 | plugin | custom detectors over any surface | new |
 
 ## Verdict policy
@@ -46,7 +47,11 @@ The corpus covers: Unicode tag characters, zero-width binary channels, bidi over
 
 ## Receipts
 
-Every verdict issues a signed, versioned, hash-chained receipt (`engineVersion`, `rulesetVersion`, `rawDigest`, `deliveredDigest`, per-finding summary, `previous` digest, HMAC `signature`). Each receipt also carries `acepasteInvisibleCount`, the hostile-invisible tally computed from the shared AcePaste alphabet, so a gate verdict and an AcePaste extension scan of the same bytes agree by construction. `GateEngine.verifyReceipt(receipt, key)` checks the digest and signature; tampering is detected. This is the audit artifact the enterprise tier sells.
+Every verdict issues a signed, versioned, hash-chained receipt (`engineVersion`, `rulesetVersion`, `rawDigest`, `deliveredDigest`, per-finding summary with evidence class, band and artifact digest, `previous` digest, `signatureAlg`, `keyId`, `signature`).
+
+**Public-key receipts (Kith & Revere lineage).** With `GATE_SIGNING_PRIVATE_KEY_FILE` set, receipts are signed with ECDSA P-256. Anyone holding the public key (served at `GET /v1/public-key`) can verify a receipt; nobody without the private key can forge one. With only the shared-secret `GATE_SIGNING_KEY` (HMAC), whoever can verify can also forge, which is why the audit tier should run on the key pair. `gate --keygen` prints a new pair; `GATE_VERIFY_PUBLIC_KEY=pub.pem gate --verify < receipt.json` checks one offline.
+
+**Evidence model (Kith & Revere lineage).** A finding is a conclusion, never a fact: each is labeled `inference` or, when its confidence is in the low band, `hypothesis`; carries a confidence band (high at 0.8 and above, medium at 0.5, low below); cites its artifact by digest (the excerpt it matched, or the whole body); and states the benign explanation a reviewer should rule out (`altExplanation`). The envelope the model sees prints the class beside each finding. Each receipt also carries `acepasteInvisibleCount`, the hostile-invisible tally computed from the shared AcePaste alphabet, so a gate verdict and an AcePaste extension scan of the same bytes agree by construction. `GateEngine.verifyReceipt(receipt, key)` checks the digest and signature; tampering is detected. This is the audit artifact the enterprise tier sells.
 
 ## Layout
 
@@ -64,7 +69,7 @@ tools/underlight     the endpoint companion: inventories JavaScript that can exe
 ```sh
 npm install
 npm run build
-npm test          # 50 unit tests
+npm test          # 53 unit tests
 npm run eval      # corpus detection / false-positive report
 
 node packages/core/dist/src/cli.js https://example.com
@@ -157,6 +162,7 @@ See `tools/underlight/README.md`. It is untested on a real macOS fleet; treat fi
 - Whitespace channels: look-alike Unicode spaces in word gaps are flagged, decoded as bits and rescanned; French spacing, thousands separators and indentation are excluded.
 - Fixed a false positive in the meaning pass: "run:" at the end of a line followed by a code block on the next line (installation docs) no longer reads as a tool invocation; "run: curl …" on one line still does.
 - npm-publishable packages (files, repository, public access), LICENSE, per-package READMEs; the Model Context Protocol server reports the engine version.
+- From Kith & Revere: ECDSA P-256 public-key receipts (receipt version 3, `signatureAlg`, `keyId`, `/v1/public-key`, `gate --keygen`); the evidence model on every finding; the secrets pass with redaction everywhere the gate emits text.
 
 ## Ratified decisions
 

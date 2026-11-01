@@ -22,13 +22,18 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
-import { appendFileSync } from "node:fs";
+import { appendFileSync, readFileSync } from "node:fs";
 import { GateEngine, createTaintGuard, loadPolicyFile, ENGINE_VERSION, type GateConfig, type TaintReceipt } from "@acepaste/gate-core";
 
 const env = process.env;
 const logPath = env.GATE_LOG;
 const cfg: Partial<GateConfig> = env.GATE_POLICY ? loadPolicyFile(env.GATE_POLICY) : {};
 if (env.GATE_SIGNING_KEY) cfg.signingKey = env.GATE_SIGNING_KEY;
+// ECDSA P-256 private key (PEM, or a path to one). Preferred: receipts become verifiable by anyone with the public key.
+{
+  const k = env.GATE_SIGNING_PRIVATE_KEY_FILE ? readFileSync(env.GATE_SIGNING_PRIVATE_KEY_FILE, "utf8") : env.GATE_SIGNING_PRIVATE_KEY;
+  if (k) cfg.signingPrivateKey = k.includes("BEGIN") ? k.replace(/\\n/g, "\n") : readFileSync(k, "utf8");
+}
 if (env.GATE_HOSTILE) cfg.hostileThreshold = Number(env.GATE_HOSTILE);
 if (env.GATE_SUSPECT) cfg.suspectThreshold = Number(env.GATE_SUSPECT);
 if (env.GATE_CLOAKING === "0") cfg.cloakingCheck = false;
@@ -96,7 +101,7 @@ server.registerTool(
   "gate_verify_receipt",
   { title: "Verify a gate receipt", description: "Checks a receipt's digest and, when this server has the signing key, its signature.", inputSchema: { receipt: z.record(z.any()) } },
   async ({ receipt }) => {
-    const v = GateEngine.verifyReceipt(receipt as unknown as TaintReceipt, env.GATE_SIGNING_KEY);
+    const v = GateEngine.verifyReceipt(receipt as unknown as TaintReceipt, (receipt as unknown as TaintReceipt).signatureAlg === "ecdsa-p256-sha256" ? (env.GATE_VERIFY_PUBLIC_KEY ?? engine.publicKey()?.publicKeyPem) : env.GATE_SIGNING_KEY);
     return { content: [{ type: "text", text: JSON.stringify(v) }], structuredContent: v };
   },
 );
