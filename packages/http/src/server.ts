@@ -4,7 +4,7 @@
  *
  *   POST /v1/fetch   { url, override? }                          -> IngressResult
  *   POST /v1/scan    { content, source?, contentType?, override?}-> IngressResult
- *   POST /v1/verify  { receipt }                                 -> { digestOk, signatureOk }
+ *   POST /v1/verify  { receipt }                                 -> { digestOk, signatureOk, signatureAlg, keyId }
  *   GET  /v1/feed                 recent non-clean verdicts, anonymized (public)
  *   GET  /v1/receipts             the caller's own receipts, searchable (audit plane)
  *   GET  /v1/receipts/export      the caller's receipts as a JSON download
@@ -17,12 +17,16 @@
  * or INGRESS_KEYS_FILE (JSON { key: { name, rpm, daily } }). No key configured =
  * open (development only; logs a warning). The public feed and pages need no key.
  *
- * Config: INGRESS_SIGNING_KEY, INGRESS_SANDBOX, INGRESS_CLOAKING, INGRESS_POLICY, INGRESS_LOG,
- * INGRESS_RECEIPTS_FILE (audit store path; omit for in-memory), INGRESS_RETENTION_DAYS.
+ *   GET  /v1/public-key            the key that verifies this instance's receipts (ECDSA only)
+ *
+ * Config: INGRESS_SIGNING_PRIVATE_KEY or INGRESS_SIGNING_PRIVATE_KEY_FILE (ECDSA P-256, preferred),
+ * INGRESS_SIGNING_KEY (HMAC fallback), INGRESS_SANDBOX, INGRESS_CLOAKING, INGRESS_POLICY, INGRESS_LOG,
+ * INGRESS_RECEIPTS_FILE (audit store path; omit for in-memory), INGRESS_RETENTION_DAYS,
+ * INGRESS_FEED_FILE (public feed persistence; omit for in-memory).
  */
 
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
-import { appendFileSync, readFileSync, existsSync } from "node:fs";
+import { appendFileSync, readFileSync, writeFileSync, existsSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join, normalize } from "node:path";
 import { IngressEngine, loadPolicyFile, type IngressConfig, type IngressResult, type TaintReceipt } from "@acepaste/ingress";
@@ -45,14 +49,26 @@ if (env.INGRESS_SANDBOX === "off" || env.INGRESS_SANDBOX === "escalate" || env.I
 if (env.INGRESS_CLOAKING === "0") cfg.cloakingCheck = false;
 
 // ---------- attack log + feed ----------
+// The public feed shows attacks found on the public web: the attacking host, finding kinds, payload excerpts and
+// outbound hosts. It never shows customer content: verdicts on text a customer submitted (/v1/scan, inline sources)
+// and pages on private or unresolvable hosts are logged for the customer's own audit trail but never published.
 const FEED_MAX = 500;
 const feed: Record<string, unknown>[] = [];
+const feedPath = env.INGRESS_FEED_FILE;
+if (feedPath && existsSync(feedPath)) {
+  try {
+    const lines = readFileSync(feedPath, "utf8").split("\n").filter(Boolean).slice(-FEED_MAX);
+    for (const l of lines) { try { feed.unshift(JSON.parse(l)); } catch { /* skip a torn line */ } }
+    writeFileSync(feedPath, lines.join("\n") + (lines.length ? "\n" : "")); // compact on boot
+  } catch { /* the feed is best-effort */ }
+}
+const isPublicHost = (h: unknown) => typeof h === "string" && /\./.test(h) && !/^(localhost|127\.|10\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.|169\.254\.|\[|.*\.(local|internal|lan|home|corp|test|invalid|localhost)$)/i.test(h);
 const logPath = env.INGRESS_LOG;
 const log = (e: Record<string, unknown>) => {
   const line = JSON.stringify(e) + "\n";
   if (logPath) { try { appendFileSync(logPath, line); } catch { /* best effort */ } } else process.stderr.write(line);
-  if (e.event === "ingress.verdict") {
-    feed.unshift({
+  if (e.event === "ingress.verdict" && isPublicHost(e.sourceHost) && !String(e.url ?? "").startsWith("inline:")) {
+    const entry = {
       at: e.at, tier: e.tier, score: e.score, sourceHost: e.sourceHost, contentKind: e.contentKind,
       kinds: (e.findings as Array<{ kind: string }>).map((f) => f.kind),
       outboundHosts: e.outboundHosts,
@@ -60,8 +76,10 @@ const log = (e: Record<string, unknown>) => {
         ...(e.decodedPayloads as string[]).map((p) => p.slice(0, 160)),
         ...(e.findings as Array<{ excerpt?: string }>).map((f) => f.excerpt).filter((x): x is string => !!x).map((x) => x.slice(0, 160)),
       ].slice(0, 6),
-    });
+    };
+    feed.unshift(entry);
     if (feed.length > FEED_MAX) feed.length = FEED_MAX;
+    if (feedPath) { try { appendFileSync(feedPath, JSON.stringify(entry) + "\n"); } catch { /* best effort */ } }
   }
 };
 

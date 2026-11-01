@@ -9,6 +9,7 @@ primary_region = "sjc"
   PORT = "8787"
   INGRESS_SANDBOX = "off"
   INGRESS_RECEIPTS_FILE = "/data/receipts.jsonl"
+  INGRESS_FEED_FILE = "/data/feed.jsonl"
   INGRESS_RETENTION_DAYS = "30"
 
 [[mounts]]

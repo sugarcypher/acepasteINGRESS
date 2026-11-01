@@ -10,7 +10,9 @@
  *   ingress_verify_receipt(receipt)        check a receipt's digest and signature
  *
  * Environment:
- *   INGRESS_SIGNING_KEY       HMAC key for receipts
+ *   INGRESS_SIGNING_PRIVATE_KEY_FILE  ECDSA P-256 key for publicly verifiable receipts (preferred; or INGRESS_SIGNING_PRIVATE_KEY as PEM)
+ *   INGRESS_SIGNING_KEY       HMAC key for receipts (fallback: whoever can verify can also forge)
+ *   INGRESS_VERIFY_PUBLIC_KEY PEM used by ingress_verify_receipt for receipts from another instance
  *   INGRESS_HOSTILE=0.7       hostile threshold
  *   INGRESS_SUSPECT=0.25      suspect threshold
  *   INGRESS_CLOAKING=1        set 0 to disable the second fetch

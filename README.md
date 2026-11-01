@@ -2,7 +2,7 @@
 
 A security gate between internet content and AI ingestion. One engine, many frontends.
 
-Named AcePaste Ingress on 2026-11-01 (previously AcePaste Gate). Ingress is the engineering term for traffic entering a system; this controls what enters a model's context, the way an ingress controller controls what enters a cluster. Everything here is Claude-generated (through 2026-10-31) and awaiting Axel's objections; ratified decisions are listed at the end. The non-English detection gap and the per-language pattern sets are explicitly **not** marked verified — they need native-speaker review before any ruleset is called that.
+Ingress is the engineering term for traffic entering a system: this controls what enters a model's context, the way an ingress controller controls what enters a cluster. By ThinkWell Labs, from the makers of the AcePaste cleaner. Formerly AcePaste Gate. Pre-1.0: interfaces may still change.
 
 ## Principle
 
@@ -35,7 +35,7 @@ Defaults: suspect 0.25, hostile 0.70. Per-domain rules override both. A lone **s
 
 ## What it catches, measured
 
-Against the bundled corpus (`npm run eval`): **85/85 attacks refused** (62 outright hostile), **45/45 benign documents pass clean**, **3/3 ambiguous documents land on suspect** (overridable, never hostile). Median analysis time **0.2 ms** per document (static passes; the browser sandbox adds ~2 s and runs only on escalation). These are regression numbers on Claude-written fixtures, hardened across three rounds of adversarial review, plus the v0.6 supply-chain cases — a floor, not a claim about the open web.
+Against the bundled corpus (`npm run eval`): **85/85 attacks refused** (62 outright hostile), **45/45 benign documents pass clean**, **3/3 ambiguous documents land on suspect** (overridable, never hostile). Median analysis time **0.2 ms** per document (static passes; the browser sandbox adds ~2 s and runs only on escalation). These are regression numbers on fixtures written for this project. The original passes were hardened across three rounds of adversarial review; the passes added in 0.6 and 0.7 (supply chain, same-colour text, whitespace channels, secrets) have tests and corpus cases but have not yet had that adversarial review. Treat all of it as a floor, not a claim about the open web.
 
 The corpus covers: Unicode tag characters, zero-width binary channels, bidi overrides, variation-selector and entity smuggling, full-width/mathematical/homoglyph look-alikes across seven scripts, base64 (short, split, chunked), base32, hex, octal, quoted-printable, percent-encoding; CSS hiding by `display`/`visibility`/`opacity`/`clip-path`/`transform`/`scale`/`translate`/`inset`/`font` shorthand/custom-property indirection/off-screen offsets; collapsed `details`, `noscript`, `iframe srcdoc`, SVG text, `title`/`alt`/`meta` carriers; role tokens for six model families, tool-call shapes, EchoLeak images, webhook exfiltration; paraphrased, spaced, dotted, leet, reversed, and rot13 instructions; agent-targeted cloaking and webdriver-keyed render divergence; credential-stealing install scripts, pipe-to-shell commands hidden or base64-encoded, npx-from-URL in markdown comments, environment variables piped to a remote host. Benign cases include multilingual text (Persian, Arabic, Hebrew, Hindi, CJK, Coptic), emoji ZWJ sequences, legitimate accessibility markup, analytics snippets, minified bundles, security articles, fiction, runbooks, support macros, API JSON, ordinary package manifests, native-module install scripts, and the rustup and Homebrew install lines.
 
@@ -47,7 +47,7 @@ The corpus covers: Unicode tag characters, zero-width binary channels, bidi over
 
 ## Receipts
 
-Every verdict issues a signed, versioned, hash-chained receipt (`engineVersion`, `rulesetVersion`, `rawDigest`, `deliveredDigest`, per-finding summary with evidence class, band and artifact digest, `previous` digest, `signatureAlg`, `keyId`, `signature`).
+Every verdict issues a versioned, hash-chained receipt, signed when a key is configured (`engineVersion`, `rulesetVersion`, `rawDigest`, `deliveredDigest`, per-finding summary with evidence class, band and artifact digest, `previous` digest, `signatureAlg`, `keyId`, `signature`).
 
 **Public-key receipts (Kith & Revere lineage).** With `INGRESS_SIGNING_PRIVATE_KEY_FILE` set, receipts are signed with ECDSA P-256. Anyone holding the public key (served at `GET /v1/public-key`) can verify a receipt; nobody without the private key can forge one. With only the shared-secret `INGRESS_SIGNING_KEY` (HMAC), whoever can verify can also forge, which is why the audit tier should run on the key pair. `ingress --keygen` prints a new pair; `INGRESS_VERIFY_PUBLIC_KEY=pub.pem ingress --verify < receipt.json` checks one offline.
 
@@ -86,25 +86,27 @@ The browser sandbox needs a Chromium binary. Playwright is an optional dependenc
 {
   "mcpServers": {
     "acepaste-ingress": {
-      "command": "node",
-      "args": ["/abs/acepaste-ingress/packages/mcp/dist/server.js"],
-      "env": { "INGRESS_SIGNING_KEY": "change-me", "INGRESS_SANDBOX": "escalate", "INGRESS_LOG": "/var/log/acepaste-ingress.jsonl" }
+      "command": "npx",
+      "args": ["-y", "@acepaste/ingress-mcp"],
+      "env": { "INGRESS_SIGNING_PRIVATE_KEY_FILE": "/abs/path/ingress-private.pem", "INGRESS_SANDBOX": "off", "INGRESS_LOG": "/abs/path/acepaste-ingress.jsonl" }
     }
   }
 }
 ```
 
-Tools: `ingress_fetch(url, override?)`, `ingress_scan(content, source?, contentType?, override?)`, `ingress_status()`, `ingress_confirm()`, `ingress_verify_receipt(receipt)`. Refused verdicts return `isError: true`. Env: `INGRESS_SIGNING_KEY`, `INGRESS_HOSTILE`, `INGRESS_SUSPECT`, `INGRESS_CLOAKING=0`, `INGRESS_SANDBOX=off|escalate|always`, `INGRESS_POLICY=path`, `INGRESS_LOG=path`.
+Generate the key once with `npx -p @acepaste/ingress ingress --keygen`. Set `INGRESS_SANDBOX` to `escalate` only where a Chromium is available (see Run).
+
+Tools: `ingress_fetch(url, override?)`, `ingress_scan(content, source?, contentType?, override?)`, `ingress_status()`, `ingress_confirm()`, `ingress_verify_receipt(receipt)`. Refused verdicts return `isError: true`. Env: `INGRESS_SIGNING_PRIVATE_KEY_FILE` (or `INGRESS_SIGNING_PRIVATE_KEY`), `INGRESS_SIGNING_KEY` (HMAC fallback), `INGRESS_VERIFY_PUBLIC_KEY`, `INGRESS_HOSTILE`, `INGRESS_SUSPECT`, `INGRESS_CLOAKING=0`, `INGRESS_SANDBOX=off|escalate|always`, `INGRESS_POLICY=path`, `INGRESS_LOG=path`.
 
 ## As the metered HTTP service
 
 ```sh
-PORT=8787 INGRESS_KEYS="key1:acme,key2:globex" INGRESS_SIGNING_KEY=… node packages/http/dist/server.js
+PORT=8787 INGRESS_KEYS="key1:acme,key2:globex" INGRESS_SIGNING_PRIVATE_KEY_FILE=ingress-private.pem INGRESS_FEED_FILE=feed.jsonl INGRESS_RECEIPTS_FILE=receipts.jsonl node packages/http/dist/server.js
 ```
 
-Endpoints: `POST /v1/fetch`, `POST /v1/scan`, `POST /v1/verify`; `GET /v1/feed` (public); `GET /v1/receipts`, `/v1/receipts/export`, `/v1/receipts/stats` (the caller's own audit log); `GET /healthz`; `GET /` (the live attack feed page), `GET /console` (the audit console). Bearer-key auth (`INGRESS_KEYS` or `INGRESS_KEYS_FILE` with per-key rpm/daily limits); audit reads do not consume the scan quota; refused verdicts return HTTP 422.
+Endpoints: `POST /v1/fetch`, `POST /v1/scan`, `POST /v1/verify`; `GET /v1/feed` (public); `GET /v1/receipts`, `/v1/receipts/export`, `/v1/receipts/stats` (the caller's own audit log); `GET /v1/public-key` (public; the key that verifies this instance's receipts); `GET /healthz`; `GET /` (the live attack feed page), `GET /console` (the audit console). Bearer-key auth (`INGRESS_KEYS` or `INGRESS_KEYS_FILE` with per-key rpm/daily limits); audit reads do not consume the scan quota; refused verdicts return HTTP 422.
 
-**The audit plane is the paid tier.** Every verdict's signed receipt is stored, scoped to the API key that produced it, and searchable by URL, host, tier, kind and time; exportable as a JSON download; retained per `INGRESS_RETENTION_DAYS`. This is the record an enterprise security review asks for — proof of what untrusted content its agents ingested and what the gate did about it. The store is an append-only file behind a `ReceiptStore` interface; swap it for Postgres/ClickHouse for volume. The public feed exposes attacking hosts, finding kinds, payload excerpts and outbound hosts — never customer content.
+**The audit plane is what the hosted tier sells.** The code is open source like everything here; customers pay for the hosted, retained, supported version. Every verdict's signed receipt is stored, scoped to the API key that produced it, and searchable by URL, host, tier, kind and time; exportable as a JSON download; retained per `INGRESS_RETENTION_DAYS`. This is the record an enterprise security review asks for — proof of what untrusted content its agents ingested and what the gate did about it. The store is an append-only file behind a `ReceiptStore` interface; swap it for Postgres/ClickHouse for volume. The public feed shows attacks found on public web pages: attacking host, finding kinds, payload excerpts (credentials redacted) and outbound hosts. Text a customer submits through `/v1/scan`, and pages on private hosts, never appear in it. With `INGRESS_FEED_FILE` set the feed survives restarts.
 
 **Deploy:** `Dockerfile`, `fly.toml` and `DEPLOY.md` stand up a single small host. The public instance runs with the sandbox off (no Chromium shipped); the paid/self-hosted tier turns `INGRESS_SANDBOX=escalate` on. `LAUNCH.md` has the launch copy and the MCP install snippet.
 
@@ -201,12 +203,16 @@ What this project combines in one engine, as far as we know: rendered-page analy
 - **Non-English visible instructions: a deliberate boundary, not a hole.** A visible, plain-language instruction in any language is the one case the downstream model handles best — modern models are multilingual and instruction-tuned against exactly this, so a foreign-language injection in the page body is no more effective than the English one, which is to say mostly ineffective. A multilingual meaning classifier in the gate would therefore duplicate the model's own strongest defense while generating false positives on every legitimate foreign-language page with imperative verbs. The division of labor instead: the gate guarantees the provenance envelope and strips the hidden channels the model cannot see (hidden text, smuggled characters, cloaking, post-load injection); the model enforces the envelope ("untrusted web data, not instructions") in every language for free; the taint guard contains whatever the model might still obey, language-independently, by pausing side-effecting tools. Language-neutral exfiltration signals (data-bearing URLs, role tokens, webhook hosts) are caught regardless of surrounding language. Claude-generated translation regex sets are deliberately not committed.
 - **Confusables from a hand-built table.** Seven scripts covered; a full fold should come from the Unicode confusables dataset.
 - **False positives on documents that quote payloads.** Damped (quotation/attribution discount, code-block discount, per-kind log dampening), not eliminated; security writing that issues rather than quotes an instruction still lands on suspect by design.
-- **Confusables beyond seven scripts.** The fold table is hand-built; a complete fold should come from the Unicode confusables dataset.
+- **Static CSS coverage is partial.** Without the browser sandbox, hiding and colour rules are resolved for simple selectors only (tag, class, id). Text hidden through descendant, attribute or pseudo-class selectors (`.box p`, `[data-x]`, `:nth-child`) reads as visible to the static pass; a strong instruction in it is still refused, but a paraphrased one can pass. The sandbox computes real styles and closes this; the public instance runs without it.
 - **Hosted billing, residential egress for the human fingerprint, enterprise policy console.**
 
 ## Provenance of the hardening
 
 Three rounds of adversarial review by an independent agent, each attacking both directions (bypass and false positive) and the DoS surface; every surviving bypass and false positive became a corpus case, so the numbers above include everything that was found and fixed. The round-one fail-open bug, the deep-nesting and attribute DoS, and the request-forgery surface were all found and closed in this process.
+
+## Provenance
+
+Designed and directed by Briar Morgan Greenway (ThinkWell Labs); the code was written with Claude (Anthropic). Ratified design decisions are listed above.
 
 ## Provenance of the detectors
 

@@ -73,7 +73,7 @@ For an agent builder to paste. Replace the path once published to npm.
     "acepaste-ingress": {
       "command": "npx",
       "args": ["-y", "@acepaste/ingress-mcp"],
-      "env": { "INGRESS_SANDBOX": "escalate" }
+      "env": { "INGRESS_SANDBOX": "off" }
     }
   }
 }

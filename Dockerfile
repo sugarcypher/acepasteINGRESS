@@ -3,8 +3,9 @@
 # and add a Chromium layer only for a deployment that needs the browser pass.
 FROM node:22-slim AS build
 WORKDIR /app
-COPY package.json ./
+COPY package.json package-lock.json ./
 COPY packages/core/package.json packages/core/
+COPY packages/mcp/package.json packages/mcp/
 COPY packages/http/package.json packages/http/
 ENV PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1
 RUN npm install --no-audit --no-fund --workspaces --include-workspace-root
