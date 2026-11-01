@@ -180,7 +180,21 @@ See `tools/underlight/README.md`. It is untested on a real macOS fleet; treat fi
 
 ## Business shape
 
-Open core. The gate, the Model Context Protocol proxy and the library are free and are the distribution: the one-line install an agent builder drops in. The paid tier is what a free tool cannot give — hosted deployment, the browser sandbox, and the **audit plane** (stored, searchable, exportable, retained signed receipts) plus the private threat feed. The receipt is the differentiator: incumbents classify at the prompt boundary and discard the decision; only this produces a tamper-evident provenance record at the ingestion boundary, which is the artifact a security review actually buys. The public attack feed is the top of funnel; see `LAUNCH.md`.
+Open core. The gate, the Model Context Protocol proxy and the library are free and are the distribution: the one-line install an agent builder drops in. The paid tier is what a free tool cannot give — hosted deployment, the browser sandbox, and the **audit plane** (stored, searchable, exportable, retained signed receipts) plus the private threat feed. What the paid tier sells is the record, not the detection: a refuse-by-default verdict at the ingestion boundary, plus a publicly verifiable signed receipt for every page an agent took in, kept per customer, searchable and exportable for a security review. Other tools now sign their decisions too (see Related work); the case for this one is that the receipt, the page-level analysis and the refusal come from one engine, so the record says exactly what was seen, what was withheld and why. The public attack feed is the top of funnel; see `LAUNCH.md`.
+
+## Related work
+
+None of the ideas here are exclusive to this project, and several tools cover parts of it. Checked 2026-11-01:
+
+- **wysiwyg** (open source, MIT): the same founding rule, "find what AI agents read but humans can't see." CSS-cascade hidden text, invisible Unicode, white-on-white text, crawler cloaking, MCP server checks, and more formats than this project (PDF, Word, PowerPoint, Excel). It reports rather than blocks.
+- **Pipelock** (open source, Apache 2.0): an agent firewall that scans HTTP and MCP responses for injection with character normalization, and emits a hash-chained audit log with signed, offline-verifiable receipts.
+- **Vault** (vaultmcp, open source, MIT): an MCP proxy that scans tool responses, blocks by default, and keeps an append-only audit log with optional on-chain attestations.
+- **Lakera Guard** (Check Point): commercial guardrail that scans retrieved documents and tool responses, with block, redact or warn, and audit logging.
+- **Microsoft Prompt Shields** and the **spotlighting** research behind it: document-attack detection, and the delimiting technique this project's envelope uses.
+- **Google Model Armor, Cloudflare Firewall for AI, Cisco AI Defense, Runlayer ToolGuard:** platform guardrails, some of which inspect tool output.
+- **ASCII Smuggler** (Johann Rehberger): the public demonstration of Unicode tag-character smuggling that the character pass defends against.
+
+What this project combines in one engine, as far as we know: rendered-page analysis (CSS cascade, colour contrast, optional browser sandbox) together with a double-fetch cloaking check, supply-chain and secret checks, graded refusal with human override for suspect content only, public-key signed receipts, and a hosted audit plane. If you know a tool that already does all of that, open an issue and this section will say so.
 
 ## Open items
 
