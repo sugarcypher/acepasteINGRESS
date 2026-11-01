@@ -163,6 +163,44 @@ export function scanCharacters(text: string): CharacterResult {
     cleaned = out;
   }
 
+  // 3b. Whitespace channels (AcePaste FORMATTING_RE lineage). Unicode has a dozen spaces that render identically
+  //     (en, em, thin, hair, figure, punctuation, narrow no-break, medium mathematical, ideographic) plus line and
+  //     paragraph separators. One or two are typography; many, interleaved with ordinary spaces in Latin text, are a
+  //     channel: the choice of space at each word gap carries a bit, which no human reader can see.
+  {
+    const ODD = /[\u2000-\u200A\u2028\u2029\u202F\u205F]/g;
+    // only look-alike spaces in a word gap count; typography is excluded: French spacing before ; : ! ? and inside « »,
+    // thousands separators between digits, and indentation (a space next to a line break or another space)
+    const odd = [...cleaned.matchAll(ODD)].filter((m) => {
+      const i = m.index!, prev = cleaned[i - 1] ?? "", next = cleaned[i + 1] ?? "";
+      if (!prev || !next || /\s/.test(prev) || /\s/.test(next)) return false;
+      if (/[;:!?»%€]/.test(next) || prev === "«") return false;
+      if (/\d/.test(prev) && /\d/.test(next)) return false;
+      return true;
+    });
+    const cjk = /[\u3040-\u30FF\u3400-\u9FFF\uAC00-\uD7AF]/.test(cleaned);
+    const ideographic = cjk ? 0 : (cleaned.match(/\u3000/g) ?? []).length;
+    const n = odd.length + ideographic;
+    const kinds = new Set([...odd.map((m) => m[0]), ...(ideographic ? ["\u3000"] : [])]);
+    const asciiGaps = (cleaned.match(/(?<=\S) (?=\S)/g) ?? []).length;
+    if (n >= 8 && (kinds.size >= 2 || asciiGaps >= 4)) {
+      findings.push({
+        pass: "character", kind: "unicode.whitespace_channel",
+        confidence: Math.min(0.95, 0.5 + n / 60), severity: n >= 16 ? 0.75 : 0.45,
+        message: `${n} look-alike Unicode spaces (${kinds.size} kinds) mixed into ordinary word gaps: the choice of space can carry hidden bits`,
+        excerpt: excerptAround(cleaned, odd[0]?.index ?? 0), location: `offset ${odd[0]?.index ?? 0}`, action: "neutralized",
+      });
+      // decode: every word gap is a bit (ordinary space = 0, any look-alike = 1), read as 8-bit ASCII
+      const gaps = [...cleaned.matchAll(/(?<=\S)([ \u2000-\u200A\u202F\u205F\u3000])(?=\S)/g)].map((m) => (m[1] === " " ? "0" : "1")).join("");
+      for (const bits of [gaps, gaps.replace(/[01]/g, (b) => (b === "0" ? "1" : "0"))]) {
+        let out = "";
+        for (let i = 0; i + 8 <= bits.length; i += 8) out += String.fromCharCode(parseInt(bits.slice(i, i + 8), 2));
+        if (out.length >= 4 && /^[\x20-\x7E]+$/.test(out) && /[a-z]{3}/i.test(out)) { decodedPayloads.push(out); break; }
+      }
+      cleaned = cleaned.replace(ODD, " ").replace(cjk ? /$^/ : /\u3000/g, " ");
+    }
+  }
+
   // 4. Variation-selector smuggling: runs of selectors not attached to a base that takes them.
   const vsRuns = [...cleaned.matchAll(/(?:[︀-️]|[\u{E0100}-\u{E01EF}]){4,}/gu)];
   if (vsRuns.length) {

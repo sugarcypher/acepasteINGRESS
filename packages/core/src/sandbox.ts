@@ -61,7 +61,24 @@ const RENDER_SCRIPT = `
       const cs = getComputedStyle(el);
       const fs = parseFloat(cs.fontSize);
       if (fs <= 1) { hidden = true; why = 'font-size:' + cs.fontSize; }
-      else if (cs.color === cs.backgroundColor && cs.color !== 'rgba(0, 0, 0, 0)') { hidden = true; why = 'color matches background'; }
+      else if ((() => {
+        // text colour against the nearest painted background up the tree, alpha-composited; unknown (image/gradient) never flags
+        const rgba = (c) => { const m = c.match(/rgba?\(([^)]+)\)/); if (!m) return null; const p = m[1].split(/[\s,\/]+/).filter(Boolean).map(Number); return { r: p[0], g: p[1], b: p[2], a: p.length > 3 ? p[3] : 1 }; };
+        const mix = (t, u) => ({ r: t.r * t.a + u.r * (1 - t.a), g: t.g * t.a + u.g * (1 - t.a), b: t.b * t.a + u.b * (1 - t.a), a: 1 });
+        const lum = (c) => { const f = (x) => { x /= 255; return x <= 0.03928 ? x / 12.92 : Math.pow((x + 0.055) / 1.055, 2.4); }; return 0.2126 * f(c.r) + 0.7152 * f(c.g) + 0.0722 * f(c.b); };
+        const layers = []; let p = el; let unknown = false;
+        while (p) { const s = getComputedStyle(p); if (s.backgroundImage && s.backgroundImage !== 'none') { unknown = true; break; } const c = rgba(s.backgroundColor); if (c && c.a > 0) { layers.push(c); if (c.a >= 0.999) break; } p = p.parentElement; }
+        if (unknown) return false;
+        let bg = { r: 255, g: 255, b: 255, a: 1 };
+        for (let i = layers.length - 1; i >= 0; i--) bg = mix(layers[i], bg);
+        const fill = cs.webkitTextFillColor && cs.webkitTextFillColor !== cs.color ? rgba(cs.webkitTextFillColor) : null;
+        const fg0 = fill || rgba(cs.color); if (!fg0) return false;
+        const fg = mix(fg0, bg);
+        const a = lum(fg), b = lum(bg);
+        const ratio = (Math.max(a, b) + 0.05) / (Math.min(a, b) + 0.05);
+        if (ratio <= 1.25) { why = 'color matches background (contrast ' + ratio.toFixed(2) + ':1)'; return true; }
+        return false;
+      })()) { hidden = true; }
       else {
         const r = el.getBoundingClientRect();
         const docW = Math.max(document.documentElement.scrollWidth, innerWidth);

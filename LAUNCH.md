@@ -17,13 +17,13 @@ I spent five years as the target of an intrusion and taught myself forensics to 
 
 Prompt injection lives in exactly that gap. Most defenses classify the prompt after extraction, at the model boundary. AcePaste Gate works one step earlier, on the page itself, and its whole design follows a single rule: anything a model would receive that a human looking at the same source would not see is suspect by default.
 
-So it checks the places the model is blind to. Invisible and smuggled Unicode (tag characters, zero-width channels, bidi overrides, variation-selector encoding, homoglyphs). Text hidden by CSS, off-screen, in attributes, comments, SVG, srcdoc. Scripts that detect automation and serve agents a different page than humans (it fetches twice and diffs; optionally renders in a disposable headless browser and diffs again). Then it hands the model the clean text inside a provenance envelope and a signed, tamper-evident receipt of what it stripped and why.
+So it checks the places the model is blind to. Invisible and smuggled Unicode (tag characters, zero-width channels, look-alike spaces, bidi overrides, variation-selector encoding, homoglyphs). Text hidden by CSS, or coloured to match its background, off-screen, in attributes, comments, SVG, srcdoc. Scripts that detect automation and serve agents a different page than humans (it fetches twice and diffs; optionally renders in a disposable headless browser and diffs again). Then it hands the model the clean text inside a provenance envelope and a signed, tamper-evident receipt of what it stripped and why.
 
 What it deliberately does not do: re-judge plain visible prose. A modern model already resists "ignore previous instructions" in the body text, in any language; a second classifier there mostly generates false positives. The gate covers what the model can't see and delegates what it can.
 
 It runs three ways from one engine: a Model Context Protocol proxy you drop in front of an agent's fetch tool, a library, and a hosted HTTP service. Open core, Apache-2.0.
 
-Honest about the numbers: against my own corpus (78 attack cases, 41 benign, hardened over three adversarial review passes) it refuses every attack with zero false positives — but that's a regression floor on fixtures I wrote, not a claim about the open web. The live feed below shows what it actually catches in the wild; that's the real test, and I'd rather you watch that than trust my corpus.
+Honest about the numbers: against my own corpus (85 attack cases, 45 benign, hardened over three adversarial review passes) it refuses every attack with zero false positives — but that's a regression floor on fixtures I wrote, not a claim about the open web. The live feed below shows what it actually catches in the wild; that's the real test, and I'd rather you watch that than trust my corpus.
 
 Live feed: <https://YOUR-APP.fly.dev/>
 Repo: <https://github.com/sugarcypher/acepasteGATE>

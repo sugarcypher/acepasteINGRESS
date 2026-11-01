@@ -14,6 +14,7 @@ import { parse, defaultTreeAdapter } from "parse5";
 import type { DefaultTreeAdapterMap } from "parse5";
 import type { Finding, ScriptUnit, TextSegment } from "./types.js";
 import { decodeEntities } from "./adapters.js";
+import { colorsFromStyle, contrastRatio, blend, parseColor, INVISIBLE_CONTRAST, type RGBA } from "./color.js";
 
 type Node = DefaultTreeAdapterMap["node"];
 type Element = DefaultTreeAdapterMap["element"];
@@ -86,6 +87,47 @@ export function rulesFromCss(cssIn: string): HiddenRule[] {
   return rules;
 }
 
+export interface ColorRule {
+  selector: string; // ".class", "#id" or "tag" only: colour is applied only on simple selectors, so a compound rule cannot over-match into a false "hidden"
+  fg?: RGBA | null;
+  bg?: RGBA | null;
+  fill?: RGBA | null;
+}
+
+/** Remove @media blocks that do not describe the default screen rendering (dark mode, print), brace-matched. */
+function dropAlternateMedia(css: string): string {
+  let out = "", i = 0;
+  const re = /@media[^{]*(prefers-color-scheme\s*:\s*dark|print|forced-colors|prefers-contrast)[^{]*\{/gi;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(css))) {
+    out += css.slice(i, m.index);
+    let depth = 1, j = m.index + m[0].length;
+    while (j < css.length && depth > 0) { if (css[j] === "{") depth++; else if (css[j] === "}") depth--; j++; }
+    i = j; re.lastIndex = j;
+  }
+  return out + css.slice(i);
+}
+
+export function colorRulesFromCss(cssIn: string): ColorRule[] {
+  const rules: ColorRule[] = [];
+  const css = dropAlternateMedia(cssIn.replace(/\/\*[\s\S]*?\*\//g, ""))
+    .replace(/@keyframes[^{]*\{(?:[^{}]*\{[^{}]*\})*[^{}]*\}/g, "")
+    .replace(/@(media|supports|layer|container)[^{]*\{/g, "");
+  const re = /([^{}]+)\{([^{}]*)\}/g;
+  let m: RegExpExecArray | null;
+  let count = 0;
+  while ((m = re.exec(css)) && count++ < 20000) {
+    if (!/color|background/i.test(m[2])) continue;
+    const c = colorsFromStyle(m[2]);
+    if (c.fg === undefined && c.bg === undefined && c.fill === undefined) continue;
+    for (const sel of m[1].split(",")) {
+      const t = sel.trim().toLowerCase();
+      if (/^([.#][\w-]+|[a-z][\w-]*|:root)$/.test(t)) rules.push({ selector: t === ":root" ? "html" : t, ...c });
+    }
+  }
+  return rules;
+}
+
 function attr(el: Element, name: string): string | undefined {
   return el.attrs.find((a) => a.name === name)?.value;
 }
@@ -131,15 +173,21 @@ export function findStylesheetLinks(html: string): string[] {
   return out;
 }
 
-interface Frame { node: Node; vis: TextSegment["visibility"]; path: string; depth: number; inA11y: boolean }
+interface Frame { node: Node; vis: TextSegment["visibility"]; path: string; depth: number; inA11y: boolean; fg: RGBA | null; bg: RGBA | null; cr?: number }
 
-export function analyzeHtml(html: string, externalRules: HiddenRule[] = []): VisibilityResult {
+const BROWSER_FG: RGBA = { r: 0, g: 0, b: 0, a: 1 };
+const BROWSER_BG: RGBA = { r: 255, g: 255, b: 255, a: 1 };
+
+export function analyzeHtml(html: string, externalRules: HiddenRule[] = [], externalColorRules: ColorRule[] = []): VisibilityResult {
   const doc = parse(html);
   const segments: TextSegment[] = [];
   const scripts: ScriptUnit[] = [];
   const findings: Finding[] = [];
   const stylesheetLinks: string[] = [];
   const styleRules: HiddenRule[] = [...externalRules];
+  const colorRules: ColorRule[] = [...externalColorRules];
+  /** segments hidden by colour, with the measured contrast */
+  const lowContrast = new Map<TextSegment, number>();
   let maxDepth = 0;
 
   // pass 1: <style> rules and stylesheet links (iterative)
@@ -151,6 +199,7 @@ export function analyzeHtml(html: string, externalRules: HiddenRule[] = []): Vis
         if (n.tagName === "style") {
           const css = n.childNodes.map((c) => (defaultTreeAdapter.isTextNode(c) ? c.value : "")).join("");
           styleRules.push(...rulesFromCss(css));
+          colorRules.push(...colorRulesFromCss(css));
         }
         if (n.tagName === "link" && /\bstylesheet\b/.test((attr(n, "rel") ?? "").toLowerCase()) && attr(n, "href")) stylesheetLinks.push(attr(n, "href")!);
       }
@@ -160,10 +209,14 @@ export function analyzeHtml(html: string, externalRules: HiddenRule[] = []): Vis
 
   // pass 2: segments and scripts (iterative, document order)
   let scriptIndex = 0;
-  const stack: Frame[] = [{ node: doc, vis: "visible", path: "", depth: 0, inA11y: false }];
+  const stack: Frame[] = [{ node: doc, vis: "visible", path: "", depth: 0, inA11y: false, fg: BROWSER_FG, bg: BROWSER_BG }];
+  // colour cascade, roughly by specificity: tag rules, then class, then id, then presentational attributes, then inline style
+  const byTag = colorRules.filter((r) => !/^[.#]/.test(r.selector));
+  const byClass = colorRules.filter((r) => r.selector.startsWith("."));
+  const byId = colorRules.filter((r) => r.selector.startsWith("#"));
   const a11yShort = new Set<TextSegment>();
   while (stack.length) {
-    const { node: n, vis: inherited, path, depth, inA11y } = stack.pop()!;
+    const { node: n, vis: inherited, path, depth, inA11y, fg: inFg, bg: inBg, cr: inCr } = stack.pop()!;
     if (depth > maxDepth) maxDepth = depth;
 
     if (defaultTreeAdapter.isCommentNode(n)) {
@@ -176,13 +229,14 @@ export function analyzeHtml(html: string, externalRules: HiddenRule[] = []): Vis
       if (text.trim()) {
         const seg: TextSegment = { text, visibility: inherited, path };
         segments.push(seg);
+        if (inherited === "tiny_or_transparent" && inCr !== undefined) lowContrast.set(seg, inCr);
         if (inA11y) a11yShort.add(seg);
       }
       continue;
     }
     if (!defaultTreeAdapter.isElementNode(n)) {
       const kids = children(n);
-      for (let i = kids.length - 1; i >= 0; i--) stack.push({ node: kids[i], vis: inherited, path, depth, inA11y });
+      for (let i = kids.length - 1; i >= 0; i--) stack.push({ node: kids[i], vis: inherited, path, depth, inA11y, fg: inFg, bg: inBg, cr: inCr });
       continue;
     }
 
@@ -216,7 +270,7 @@ export function analyzeHtml(html: string, externalRules: HiddenRule[] = []): Vis
     if (tag === "svg" && inherited === "visible") {
       // SVG text renders, but as graphics: scan it as its own channel, do not deliver it as page copy
       const kids = el.childNodes;
-      for (let i = kids.length - 1; i >= 0; i--) stack.push({ node: kids[i], vis: "attribute", path: `${myPath}@svg`, depth: depth + 1, inA11y });
+      for (let i = kids.length - 1; i >= 0; i--) stack.push({ node: kids[i], vis: "attribute", path: `${myPath}@svg`, depth: depth + 1, inA11y, fg: inFg, bg: inBg });
       continue;
     }
 
@@ -229,6 +283,36 @@ export function analyzeHtml(html: string, externalRules: HiddenRule[] = []): Vis
 
     let vis = inherited;
     let a11y = inA11y;
+
+    // colour: resolve this element's text colour and the background it sits on
+    let fg = inFg, bg = inBg, fill: RGBA | null | undefined, cr = inCr;
+    const apply = (c: { fg?: RGBA | null; bg?: RGBA | null; fill?: RGBA | null }) => {
+      if (c.fg !== undefined) fg = c.fg;
+      if (c.fill !== undefined) fill = c.fill;
+      if (c.bg !== undefined) {
+        if (c.bg === null) bg = null;                       // image or gradient: unknown, never flag
+        else if (c.bg.a >= 0.999) bg = c.bg;
+        else if (c.bg.a > 0 && bg) bg = blend(c.bg, bg);
+      }
+    };
+    const clsList = (attr(el, "class") ?? "").toLowerCase().split(/\s+/).filter(Boolean);
+    const id = (attr(el, "id") ?? "").toLowerCase();
+    for (const r of byTag) if (r.selector === tag) apply(r);
+    for (const r of byClass) if (clsList.includes(r.selector.slice(1))) apply(r);
+    if (id) for (const r of byId) if (r.selector === "#" + id) apply(r);
+    const pres = (a: string) => { const v = attr(el, a); return v ? parseColor(v) : undefined; };
+    if (tag === "font" && pres("color")) apply({ fg: pres("color") });
+    if (tag === "body" && pres("text")) apply({ fg: pres("text") });
+    if (pres("bgcolor")) apply({ bg: pres("bgcolor") });
+    const inlineStyle = attr(el, "style");
+    if (inlineStyle) apply(colorsFromStyle(inlineStyle));
+    if (vis === "visible") {
+      const textColor = fill ?? fg;
+      if (textColor && bg) {
+        const ratio = contrastRatio(textColor, bg);
+        if (ratio <= INVISIBLE_CONTRAST) { vis = "tiny_or_transparent"; cr = ratio; }
+      }
+    }
     if (vis === "visible") {
       if (attr(el, "hidden") !== undefined || attr(el, "aria-hidden") === "true" || attr(el, "inert") !== undefined) vis = "css_hidden";
       if (HIDDEN_CONTAINER_TAGS.has(tag)) vis = "css_hidden";
@@ -247,7 +331,7 @@ export function analyzeHtml(html: string, externalRules: HiddenRule[] = []): Vis
       const c = kids[i];
       // the <summary> of a collapsed <details> is visible
       const childVis = tag === "details" && defaultTreeAdapter.isElementNode(c) && c.tagName === "summary" && inherited === "visible" ? "visible" : vis;
-      stack.push({ node: c, vis: childVis, path: myPath, depth: depth + 1, inA11y: a11y });
+      stack.push({ node: c, vis: childVis, path: myPath, depth: depth + 1, inA11y: a11y, fg, bg, cr });
     }
   }
 
@@ -272,7 +356,9 @@ export function analyzeHtml(html: string, externalRules: HiddenRule[] = []): Vis
       confidence: Math.min(0.95, base + Math.min(words, 60) / 120),
       // hidden text is not delivered, so on its own it is informational; the meaning pass decides whether it is an attack
       severity: 0.35,
-      message: `${words} words of ${s.visibility.replace(/_/g, " ")} text a human would not see${isA11y ? " (screen-reader label)" : ""}`,
+      message: lowContrast.has(s)
+        ? `${words} words in a colour matching their background (contrast ${lowContrast.get(s)!.toFixed(2)}:1) a human would not see`
+        : `${words} words of ${s.visibility.replace(/_/g, " ")} text a human would not see${isA11y ? " (screen-reader label)" : ""}`,
       excerpt: s.text.trim().slice(0, 160),
       location: s.path,
       action: "none",

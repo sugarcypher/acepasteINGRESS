@@ -41,6 +41,7 @@ export type FindingKind =
   | "unicode.combining_flood"
   | "unicode.encoded_payload"
   | "unicode.entity_smuggling"
+  | "unicode.whitespace_channel"
   // visibility pass
   | "visibility.css_hidden"
   | "visibility.offscreen"

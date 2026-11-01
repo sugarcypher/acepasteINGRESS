@@ -14,8 +14,8 @@ Content reaching a model passes through states: raw bytes, the page after script
 |---|---|---|
 | acquire | raw bytes; two fingerprints for cloaking; every hop checked against the network policy | new |
 | policy | source and redirect targets against per-domain allow/deny | new |
-| visibility | rendered page vs extracted text: styled-hidden, off-screen, attribute-only, comments, SVG text, srcdoc, noscript, collapsed details | new |
-| character | characters vs glyphs: the hostile-invisible alphabet is ported verbatim from the production AcePaste cleaner (`acepaste-alphabet.ts`), plus bidi, variation selectors, confusables, full-width/math, combining floods, entity smuggling; decodes base64/base32/hex/char-codes/binary and rescans | AcePaste (ported) |
+| visibility | rendered page vs extracted text: styled-hidden, off-screen, attribute-only, comments, SVG text, srcdoc, noscript, collapsed details; same-colour text (white on white, black on black, near-white, named colours, translucent text, text-fill colour) resolved through the stylesheet cascade and measured as a contrast ratio against the background it actually sits on | new |
+| character | characters vs glyphs: the hostile-invisible alphabet is ported verbatim from the production AcePaste cleaner (`acepaste-alphabet.ts`), plus look-alike-space bit channels (AcePaste's formatting-space set, decoded), bidi, variation selectors, confusables, full-width/math, combining floods, entity smuggling; decodes base64/base32/hex/char-codes/binary and rescans | AcePaste (ported) |
 | script | source vs runtime: obfuscation, runtime codegen, automation/AI-crawler probes, post-load text injection, beacons, binary decoding | underlight |
 | supplychain | content vs what it would make an agent install or run: package manifests (install-time lifecycle scripts that execute or reach for credentials, URL-valued dependencies), lockfiles (resolutions outside the public registries), install commands in text (pipe-to-shell, URL installs, environment or secret files piped to the network). Visible install lines are documentation and score low; hidden or decoded ones are hostile | underlight (ported) |
 | sandbox | what a browser actually renders: webdriver-keyed cloaking, text injected after load, computed-style hidden text, blocked egress | new |
@@ -34,7 +34,7 @@ Defaults: suspect 0.25, hostile 0.70. Per-domain rules override both. A lone **s
 
 ## What it catches, measured
 
-Against the bundled corpus (`npm run eval`): **78/78 attacks refused** (55 outright hostile), **41/41 benign documents pass clean**, **3/3 ambiguous documents land on suspect** (overridable, never hostile). Median analysis time **0.2 ms** per document (static passes; the browser sandbox adds ~2 s and runs only on escalation). These are regression numbers on Claude-written fixtures, hardened across three rounds of adversarial review, plus the v0.6 supply-chain cases — a floor, not a claim about the open web.
+Against the bundled corpus (`npm run eval`): **85/85 attacks refused** (62 outright hostile), **45/45 benign documents pass clean**, **3/3 ambiguous documents land on suspect** (overridable, never hostile). Median analysis time **0.2 ms** per document (static passes; the browser sandbox adds ~2 s and runs only on escalation). These are regression numbers on Claude-written fixtures, hardened across three rounds of adversarial review, plus the v0.6 supply-chain cases — a floor, not a claim about the open web.
 
 The corpus covers: Unicode tag characters, zero-width binary channels, bidi overrides, variation-selector and entity smuggling, full-width/mathematical/homoglyph look-alikes across seven scripts, base64 (short, split, chunked), base32, hex, octal, quoted-printable, percent-encoding; CSS hiding by `display`/`visibility`/`opacity`/`clip-path`/`transform`/`scale`/`translate`/`inset`/`font` shorthand/custom-property indirection/off-screen offsets; collapsed `details`, `noscript`, `iframe srcdoc`, SVG text, `title`/`alt`/`meta` carriers; role tokens for six model families, tool-call shapes, EchoLeak images, webhook exfiltration; paraphrased, spaced, dotted, leet, reversed, and rot13 instructions; agent-targeted cloaking and webdriver-keyed render divergence; credential-stealing install scripts, pipe-to-shell commands hidden or base64-encoded, npx-from-URL in markdown comments, environment variables piped to a remote host. Benign cases include multilingual text (Persian, Arabic, Hebrew, Hindi, CJK, Coptic), emoji ZWJ sequences, legitimate accessibility markup, analytics snippets, minified bundles, security articles, fiction, runbooks, support macros, API JSON, ordinary package manifests, native-module install scripts, and the rustup and Homebrew install lines.
 
@@ -64,7 +64,7 @@ tools/underlight     the endpoint companion: inventories JavaScript that can exe
 ```sh
 npm install
 npm run build
-npm test          # 47 unit tests
+npm test          # 50 unit tests
 npm run eval      # corpus detection / false-positive report
 
 node packages/core/dist/src/cli.js https://example.com
@@ -153,6 +153,8 @@ See `tools/underlight/README.md`. It is untested on a real macOS fleet; treat fi
 
 - Supply-chain pass (underlight lineage): `supplychain.lifecycle_script`, `supplychain.url_dependency`, `supplychain.offregistry_resolution`, `supplychain.install_instruction`.
 - underlight vendored at `tools/underlight`.
+- Same-colour hiding: text colour and background are resolved through tag, class, id, presentational attributes and inline styles (dark-mode and print media blocks excluded), and text at or below a 1.25:1 contrast ratio is hidden. The browser sandbox now composites up the ancestor chain instead of comparing an element's own two colours. Image and gradient backgrounds are unknown and never flag.
+- Whitespace channels: look-alike Unicode spaces in word gaps are flagged, decoded as bits and rescanned; French spacing, thousands separators and indentation are excluded.
 - Fixed a false positive in the meaning pass: "run:" at the end of a line followed by a code block on the next line (installation docs) no longer reads as a tool invocation; "run: curl …" on one line still does.
 - npm-publishable packages (files, repository, public access), LICENSE, per-package READMEs; the Model Context Protocol server reports the engine version.
 

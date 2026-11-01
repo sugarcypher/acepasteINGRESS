@@ -13,7 +13,7 @@
 
 import { createHash, createHmac, randomBytes } from "node:crypto";
 import { acquire, AcquireError, type FetchLike } from "./acquire.js";
-import { analyzeHtml, rulesFromCss, type HiddenRule } from "./visibility.js";
+import { analyzeHtml, rulesFromCss, colorRulesFromCss, type HiddenRule, type ColorRule } from "./visibility.js";
 import { scanCharacters } from "./character.js";
 import { countHostileInvisibles } from "./acepaste-alphabet.js";
 import { analyzeScripts } from "./script.js";
@@ -125,15 +125,16 @@ export class GateEngine {
 
     // external stylesheets (same origin only, bounded)
     let externalRules: HiddenRule[] = [];
+    let externalColorRules: ColorRule[] = [];
     if (kind === "html" && this.config.fetchStylesheets) {
       const ts = performance.now();
-      externalRules = await this.fetchStylesheets(agentRes.body, agentRes.finalUrl);
+      ({ hidden: externalRules, color: externalColorRules } = await this.fetchStylesheets(agentRes.body, agentRes.finalUrl));
       timings.visibility = performance.now() - ts;
     }
 
     const result = await this.guarded(url, kind, t0, () => this.analyze({
       url, finalUrl: agentRes.finalUrl, redirectChain: agentRes.redirectChain, raw: agentRes.body, kind,
-      humanRaw: humanRes?.body, externalRules, timings, t0, override: !!opts.override, extraFindings: findings, rule,
+      humanRaw: humanRes?.body, externalRules, externalColorRules, timings, t0, override: !!opts.override, extraFindings: findings, rule,
     }));
     this.cacheSet(url, opts, result);
     return result;
@@ -186,7 +187,7 @@ export class GateEngine {
 
   private async analyze(a: {
     url: string; finalUrl: string; redirectChain: string[]; raw: string; kind: ContentKind; humanRaw?: string;
-    externalRules: HiddenRule[]; timings: GateResult["timings"]; t0: number; override: boolean; extraFindings: Finding[];
+    externalRules: HiddenRule[]; externalColorRules?: ColorRule[]; timings: GateResult["timings"]; t0: number; override: boolean; extraFindings: Finding[];
     rule: ReturnType<GateEngine["domainRule"]>;
   }): Promise<GateResult> {
     const findings: Finding[] = [...a.extraFindings];
@@ -212,7 +213,7 @@ export class GateEngine {
     let visibleText: string;
     const tv = performance.now();
     if (a.kind === "html") {
-      const v = analyzeHtml(raw, a.externalRules);
+      const v = analyzeHtml(raw, a.externalRules, a.externalColorRules ?? []);
       segments = v.segments; scripts = v.scripts; visibleText = v.visibleText;
       findings.push(...v.findings);
     } else {
@@ -227,7 +228,7 @@ export class GateEngine {
     // cloaking: compare visible text under the two fingerprints
     if (a.humanRaw !== undefined) {
       const tc = performance.now();
-      const humanVisible = a.kind === "html" ? analyzeHtml(a.humanRaw, a.externalRules).visibleText : a.humanRaw;
+      const humanVisible = a.kind === "html" ? analyzeHtml(a.humanRaw, a.externalRules, a.externalColorRules ?? []).visibleText : a.humanRaw;
       const sim = jaccardWords(visibleText, humanVisible);
       if (sim < 0.6 && (visibleText.length > 200 || humanVisible.length > 200)) {
         findings.push({
@@ -339,12 +340,13 @@ export class GateEngine {
     return { tier, score, contentKind: a.kind, delivered, envelope, findings, receipt, timings, overridden };
   }
 
-  private async fetchStylesheets(html: string, baseUrl: string): Promise<HiddenRule[]> {
+  private async fetchStylesheets(html: string, baseUrl: string): Promise<{ hidden: HiddenRule[]; color: ColorRule[] }> {
     const rules: HiddenRule[] = [];
+    const color: ColorRule[] = [];
     const { findStylesheetLinks } = await import("./visibility.js");
     const links = findStylesheetLinks(html).slice(0, 8);
     let base: URL;
-    try { base = new URL(baseUrl); } catch { return rules; }
+    try { base = new URL(baseUrl); } catch { return { hidden: rules, color }; }
     await Promise.all(links.map(async (href) => {
       let u: URL;
       try { u = new URL(href, base); } catch { return; }
@@ -352,9 +354,10 @@ export class GateEngine {
       try {
         const res = await acquire(u.toString(), "human", { ...this.config, maxBodyBytes: 512 * 1024, fetchTimeoutMs: Math.min(5000, this.config.fetchTimeoutMs) }, this.config.net, this.deps.fetchImpl, this.deps.resolver);
         rules.push(...rulesFromCss(res.body));
+        color.push(...colorRulesFromCss(res.body));
       } catch { /* a missing stylesheet is not a finding */ }
     }));
-    return rules;
+    return { hidden: rules, color };
   }
 
   private domainRule(url: string) {
