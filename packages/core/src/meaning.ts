@@ -45,7 +45,8 @@ const WEAK_ROLE_LABELS = [
 const TOOL_CALL_SHAPES = [
     /\{\s*"(tool_calls?|function_call|name)"\s*:\s*"?[\w.-]+"?\s*,\s*"(arguments|parameters|input)"\s*:/i,
     /<(function_calls|tool_call|invoke)\b[^>]*>[\s\S]{0,400}<\/(function_calls|tool_call|invoke)>/i,
-    /\b(run|execute|call)\s*:\s*`?(bash|sh|python|node|curl|wget|rm -rf|chmod|ssh)\b/i,
+    // same line only: "run:" followed by a code block on the next line is documentation layout, not an invocation
+    /\b(run|execute|call)[ \t]*:[ \t]*`?(bash|sh|python|node|curl|wget|rm -rf|chmod|ssh)\b/i,
 ];
 const INSTRUCTION_SHAPES: Array<[RegExp, number, string]> = [
     [/\bignore\s+(all\s+|any\s+)?(previous|prior|above|earlier|preceding)\s+(instructions?|prompts?|directions?|rules?|context)/i, 0.9, "ignore previous instructions"],

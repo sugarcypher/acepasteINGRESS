@@ -23,7 +23,7 @@ What it deliberately does not do: re-judge plain visible prose. A modern model a
 
 It runs three ways from one engine: a Model Context Protocol proxy you drop in front of an agent's fetch tool, a library, and a hosted HTTP service. Open core, Apache-2.0.
 
-Honest about the numbers: against my own corpus (72 attack cases, 36 benign, hardened over three adversarial review passes) it refuses every attack with zero false positives — but that's a regression floor on fixtures I wrote, not a claim about the open web. The live feed below shows what it actually catches in the wild; that's the real test, and I'd rather you watch that than trust my corpus.
+Honest about the numbers: against my own corpus (78 attack cases, 41 benign, hardened over three adversarial review passes) it refuses every attack with zero false positives — but that's a regression floor on fixtures I wrote, not a claim about the open web. The live feed below shows what it actually catches in the wild; that's the real test, and I'd rather you watch that than trust my corpus.
 
 Live feed: <https://YOUR-APP.fly.dev/>
 Repo: <https://github.com/sugarcypher/acepasteGATE>

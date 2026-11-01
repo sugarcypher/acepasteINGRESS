@@ -18,6 +18,7 @@ import { scanCharacters } from "./character.js";
 import { countHostileInvisibles } from "./acepaste-alphabet.js";
 import { analyzeScripts } from "./script.js";
 import { scanMeaning, neutralizeMeaning } from "./meaning.js";
+import { scanSupplyChain } from "./supplychain.js";
 import { adaptJavascript, adaptJson, adaptMarkdown, adaptText, decodeEntities, detectKind } from "./adapters.js";
 import { runSandbox } from "./sandbox.js";
 import {
@@ -284,6 +285,13 @@ export class GateEngine {
       }
       timings.sandbox = performance.now() - tsb;
     }
+
+    // supply-chain pass (underlight lineage): manifests, lockfiles, install commands
+    const tsc = performance.now();
+    const sc = scanSupplyChain({ kind: a.kind, raw, segments: cleanedSegments, decodedPayloads: charAll.decodedPayloads });
+    findings.push(...sc);
+    timings.supplychain = performance.now() - tsc;
+    passesRun.push("supplychain");
 
     // meaning pass over cleaned segments and decoded payloads
     const tm = performance.now();

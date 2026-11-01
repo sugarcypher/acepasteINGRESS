@@ -23,7 +23,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
 import { appendFileSync } from "node:fs";
-import { GateEngine, createTaintGuard, loadPolicyFile, type GateConfig, type TaintReceipt } from "@acepaste/gate-core";
+import { GateEngine, createTaintGuard, loadPolicyFile, ENGINE_VERSION, type GateConfig, type TaintReceipt } from "@acepaste/gate-core";
 
 const env = process.env;
 const logPath = env.GATE_LOG;
@@ -42,7 +42,7 @@ const engine = new GateEngine(cfg, {
 });
 const guard = createTaintGuard();
 
-const server = new McpServer({ name: "acepaste-gate", version: "0.3.0" });
+const server = new McpServer({ name: "acepaste-gate", version: ENGINE_VERSION });
 
 const present = (r: Awaited<ReturnType<GateEngine["fetch"]>>) => {
   const taint = guard.ingest(r);

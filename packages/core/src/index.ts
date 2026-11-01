@@ -9,6 +9,7 @@ export type { HiddenRule, VisibilityResult } from "./visibility.js";
 export { scanCharacters } from "./character.js";
 export { analyzeScripts, analyzeScript } from "./script.js";
 export { scanMeaning, neutralizeMeaning } from "./meaning.js";
+export { scanSupplyChain } from "./supplychain.js";
 export { detectKind, decodeEntities, adaptMarkdown, adaptJson, adaptText, adaptJavascript } from "./adapters.js";
 export { runSandbox, DEFAULT_SCRIPT_HOSTS } from "./sandbox.js";
 export type { SandboxResult } from "./sandbox.js";

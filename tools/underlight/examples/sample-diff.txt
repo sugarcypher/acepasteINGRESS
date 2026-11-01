@@ -1,0 +1,15 @@
+
+Diff: baseline 2026-09-19T20:25:53.111792+00:00 → current 2026-09-19T20:25:54.214338+00:00
+==============================================================================
+  [HIGH  ] heap-image-hash-changed: /Users/example/opt/SomeChatApp/v8_context_snapshot.bin
+           V8 snapshot bytes changed (b1d5f4879933 → 32e727c66c5c). Expected only when the owning app (/Users/example/opt/SomeChatApp) updated. If the app version did not change, treat as CVE-2025-55305-class tampering.
+  [HIGH  ] editor-extension-main-mutated: vscode:nrwl.angular-console
+           Entry file changed while version stayed 18.0.0. Extensions do not mutate in place on update; this is the silent-modification signal.
+  [HIGH  ] url-valued-dependency-new: /Users/example/code/webapp :: helper
+           New URL-valued specifier 'someone/helper'.
+  [HIGH  ] installed-lifecycle-new: /Users/example/code/webapp :: node_modules/axios
+           Installed package now declares a postinstall script matching a suspicious pattern. A high-download package gaining a lifecycle script it never had is the Axios/plain-crypto-js shape.
+  [MEDIUM] runtime-new: /usr/local/bin/deno
+           New JavaScript interpreter (deno) since baseline.
+
+5 change(s): high 4  medium 1  low 0  note 0

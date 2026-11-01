@@ -2,7 +2,7 @@
 
 A security gate between internet content and AI ingestion. One engine, many frontends.
 
-Name ratified 2026-10-01. Everything here is Claude-generated (through 2026-10-01) and awaiting Axel's objections; ratified decisions are listed at the end. The non-English detection gap and the per-language pattern sets are explicitly **not** marked verified — they need native-speaker review before any ruleset is called that.
+Working name (ratified 2026-10-01; a rename is under consideration). Everything here is Claude-generated (through 2026-10-31) and awaiting Axel's objections; ratified decisions are listed at the end. The non-English detection gap and the per-language pattern sets are explicitly **not** marked verified — they need native-speaker review before any ruleset is called that.
 
 ## Principle
 
@@ -17,6 +17,7 @@ Content reaching a model passes through states: raw bytes, the page after script
 | visibility | rendered page vs extracted text: styled-hidden, off-screen, attribute-only, comments, SVG text, srcdoc, noscript, collapsed details | new |
 | character | characters vs glyphs: the hostile-invisible alphabet is ported verbatim from the production AcePaste cleaner (`acepaste-alphabet.ts`), plus bidi, variation selectors, confusables, full-width/math, combining floods, entity smuggling; decodes base64/base32/hex/char-codes/binary and rescans | AcePaste (ported) |
 | script | source vs runtime: obfuscation, runtime codegen, automation/AI-crawler probes, post-load text injection, beacons, binary decoding | underlight |
+| supplychain | content vs what it would make an agent install or run: package manifests (install-time lifecycle scripts that execute or reach for credentials, URL-valued dependencies), lockfiles (resolutions outside the public registries), install commands in text (pipe-to-shell, URL installs, environment or secret files piped to the network). Visible install lines are documentation and score low; hidden or decoded ones are hostile | underlight (ported) |
 | sandbox | what a browser actually renders: webdriver-keyed cloaking, text injected after load, computed-style hidden text, blocked egress | new |
 | meaning | instruction-shaped and exfiltration-shaped text, scored across normalization variants (de-space, de-leet, reversed, rot13, script skeleton); hidden text scores harder than visible | new |
 | plugin | custom detectors over any surface | new |
@@ -33,9 +34,9 @@ Defaults: suspect 0.25, hostile 0.70. Per-domain rules override both. A lone **s
 
 ## What it catches, measured
 
-Against the bundled corpus (`npm run eval`): **72/72 attacks refused** (51 outright hostile), **36/36 benign documents pass clean**, **3/3 ambiguous documents land on suspect** (overridable, never hostile). Median analysis time **0.6 ms** per document (static passes; the browser sandbox adds ~2 s and runs only on escalation). These are regression numbers on Claude-written fixtures, hardened across three rounds of adversarial review — a floor, not a claim about the open web.
+Against the bundled corpus (`npm run eval`): **78/78 attacks refused** (55 outright hostile), **41/41 benign documents pass clean**, **3/3 ambiguous documents land on suspect** (overridable, never hostile). Median analysis time **0.2 ms** per document (static passes; the browser sandbox adds ~2 s and runs only on escalation). These are regression numbers on Claude-written fixtures, hardened across three rounds of adversarial review, plus the v0.6 supply-chain cases — a floor, not a claim about the open web.
 
-The corpus covers: Unicode tag characters, zero-width binary channels, bidi overrides, variation-selector and entity smuggling, full-width/mathematical/homoglyph look-alikes across seven scripts, base64 (short, split, chunked), base32, hex, octal, quoted-printable, percent-encoding; CSS hiding by `display`/`visibility`/`opacity`/`clip-path`/`transform`/`scale`/`translate`/`inset`/`font` shorthand/custom-property indirection/off-screen offsets; collapsed `details`, `noscript`, `iframe srcdoc`, SVG text, `title`/`alt`/`meta` carriers; role tokens for six model families, tool-call shapes, EchoLeak images, webhook exfiltration; paraphrased, spaced, dotted, leet, reversed, and rot13 instructions; agent-targeted cloaking and webdriver-keyed render divergence. Benign cases include multilingual text (Persian, Arabic, Hebrew, Hindi, CJK, Coptic), emoji ZWJ sequences, legitimate accessibility markup, analytics snippets, minified bundles, security articles, fiction, runbooks, support macros, and API JSON.
+The corpus covers: Unicode tag characters, zero-width binary channels, bidi overrides, variation-selector and entity smuggling, full-width/mathematical/homoglyph look-alikes across seven scripts, base64 (short, split, chunked), base32, hex, octal, quoted-printable, percent-encoding; CSS hiding by `display`/`visibility`/`opacity`/`clip-path`/`transform`/`scale`/`translate`/`inset`/`font` shorthand/custom-property indirection/off-screen offsets; collapsed `details`, `noscript`, `iframe srcdoc`, SVG text, `title`/`alt`/`meta` carriers; role tokens for six model families, tool-call shapes, EchoLeak images, webhook exfiltration; paraphrased, spaced, dotted, leet, reversed, and rot13 instructions; agent-targeted cloaking and webdriver-keyed render divergence; credential-stealing install scripts, pipe-to-shell commands hidden or base64-encoded, npx-from-URL in markdown comments, environment variables piped to a remote host. Benign cases include multilingual text (Persian, Arabic, Hebrew, Hindi, CJK, Coptic), emoji ZWJ sequences, legitimate accessibility markup, analytics snippets, minified bundles, security articles, fiction, runbooks, support macros, API JSON, ordinary package manifests, native-module install scripts, and the rustup and Homebrew install lines.
 
 ## Hardening
 
@@ -55,6 +56,7 @@ packages/mcp    Model Context Protocol server                                 @a
 packages/http   metered HTTP service, public attack feed, audit console        @acepaste/gate-http
 packages/core/eval   attack + benign + ambiguous corpus and the harness
 fixtures/            one clean page, one hostile page
+tools/underlight     the endpoint companion: inventories JavaScript that can execute on this machine (Python, standard library only)
 ```
 
 ## Run
@@ -62,7 +64,7 @@ fixtures/            one clean page, one hostile page
 ```sh
 npm install
 npm run build
-npm test          # 42 unit tests
+npm test          # 47 unit tests
 npm run eval      # corpus detection / false-positive report
 
 node packages/core/dist/src/cli.js https://example.com
@@ -134,6 +136,25 @@ new GateEngine({ detectors: [brand] });
   "sandbox": "escalate"
 }
 ```
+
+## Two halves: the gate and underlight
+
+The gate covers what enters a model. `tools/underlight` covers what executes on the machine the agent runs on: JavaScript runtimes (including engines embedded in apps), V8 heap snapshots (the CVE-2025-55305 precondition), editor and browser extensions, and every `package.json`, lockfile and installed package under your roots, baselined and diffed. The gate's supply-chain pass is underlight's manifest logic moved to the ingestion boundary, so the two agree on what a dangerous install script looks like.
+
+```sh
+python3 tools/underlight/underlight.py scan --out base.json
+python3 tools/underlight/underlight.py scan --baseline base.json
+python3 tools/underlight/underlight.py explain node_modules/some-pkg/index.js
+```
+
+See `tools/underlight/README.md`. It is untested on a real macOS fleet; treat findings as leads.
+
+## Changes in 0.6.0 (2026-10-31)
+
+- Supply-chain pass (underlight lineage): `supplychain.lifecycle_script`, `supplychain.url_dependency`, `supplychain.offregistry_resolution`, `supplychain.install_instruction`.
+- underlight vendored at `tools/underlight`.
+- Fixed a false positive in the meaning pass: "run:" at the end of a line followed by a code block on the next line (installation docs) no longer reads as a tool invocation; "run: curl …" on one line still does.
+- npm-publishable packages (files, repository, public access), LICENSE, per-package READMEs; the Model Context Protocol server reports the engine version.
 
 ## Ratified decisions
 

@@ -7,9 +7,9 @@
 
 import type { NetPolicy } from "./netpolicy.js";
 
-export const ENGINE_VERSION = "0.5.0";
+export const ENGINE_VERSION = "0.6.0";
 /** bump whenever a detector's behavior changes; receipts carry it so verdicts are reproducible */
-export const RULESET_VERSION = "2026.10.02-1";
+export const RULESET_VERSION = "2026.10.31-1";
 
 export type Tier = "clean" | "suspect" | "hostile";
 
@@ -21,6 +21,7 @@ export type PassName =
   | "visibility"
   | "character"
   | "script"
+  | "supplychain"
   | "meaning"
   | "cloaking"
   | "sandbox"
@@ -54,6 +55,11 @@ export type FindingKind =
   | "script.post_load_text_injection"
   | "script.exfil_beacon"
   | "script.binary_decoding"
+  // supply-chain pass (underlight lineage)
+  | "supplychain.lifecycle_script"
+  | "supplychain.url_dependency"
+  | "supplychain.offregistry_resolution"
+  | "supplychain.install_instruction"
   // sandbox pass
   | "sandbox.text_injected_after_load"
   | "sandbox.webdriver_keyed_divergence"
