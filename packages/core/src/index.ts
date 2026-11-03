@@ -34,5 +34,5 @@ export { macosDialogApprover, callbackApprover, denyAllApprover } from "./approv
 export { scanMultilingual, MULTILINGUAL_RULES, MULTILINGUAL_RULESET } from "./multilingual.js";
 export { scanCode, extractCodeUnits, guessLang, lex } from "./codepass.js";
 export type { CodeUnit, CodeLang, CodeCoverage } from "./codepass.js";
-export { INSTRUCTION_FILE_PATTERNS, discoverInstructionFiles, approveInstructionFile, checkInstructionFiles, loadInstructionFiles } from "./instructions.js";
+export { INSTRUCTION_FILE_PATTERNS, discoverInstructionFiles, readInstructionBytes, approveInstructionFile, checkInstructionFiles, loadInstructionFiles } from "./instructions.js";
 export type { InstructionFile, InstructionCheck, InstructionStatus, ApprovalEntry } from "./instructions.js";

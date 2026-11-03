@@ -49,6 +49,8 @@ export interface IngressOptions {
    * the public feed.
    */
   quarantined?: string;
+  /** the caller's quarantine as a test, also applied to every redirect hop and the final URL */
+  quarantineCheck?: (url: string) => string | undefined;
 }
 
 export interface EngineDeps {
@@ -120,7 +122,8 @@ export class IngressEngine {
   async fetch(url: string, opts: IngressOptions = {}): Promise<IngressResult> {
     const t0 = performance.now();
     const timings: IngressResult["timings"] = {};
-    if (opts.quarantined) return this.refuse(url, [{ pass: "policy", kind: "policy.denied_source", confidence: 1, severity: 1, message: `source is quarantined by your organization: ${opts.quarantined}`, action: "none" }], timings, t0, "text", "hostile", true);
+    const preQ = opts.quarantined ?? opts.quarantineCheck?.(url);
+    if (preQ) return this.refuse(url, [{ pass: "policy", kind: "policy.denied_source", confidence: 1, severity: 1, message: `source is quarantined by your organization: ${preQ}`, action: "none" }], timings, t0, "text", "hostile", true);
     const cached = this.cacheGet(url, opts);
     if (cached) return cached;
 
@@ -170,6 +173,12 @@ export class IngressEngine {
       timings.acquire = performance.now() - ta;
     }
 
+    if (opts.quarantineCheck) {
+      for (const hop of [...agentRes.redirectChain, agentRes.finalUrl]) {
+        const q = opts.quarantineCheck(hop);
+        if (q) return this.refuse(url, [{ pass: "policy", kind: "policy.denied_source", confidence: 1, severity: 1, message: `redirected to a source quarantined by your organization: ${q}`, action: "none" }], timings, t0, "text", "hostile", true);
+      }
+    }
     if (agentRes.redirectChain.length) {
       const hosts = new Set(agentRes.redirectChain.concat(agentRes.finalUrl).map(hostOf));
       if (hosts.size > 2) findings.push({ pass: "policy", kind: "policy.redirect_chain", confidence: 0.4, severity: 0.3, message: `redirected through ${hosts.size} hosts: ${[...hosts].join(" -> ")}`, action: "none" });

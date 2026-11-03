@@ -39,7 +39,7 @@ import { z } from "zod";
 import { appendFileSync, readFileSync } from "node:fs";
 import { randomBytes } from "node:crypto";
 import {
-  IngressEngine, ActionBroker, loadInstructionFiles, macosDialogApprover, denyAllApprover, loadPolicyFile, cloakingConfigFromEnv, HONEST_USER_AGENT, ENGINE_VERSION,
+  IngressEngine, ActionBroker, DEFAULT_BROKER_POLICY, ASSEMBLED_LIMITS, loadInstructionFiles, macosDialogApprover, denyAllApprover, loadPolicyFile, cloakingConfigFromEnv, HONEST_USER_AGENT, ENGINE_VERSION,
   type IngressConfig, type IngressResult, type TaintReceipt, type BrokerPolicy, type Approver,
 } from "@acepaste/ingress";
 
@@ -71,7 +71,8 @@ const proxyCfg: ProxyConfig = env.INGRESS_PROXY_CONFIG ? JSON.parse(readFileSync
 for (const d of proxyCfg.downstream ?? []) if (!/^[a-z0-9_-]{1,32}$/i.test(d.name)) throw new Error(`downstream server name ${JSON.stringify(d.name)} must be 1-32 letters, digits, - or _`);
 
 const approver: Approver = (env.INGRESS_APPROVER ?? (process.platform === "darwin" ? "macos-dialog" : "deny")) === "macos-dialog" ? macosDialogApprover() : denyAllApprover;
-const broker = new ActionBroker(proxyCfg.policy ?? {}, { approver, log: (e) => log(e as unknown as Record<string, unknown>) });
+// the gate's own read tools are always read-only; the config adds the downstream tools it knows only read
+const broker = new ActionBroker({ ...(proxyCfg.policy ?? {}), readOnlyTools: [...DEFAULT_BROKER_POLICY.readOnlyTools, ...(proxyCfg.policy?.readOnlyTools ?? [])] }, { approver, log: (e) => log(e as unknown as Record<string, unknown>) });
 for (const q of proxyCfg.quarantine ?? []) broker.quarantine(q);
 // one run per server session: taint cannot be cleared by the model, only by starting a new session
 const runId = `run_${randomBytes(6).toString("hex")}`;
@@ -82,18 +83,33 @@ const RECENT_MAX = 8;
 
 const hostOf = (u: string) => { try { return new URL(u).hostname.toLowerCase(); } catch { return undefined; } };
 
+const byteSlice = (t: string, max: number) => { const b = Buffer.from(t, "utf8"); return b.length <= max ? t : b.subarray(0, max).toString("utf8").replace(/\uFFFD$/, ""); };
+
+// one admission at a time, so two concurrent calls cannot each miss the other in the combined check
+let admitChain: Promise<unknown> = Promise.resolve();
+
 /** gate one piece of outside content, then the run's recent inputs combined; taint the run either way */
-async function admit(r: IngressResult, sourceId: string): Promise<{ result: IngressResult; composed?: string }> {
-  broker.ingest(runId, { ref: r.receipt.finalUrl || sourceId, receiptDigest: r.receipt.digest, host: hostOf(r.receipt.finalUrl) });
-  if (r.tier !== "clean" || !r.delivered) return { result: r };
-  const window = [...recent, { sourceId, text: r.delivered }].slice(-RECENT_MAX).map((f) => ({ ...f, text: f.text.slice(0, 60_000) }));
-  try {
-    const a = await engine.scanAssembled(window);
-    if (a.composedOnly) return { result: r, composed: `refused: combined with this run's recent inputs, this content forms ${a.assembled.tier} material (${[...new Set(a.assembled.findings.map((f) => f.kind))].join(", ")}). Each piece looked harmless alone.` };
-  } catch { /* oversize windows are checked fragment by fragment only */ }
-  recent.push({ sourceId, text: r.delivered });
-  while (recent.length > RECENT_MAX) recent.shift();
-  return { result: r };
+function admit(r: IngressResult, sourceId: string): Promise<{ result: IngressResult; composed?: string }> {
+  const next = admitChain.then(async () => {
+    broker.ingest(runId, { ref: r.receipt.finalUrl || sourceId, receiptDigest: r.receipt.digest, host: hostOf(r.receipt.finalUrl) });
+    if (r.tier !== "clean" || !r.delivered) return { result: r };
+    // fit the window to the combined check's limits: trim each piece, drop the oldest until the total fits
+    const per = ASSEMBLED_LIMITS.fragmentBytes - 64;
+    let window = [...recent, { sourceId, text: r.delivered }].slice(-RECENT_MAX).map((f) => ({ sourceId: f.sourceId.slice(0, 200), text: byteSlice(f.text, per) }));
+    while (window.length > 1 && window.reduce((n, f) => n + Buffer.byteLength(f.text, "utf8") + 1, 0) > ASSEMBLED_LIMITS.assembledBytes - 1024) window = window.slice(1);
+    try {
+      const a = await engine.scanAssembled(window);
+      if (a.composedOnly) return { result: r, composed: `refused: combined with this run's recent inputs, this content forms ${a.assembled.tier} material (${[...new Set(a.assembled.findings.map((f) => f.kind))].join(", ")}). Each piece looked harmless alone.` };
+    } catch (e) {
+      // the combined check could not run: refuse rather than deliver unchecked
+      return { result: r, composed: `refused: the combined check over this run's recent inputs could not run (${(e as Error).message}).` };
+    }
+    recent.push({ sourceId, text: r.delivered });
+    while (recent.length > RECENT_MAX) recent.shift();
+    return { result: r };
+  });
+  admitChain = next.catch(() => undefined);
+  return next;
 }
 
 function present(r: IngressResult, composed?: string) {
@@ -153,7 +169,11 @@ async function callOwn(name: string, raw: unknown) {
     // a fetch can carry data out in its URL: the broker sees it first
     const v = await broker.authorize({ runId, tool: name, args: a });
     if (!v.permitted) return refusedByBroker(name, v.reasons, v.approval?.outcome);
-    const r = await engine.fetch(a.url, { override: a.override });
+    const q = broker.isQuarantined(a.url);
+    let r = await engine.fetch(a.url, { override: a.override, quarantined: q });
+    // a redirect can land on a quarantined source
+    const qFinal = !q && r.receipt.finalUrl ? broker.isQuarantined(r.receipt.finalUrl) : undefined;
+    if (qFinal) r = await engine.scan("", { url: r.receipt.finalUrl, quarantined: qFinal });
     const { result, composed } = await admit(r, a.url);
     return present(result, composed);
   }
@@ -215,7 +235,15 @@ async function callProxied(name: string, raw: unknown) {
   const v = await broker.authorize({ runId, tool: name, args: raw ?? {} });
   if (!v.permitted) return refusedByBroker(name, v.reasons, v.approval?.outcome);
   // run exactly the arguments the broker decided on (and the person saw, when asked)
-  const res = await p.client.callTool({ name: p.tool.name, arguments: JSON.parse(JSON.stringify(v.args)) as Record<string, unknown> });
+  let res: Awaited<ReturnType<Client["callTool"]>>;
+  try {
+    res = await p.client.callTool({ name: p.tool.name, arguments: JSON.parse(JSON.stringify(v.args)) as Record<string, unknown> });
+  } catch (e) {
+    // a downstream error message is outside content too: it taints the run and is gated before the model sees it
+    const r = await engine.scan(String((e as Error)?.message ?? e).slice(0, 20_000), { url: `tool:${name}#error`, isHtml: false });
+    broker.ingest(runId, { ref: `tool:${name}#error`, receiptDigest: r.receipt.digest });
+    return { content: [{ type: "text" as const, text: r.tier === "clean" ? `${name} failed:\n${r.envelope}` : `${name} failed, and its error message was withheld (${r.tier}: ${[...new Set(r.findings.map((f) => f.kind))].join(", ")}).` }], isError: true };
+  }
   const items = (res.content as Array<{ type: string; text?: string }> | undefined) ?? [];
   const text = items.filter((c) => c.type === "text").map((c) => c.text ?? "").join("\n");
   const uninspected = items.filter((c) => c.type !== "text").map((c) => c.type);

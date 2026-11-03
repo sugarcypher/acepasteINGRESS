@@ -20,7 +20,7 @@
  */
 
 import { createHash, createHmac, randomBytes, timingSafeEqual } from "node:crypto";
-import { existsSync, mkdirSync, readFileSync, readdirSync, realpathSync, statSync, writeFileSync, chmodSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, readdirSync, realpathSync, lstatSync, writeFileSync, chmodSync } from "node:fs";
 import { homedir } from "node:os";
 import { join, relative, sep } from "node:path";
 
@@ -51,7 +51,9 @@ export function discoverInstructionFiles(root: string, opts: { maxDepth?: number
       entries++;
       const abs = join(dir, n);
       let st;
-      try { st = statSync(abs); } catch { continue; }
+      // symbolic links are never followed: a link named CLAUDE.md could point at any file on the machine
+      try { st = lstatSync(abs); } catch { continue; }
+      if (st.isSymbolicLink()) continue;
       if (st.isDirectory()) { if (!SKIP_DIRS.has(n)) walk(abs, depth + 1); continue; }
       const rel = relative(base, abs).split(sep).join("/");
       if (!st.isFile() || !INSTRUCTION_FILE_PATTERNS.some((p) => p.test(rel))) continue;
@@ -96,11 +98,28 @@ function readLedger(o: LedgerOptions): ApprovalEntry[] {
   });
 }
 
-/** record a person's approval of one file's exact bytes. Callers must have confirmed with a human first. */
-export function approveInstructionFile(root: string, relPath: string, approvedBy: string, o: LedgerOptions = {}): ApprovalEntry {
+/** read an instruction file's bytes once, refusing links and anything outside the root */
+export function readInstructionBytes(root: string, relPath: string): { base: string; abs: string; buf: Buffer; sha256: string } {
   const base = realpathSync(root);
   const f = discoverInstructionFiles(base).find((x) => x.relPath === relPath);
   if (!f) throw new Error(`${relPath} is not an instruction file under ${base}`);
+  if (lstatSync(f.absPath).isSymbolicLink()) throw new Error(`${relPath} is a link`);
+  const real = realpathSync(f.absPath);
+  if (!real.startsWith(base + sep)) throw new Error(`${relPath} resolves outside ${base}`);
+  const buf = readFileSync(real);
+  return { base, abs: real, buf, sha256: createHash("sha256").update(buf).digest("hex") };
+}
+
+/**
+ * Record a person's approval of one file's exact bytes. `expectedSha256` is the fingerprint
+ * of the bytes the person was shown; if the file changed since, nothing is approved.
+ */
+export function approveInstructionFile(root: string, relPath: string, approvedBy: string, expectedSha256: string, o: LedgerOptions = {}): ApprovalEntry {
+  if (!/^[0-9a-f]{64}$/.test(expectedSha256)) throw new Error("approveInstructionFile needs the full fingerprint of the bytes the person was shown");
+  const r = readInstructionBytes(root, relPath);
+  if (r.sha256 !== expectedSha256) throw new Error(`${relPath} changed after it was shown (shown ${expectedSha256.slice(0, 12)}, now ${r.sha256.slice(0, 12)}): nothing approved`);
+  const base = r.base;
+  const f = { sha256: r.sha256 };
   const key = approverKey(o, true)!;
   const body = { root: base, relPath, sha256: f.sha256, approvedAt: new Date().toISOString(), approvedBy };
   const entry: ApprovalEntry = { ...body, mac: macOf(key, body) };
@@ -132,7 +151,8 @@ export async function loadInstructionFiles(root: string, gate: (text: string, so
   const ledger = readLedger(o).filter((e) => e.root === base);
   const out: Array<{ relPath: string; status: InstructionStatus; inDependency: boolean; tier: string; sha256: string; guidance?: string; untrusted?: string }> = [];
   for (const f of discoverInstructionFiles(base)) {
-    const buf = readFileSync(f.absPath);
+    let buf: Buffer;
+    try { buf = readInstructionBytes(base, f.relPath).buf; } catch { continue; }
     const sha = createHash("sha256").update(buf).digest("hex");
     const e = ledger.find((x) => x.relPath === f.relPath);
     const status: InstructionStatus = !e ? "unknown" : e.sha256 === sha ? "approved" : "changed";

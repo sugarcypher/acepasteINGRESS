@@ -26,6 +26,7 @@
  */
 
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
+import { createHash } from "node:crypto";
 import { appendFileSync, readFileSync, writeFileSync, existsSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join, normalize } from "node:path";
@@ -99,12 +100,19 @@ function record(keyName: string, r: IngressResult) {
 
 // ---------- keys + metering ----------
 interface KeyInfo { name: string; rpm: number; daily: number }
+const keyId = (k: string) => "key-" + createHash("sha256").update(k).digest("hex").slice(0, 12);
 const keys = new Map<string, KeyInfo>();
 if (env.INGRESS_KEYS_FILE) {
   const j = JSON.parse(readFileSync(env.INGRESS_KEYS_FILE, "utf8")) as Record<string, Partial<KeyInfo>>;
-  for (const [k, v] of Object.entries(j)) keys.set(k, { name: v.name ?? k.slice(0, 6), rpm: v.rpm ?? 60, daily: v.daily ?? 5000 });
+  for (const [k, v] of Object.entries(j)) keys.set(k, { name: v.name ?? keyId(k), rpm: v.rpm ?? 60, daily: v.daily ?? 5000 });
 } else if (env.INGRESS_KEYS) {
-  for (const pair of env.INGRESS_KEYS.split(",")) { const [k, name] = pair.split(":"); if (k) keys.set(k.trim(), { name: (name ?? k.slice(0, 6)).trim(), rpm: 60, daily: 5000 }); }
+  for (const pair of env.INGRESS_KEYS.split(",")) { const [k, name] = pair.split(":"); if (k) keys.set(k.trim(), { name: (name ?? keyId(k.trim())).trim(), rpm: 60, daily: 5000 }); }
+}
+// the name is the tenant: receipts and quarantine are kept per name, so two keys may never share one by accident
+{
+  const names = [...keys.values()].map((k) => k.name);
+  const dup = names.find((n, i) => names.indexOf(n) !== i);
+  if (dup) throw new Error(`two API keys share the tenant name "${dup}"; give each key its own name`);
 }
 const open = keys.size === 0;
 
@@ -116,11 +124,24 @@ if (quarantinePath && existsSync(quarantinePath)) {
   for (const l of readFileSync(quarantinePath, "utf8").split("\n").filter(Boolean)) { try { const e = JSON.parse(l); if (e.removed) { const i = quarantine.findIndex((q) => q.key === e.key && q.match === e.match); if (i >= 0) quarantine.splice(i, 1); } else quarantine.push(e); } catch { /* skip */ } }
 }
 const persistQuarantine = (e: object) => { if (quarantinePath) { try { appendFileSync(quarantinePath, JSON.stringify(e) + "\n"); } catch { /* best effort */ } } };
+const QUARANTINE_MAX_PER_KEY = 1000;
+/** one spelling per address: lower-case scheme and host, no trailing dot, no default port, path decoded */
+function normUrl(u: string): string | undefined {
+  try {
+    const x = new URL(u);
+    x.hostname = x.hostname.replace(/\.$/, "");
+    let path = x.pathname;
+    try { path = decodeURIComponent(path); } catch { /* keep */ }
+    return `${x.protocol}//${x.host}${path}${x.search}`;
+  } catch { return undefined; }
+}
+const normHost = (h: string) => h.toLowerCase().replace(/^\*\./, "").replace(/\.$/, "");
 function quarantinedFor(key: string, url: string | undefined): string | undefined {
   if (!url) return undefined;
   let host = "";
-  try { host = new URL(url).hostname.toLowerCase(); } catch { /* not a URL */ }
-  const hit = quarantine.find((q) => q.key === key && ((q.kind === "host" && host && (host === q.match || host.endsWith("." + q.match))) || (q.kind === "url" && url.startsWith(q.match))));
+  try { host = normHost(new URL(url).hostname); } catch { /* not a URL */ }
+  const nu = normUrl(url);
+  const hit = quarantine.find((q) => q.key === key && ((q.kind === "host" && host && (host === q.match || host.endsWith("." + q.match))) || (q.kind === "url" && nu && nu.startsWith(q.match))));
   return hit ? `${hit.match} (${hit.reason || "no reason given"}, since ${hit.at})` : undefined;
 }
 if (open) process.stderr.write(JSON.stringify({ event: "ingress.warn", message: "no API keys configured; server is open (development only)" }) + "\n");
@@ -230,25 +251,31 @@ const server = createServer(async (req, res) => {
 
     // quarantine a source for this key, and see where it already reached (blast radius in this key's receipts)
     if (path === "/v1/quarantine" || path === "/v1/quarantine/remove") {
+      const mq = meter.take(a.key, a.info);
+      if (!mq.ok) return send(res, 429, { error: mq.reason }, { "retry-after": String(mq.retryAfter) });
       const body = await readJson(req);
       const raw = typeof body.host === "string" ? body.host : typeof body.url === "string" ? body.url : typeof body.receipt === "string" ? body.receipt : "";
       const kind: QuarantineEntry["kind"] = typeof body.host === "string" ? "host" : typeof body.url === "string" ? "url" : "receipt";
-      const match = kind === "host" ? raw.toLowerCase().replace(/^\*\./, "") : raw;
+      let match = kind === "host" ? normHost(raw) : kind === "url" ? normUrl(raw) ?? "" : raw;
       if (!match || match.length > 2048) return send(res, 400, { error: "host, url or receipt required" });
+      // a receipt names one past fetch; quarantine its address so later fetches of it are refused too
+      let effKind = kind;
+      if (kind === "receipt") { const rec = store.get(a.info.name, match); const nu = rec ? normUrl(rec.url) : undefined; if (nu) { match = nu; effKind = "url"; } }
       if (path.endsWith("remove")) {
         const i = quarantine.findIndex((q) => q.key === a.info.name && q.match === match);
         if (i >= 0) { quarantine.splice(i, 1); persistQuarantine({ key: a.info.name, match, removed: true, at: new Date().toISOString() }); }
         return send(res, 200, { removed: i >= 0 });
       }
-      const e: QuarantineEntry = { key: a.info.name, match, kind, reason: String(body.reason ?? "").slice(0, 500), at: new Date().toISOString() };
+      const e: QuarantineEntry = { key: a.info.name, match, kind: effKind, reason: String(body.reason ?? "").slice(0, 500), at: new Date().toISOString() };
+      if (quarantine.filter((q) => q.key === e.key).length >= QUARANTINE_MAX_PER_KEY) return send(res, 409, { error: `quarantine list is full (${QUARANTINE_MAX_PER_KEY} entries for this key)` });
       if (!quarantine.some((q) => q.key === e.key && q.match === e.match)) { quarantine.push(e); persistQuarantine(e); }
       const reached = kind === "host"
         ? store.query({ key: a.info.name, host: match, limit: 1000 }).items.concat(store.query({ key: a.info.name, limit: 100000 }).items.filter((r) => r.sourceHost.endsWith("." + match)))
-        : kind === "url" ? store.query({ key: a.info.name, url: match, limit: 1000 }).items
+        : effKind === "url" ? store.query({ key: a.info.name, limit: 100000 }).items.filter((r) => (normUrl(r.url) ?? "").startsWith(match))
         : [store.get(a.info.name, match)].filter((x): x is NonNullable<typeof x> => !!x);
       log({ event: "ingress.quarantine", key: a.info.name, kind, reached: reached.length });
       return send(res, 200, {
-        quarantined: { match, kind, reason: e.reason, at: e.at },
+        quarantined: { match, kind: e.kind, reason: e.reason, at: e.at },
         // where it already reached: every stored receipt from that source, newest first. Only what passed through this service is visible.
         blastRadius: { receipts: reached.length, delivered: reached.filter((r) => r.tier === "clean" || r.overridden).length, items: reached.slice(0, 200) },
         note: "Future fetches and scans of this source by your key are refused. Content delivered before now may already sit in caches, summaries or memory outside this service; review the delivered receipts listed here.",
@@ -262,7 +289,7 @@ const server = createServer(async (req, res) => {
 
     if (path === "/v1/fetch") {
       if (typeof body.url !== "string") return send(res, 400, { error: "url required" });
-      const r = await engine.fetch(body.url, { override: body.override === true, quarantined: quarantinedFor(a.info.name, body.url) });
+      const r = await engine.fetch(body.url, { override: body.override === true, quarantineCheck: (u) => quarantinedFor(a.info.name, u) });
       record(a.info.name, r);
       log({ event: "ingress.usage", key: a.info.name, op: "fetch", tier: r.tier, ms: Date.now() - started, usage: meter.usage(a.key) });
       return send(res, r.tier === "clean" || r.overridden ? 200 : r.tier === "unreachable" ? 502 : 422, r);

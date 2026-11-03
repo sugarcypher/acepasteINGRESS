@@ -14,7 +14,8 @@ import { IngressEngine } from "./engine.js";
 import { HONEST_USER_AGENT } from "./acquire.js";
 import { summarize, cloakingConfigFromEnv } from "./summary.js";
 import { loadPolicyFile } from "./policyfile.js";
-import { checkInstructionFiles, approveInstructionFile } from "./instructions.js";
+import { checkInstructionFiles, approveInstructionFile, readInstructionBytes } from "./instructions.js";
+import { macosDialogApprover } from "./approvers.js";
 import { createInterface } from "node:readline/promises";
 import { userInfo } from "node:os";
 import type { IngressConfig, TaintReceipt } from "./types.js";
@@ -70,21 +71,40 @@ async function instructionsCommand(a: string[]) {
   if (a[0] === "approve") {
     const [dir, rel] = [a[1], a[2]];
     if (!dir || !rel) { console.error("usage: ingress instructions approve <dir> <relative path>"); process.exit(2); }
-    // approval is a person's act: refuse when there is no interactive terminal (agents' shells usually have none)
     if (!process.stdin.isTTY || !process.stdout.isTTY) { console.error("refused: approval needs an interactive terminal, typed by a person"); process.exit(3); }
-    const f = checkInstructionFiles(dir).find((x) => x.relPath === rel);
-    if (!f) { console.error(`${rel} is not an instruction file under ${dir}`); process.exit(2); }
+    // read once: what is shown is what gets fingerprinted and approved
+    let bytes;
+    try { bytes = readInstructionBytes(dir, rel); } catch (e) { console.error((e as Error).message); process.exit(2); }
+    const text = bytes.buf.toString("utf8");
+    const MAX_SHOWN = 100_000;
+    if (bytes.buf.length > MAX_SHOWN) { console.error(`refused: ${rel} is ${bytes.buf.length} bytes, more than can be shown for review (${MAX_SHOWN})`); process.exit(2); }
     const engine = new IngressEngine({ cloakingCheck: false, sandbox: "off" }, { log: () => {} });
-    const r = await engine.scan(readFileSync(f.absPath, "utf8"), { url: `file:${rel}`, contentType: "text/markdown" });
-    console.log(`\n${rel}  (${f.bytes} bytes, fingerprint ${f.sha256.slice(0, 16)})${f.inDependency ? "  INSIDE A DEPENDENCY" : ""}`);
+    const r = await engine.scan(text, { url: `file:${rel}`, contentType: "text/markdown" });
+    // terminal escape sequences and invisible characters are shown, never interpreted
+    const shown = text.replace(/[\p{Cc}\p{Cf}\u2028\u2029]/gu, (c) => (c === "\n" || c === "\t" ? c : `<U+${c.codePointAt(0)!.toString(16).toUpperCase().padStart(4, "0")}>`));
+    const inDep = /(?:^|\/)(?:node_modules|vendor|\.venv|venv|site-packages|third_party)\//.test(rel);
+    console.log(`\n${rel}  (${bytes.buf.length} bytes, fingerprint ${bytes.sha256.slice(0, 16)})${inDep ? "  INSIDE A DEPENDENCY" : ""}`);
     console.log(`gate verdict: ${r.tier}${r.findings.length ? " — " + [...new Set(r.findings.map((x) => x.kind))].join(", ") : ""}`);
-    console.log(`status now: ${f.status}\n\n----- file -----\n${readFileSync(f.absPath, "utf8").slice(0, 20_000)}\n----- end -----\n`);
-    const rl = createInterface({ input: process.stdin, output: process.stdout });
-    const typed = (await rl.question(`To approve this exact version as project guidance, type its fingerprint's first 8 characters (${f.sha256.slice(0, 8)}): `)).trim();
-    rl.close();
-    if (typed !== f.sha256.slice(0, 8)) { console.log("not approved"); process.exit(1); }
-    const e = approveInstructionFile(dir, rel, userInfo().username);
-    console.log(`approved ${rel} at ${e.approvedAt}. Any change to the file needs approval again.`);
+    console.log(`\n----- file (complete) -----\n${shown}\n----- end -----\n`);
+    let ok = false;
+    if (process.platform === "darwin") {
+      // confirmation through a native dialog: a pseudo-terminal driven by a program cannot click it
+      const answer = await macosDialogApprover({ timeoutSec: 180 }).request({
+        id: "instructions", runId: "instructions", tool: `approve instruction file ${rel}`, canonicalArgs: JSON.stringify({ file: rel, bytes: bytes.buf.length, fingerprint: bytes.sha256.slice(0, 16), verdict: r.tier }),
+        digest: bytes.sha256, reasons: ["you are approving this exact version as project guidance for coding agents; the full text is in your terminal"], destinations: [], fields: [], sources: [], createdAt: Date.now(), expiresAt: Date.now() + 180_000,
+      });
+      ok = answer === "approved";
+    } else {
+      const rl = createInterface({ input: process.stdin, output: process.stdout });
+      const typed = (await rl.question(`To approve this exact version, type the first 8 characters of its fingerprint: `)).trim();
+      rl.close();
+      ok = typed === bytes.sha256.slice(0, 8);
+    }
+    if (!ok) { console.log("not approved"); process.exit(1); }
+    try {
+      const e = approveInstructionFile(dir, rel, userInfo().username, bytes.sha256);
+      console.log(`approved ${rel} at ${e.approvedAt}. Any change to the file needs approval again.`);
+    } catch (e) { console.error((e as Error).message); process.exit(1); }
     return;
   }
   const dir = a[0] ?? ".";
