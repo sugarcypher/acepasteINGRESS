@@ -1,6 +1,6 @@
 {
   "name": "@acepaste/ingress-http",
-  "version": "0.8.0",
+  "version": "0.9.0",
   "description": "AcePaste Ingress as a metered HTTP service: /v1/fetch, /v1/scan, /v1/verify, /v1/feed.",
   "type": "module",
   "main": "dist/server.js",
@@ -12,7 +12,7 @@
     "start": "node dist/server.js"
   },
   "dependencies": {
-    "@acepaste/ingress": "0.8.0"
+    "@acepaste/ingress": "0.9.0"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",

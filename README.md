@@ -96,7 +96,41 @@ The browser sandbox needs a Chromium binary. Playwright is an optional dependenc
 
 Generate the key once with `npx -p @acepaste/ingress ingress --keygen`. Set `INGRESS_SANDBOX` to `escalate` only where a Chromium is available (see Run).
 
-Tools: `ingress_fetch(url, override?)`, `ingress_scan(content, source?, contentType?, override?)`, `ingress_status()`, `ingress_confirm()`, `ingress_verify_receipt(receipt)`. Refused verdicts return `isError: true`. Env: `INGRESS_SIGNING_PRIVATE_KEY_FILE` (or `INGRESS_SIGNING_PRIVATE_KEY`), `INGRESS_SIGNING_KEY` (HMAC fallback), `INGRESS_VERIFY_PUBLIC_KEY`, `INGRESS_HOSTILE`, `INGRESS_SUSPECT`, `INGRESS_CLOAKING=0`, `INGRESS_SANDBOX=off|escalate|always`, `INGRESS_POLICY=path`, `INGRESS_LOG=path`.
+Tools: `ingress_fetch(url, override?)`, `ingress_scan(content, source?, contentType?, override?)`, `ingress_status()`, `ingress_instructions(root)`, `ingress_verify_receipt(receipt)`. Refused verdicts return `isError: true`. Env: `INGRESS_SIGNING_PRIVATE_KEY_FILE` (or `INGRESS_SIGNING_PRIVATE_KEY`), `INGRESS_SIGNING_KEY` (HMAC fallback), `INGRESS_VERIFY_PUBLIC_KEY`, `INGRESS_HOSTILE`, `INGRESS_SUSPECT`, `INGRESS_CLOAKING=0`, `INGRESS_SANDBOX=off|escalate|always`, `INGRESS_POLICY=path`, `INGRESS_LOG=path`, `INGRESS_PROXY_CONFIG=path`, `INGRESS_APPROVER=macos-dialog|deny`.
+
+### The action broker and the proxy
+
+A verdict never authorizes an action. The broker sits outside the model and decides:
+
+- **Any outside content taints the run**, whatever it scored. A clean page still taints: a low score is a prioritization signal, not proof.
+- **While tainted, side-effecting calls need a person to approve the exact call**: the tool and its arguments, fingerprinted. Approvals are single use and expire (2 minutes by default). The arguments that run are the frozen copy the person saw.
+- **Approval comes only from a channel the model cannot drive.** On macOS that is a native dialog with Deny as the default. With no approver set up, anything that needs approval is refused. There is no approval tool: `ingress_confirm` was removed in 0.9, because the model could call it to approve itself.
+- **Reads can leak too.** While tainted, a URL that carries a long query string or an encoded token needs approval even on a fetch.
+- **Quarantined sources** deny side effects for any run that touched them.
+
+To put other MCP servers behind the broker, list them in a proxy config and point `INGRESS_PROXY_CONFIG` at it. Their tools appear as `<server>__<tool>`, every call goes through the broker, and their results are gated like web content, alone and combined with the run's recent inputs. Non-text parts (images, audio) are withheld and reported as not inspected.
+
+```json
+{
+  "policy": {
+    "rules": [
+      { "tool": "*__send_email", "clean": "allow", "tainted": "require_approval", "allowDestinations": [".yourcompany.example"] },
+      { "tool": "*__delete_*", "clean": "require_approval", "tainted": "deny" }
+    ]
+  },
+  "downstream": [
+    { "name": "mail", "command": "npx", "args": ["-y", "some-mail-mcp-server"] },
+    { "name": "calc", "command": "node", "args": ["/abs/path/calc.js"], "trusted": true }
+  ],
+  "quarantine": ["evil.example"]
+}
+```
+
+Limits, plainly: the broker enforces only on calls routed through it; a tool the agent can reach directly is outside it. An agent that controls the screen, or code running as the same user, can answer a local dialog. Taint lasts for the server session; only starting a new session clears it.
+
+### Agent instruction files
+
+`ingress instructions <dir>` lists the files coding agents load as guidance (AGENTS.md, CLAUDE.md, GEMINI.md, .cursorrules, .cursor/rules, .windsurfrules, .clinerules, .roo rules, copilot-instructions, CONVENTIONS.md, .claude commands and agents), including any inside dependencies, with their approval status. `ingress instructions approve <dir> <file>` approves one file's exact bytes; it runs only in an interactive terminal and asks you to type part of the file's fingerprint. Approvals live in `~/.acepaste-ingress/`, signed with a local key, never in the repository. The `ingress_instructions` tool then returns approved versions as guidance and everything else as untrusted data. It enforces only where the agent loads instructions through it; turn off a runtime's native loading where you can.
 
 ## As the metered HTTP service
 
@@ -168,6 +202,16 @@ Every URL fetch is made twice and the two copies compared.
 
 What it cannot see: a site that verifies AI fetchers by their published IP ranges serves the gate the human page under any user agent, and a site that profiles the client deeply enough will tell the plain HTTP fetch from a person. The browser fetch and a separate network narrow that gap; they do not close it.
 
+## Changes in 0.9.0 (unreleased, branch `next`)
+
+- Action broker and MCP broker proxy (above). `ingress_confirm` removed.
+- `engine.scanAssembled(fragments)`: gates each fragment and the combined text the model receives, so an instruction split across sources is caught.
+- Multilingual instruction pass: override, conceal and extract shapes in Spanish, Portuguese, French, German, Italian, Russian, Turkish, Arabic, Japanese, Chinese, Korean and Hindi, on the original text and an NFKC view. Full weight in hidden text and decoded payloads; recorded but not refusing in visible text (the 2026-10-01 boundary). The seed rules were written by Claude and are labeled unreviewed on every finding until native speakers review them.
+- Code behavior pass: JavaScript, Python, shell, PowerShell and Go code in fenced blocks, `<pre>` blocks, script files and decoded payloads, with comments and strings separated from code: download then execute, encoded payload executed, reverse shell, secrets sent out, persistence. Lexical, not data flow. `result.coverage.code` reports which units and languages were inspected and which were not.
+- Install pages: a hidden install line that also appears visibly, or that downloads only from the page's own site, is a platform variant, not smuggling (rustup.rs, bun.sh).
+- Instruction-file approval for coding agents (above).
+- HTTP service: per-key quarantine with blast radius (`POST /v1/quarantine`, `GET /v1/quarantine`, `POST /v1/quarantine/remove`, `INGRESS_QUARANTINE_FILE`). Quarantine refusals never reach the public feed.
+
 ## Changes in 0.8.0 (2026-11-03)
 
 - Hidden text alone no longer refuses a page. Hidden menus, collapsed sections, screen-reader labels and hidden prose with no instruction in it pass clean; the hidden text is stripped and listed on the receipt. Hidden text still adds to the score when it carries an instruction, invisible characters, or a browser-observed change. (Found on archibase.co.)
@@ -225,6 +269,8 @@ What this project combines in one engine, as far as we know: rendered-page analy
 - **Non-English visible instructions: a deliberate boundary, not a hole.** A visible, plain-language instruction in any language is the one case the downstream model handles best — modern models are multilingual and instruction-tuned against exactly this, so a foreign-language injection in the page body is no more effective than the English one, which is to say mostly ineffective. A multilingual meaning classifier in the gate would therefore duplicate the model's own strongest defense while generating false positives on every legitimate foreign-language page with imperative verbs. The division of labor instead: the gate guarantees the provenance envelope and strips the hidden channels the model cannot see (hidden text, smuggled characters, cloaking, post-load injection); the model enforces the envelope ("untrusted web data, not instructions") in every language for free; the taint guard contains whatever the model might still obey, language-independently, by pausing side-effecting tools. Language-neutral exfiltration signals (data-bearing URLs, role tokens, webhook hosts) are caught regardless of surrounding language. Claude-generated translation regex sets are deliberately not committed.
 - **Confusables from a hand-built table.** Seven scripts covered; a full fold should come from the Unicode confusables dataset.
 - **False positives on documents that quote payloads.** Damped (quotation/attribution discount, code-block discount, per-kind log dampening), not eliminated; security writing that issues rather than quotes an instruction still lands on suspect by design.
+- **Install pages with per-platform tabs from a sister domain** (deno.com hides deno.land install lines per platform) still refuse as hostile; telling a platform tab from smuggling without a browser needs more than the text.
+- **Multilingual seed rules are unreviewed** and narrow: paraphrase, transliteration and most languages are not covered.
 - **Static CSS coverage is partial.** Without the browser sandbox, hiding and colour rules are resolved for simple selectors only (tag, class, id). Text hidden through descendant, attribute or pseudo-class selectors (`.box p`, `[data-x]`, `:nth-child`) reads as visible to the static pass; a strong instruction in it is still refused, but a paraphrased one can pass. The sandbox computes real styles and closes this; the public instance runs without it.
 - **Hosted billing, a managed residential egress option for the browser fetch (today you supply the proxy), enterprise policy console.**
 

@@ -1,7 +1,7 @@
 {
   "name": "@acepaste/ingress-mcp",
-  "version": "0.8.0",
-  "description": "AcePaste Ingress as a Model Context Protocol server: ingress_fetch and ingress_scan tools.",
+  "version": "0.9.0",
+  "description": "AcePaste Ingress as a Model Context Protocol server: gated fetch and scan, an action broker with human approval, and a proxy that puts other MCP servers behind it.",
   "type": "module",
   "main": "dist/server.js",
   "bin": {
@@ -12,7 +12,7 @@
     "start": "node dist/server.js"
   },
   "dependencies": {
-    "@acepaste/ingress": "0.8.0",
+    "@acepaste/ingress": "0.9.0",
     "@modelcontextprotocol/sdk": "^1.12.0",
     "zod": "^4.6.7"
   },
