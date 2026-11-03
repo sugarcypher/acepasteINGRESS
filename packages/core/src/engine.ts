@@ -508,11 +508,16 @@ function hostOf(url: string): string {
  *     fact, not twelve attacks)
  *   - noisy-OR across kinds
  *   - hidden text that carries no instruction shape is informational: it is
- *     not delivered anyway, so visibility-only evidence is capped below the
- *     hostile line
+ *     never delivered, so visibility-only evidence is capped below the
+ *     suspect line. The page passes clean, the hidden text is stripped, and
+ *     the findings stay on the receipt (ratified 2026-11-03: hidden menus,
+ *     collapsed sections and screen-reader labels must not refuse a page)
  *   - co-occurrence of hidden-text and meaning findings, cloaking, and
  *     webdriver-keyed divergence each add a bonus
  */
+/** below the default suspect threshold (0.25), so hidden text alone never refuses */
+export const VISIBILITY_ONLY_CAP = 0.2;
+
 export function aggregate(findings: Finding[]): number {
   if (!findings.length) return 0;
   const byKind = new Map<string, number[]>();
@@ -531,7 +536,7 @@ export function aggregate(findings: Finding[]): number {
   let score = 1 - notP;
   const passes = new Set(findings.map((f) => f.pass));
   const onlyVisibility = [...passes].every((p) => p === "visibility");
-  if (onlyVisibility) score = Math.min(score, 0.45);
+  if (onlyVisibility) score = Math.min(score, VISIBILITY_ONLY_CAP);
   const hiddenAndMeaning = (passes.has("visibility") || passes.has("character") || passes.has("sandbox")) && passes.has("meaning");
   if (hiddenAndMeaning) score = Math.min(1, score + 0.15);
   if (passes.has("cloaking")) score = Math.min(1, score + 0.1);

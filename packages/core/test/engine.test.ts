@@ -275,6 +275,19 @@ test("aggregate: single weak finding stays below suspect; hidden+meaning co-occu
   assert.ok(combo >= 0.7);
 });
 
+test("hidden prose with no instruction passes clean, is stripped, and stays on the receipt", async () => {
+  const filler = "Studio news, project photos and a short history of the practice, written for visitors browsing the site. ".repeat(6);
+  const html = `<html><body><p>${filler}</p>
+    <div style="display:none">The practice of an architecture firm encompasses architecture, interior design, planning and preservation across public and private commissions in three cities.</div>
+    <div style="display:none">A boutique start-up firm is looking for a talented individual to join a small team working on residential and cultural projects this coming year.</div>
+  </body></html>`;
+  const r = await new IngressEngine({ cloakingCheck: false }, { log: () => {} }).scan(html, { isHtml: true });
+  assert.equal(r.tier, "clean");
+  assert.ok(r.findings.some((f) => f.kind === "visibility.css_hidden"));
+  assert.ok(r.receipt.findings.some((f) => f.kind === "visibility.css_hidden"));
+  assert.ok(!r.delivered.includes("boutique start-up"));
+});
+
 // ---------- acquire, network policy, cloaking, redirects ----------
 
 test("network policy blocks loopback, private, link-local, metadata, IPv4-mapped IPv6", () => {
