@@ -19,6 +19,7 @@ import { countHostileInvisibles } from "./acepaste-alphabet.js";
 import { analyzeScripts } from "./script.js";
 import { scanMeaning, neutralizeMeaning } from "./meaning.js";
 import { scanSupplyChain } from "./supplychain.js";
+import { scanCode } from "./codepass.js";
 import { scanSecrets, redactSecrets, collectSecrets, scrubExcerpt } from "./secrets.js";
 import { attachEvidence } from "./evidence.js";
 import { adaptJavascript, adaptJson, adaptMarkdown, adaptText, decodeEntities, detectKind } from "./adapters.js";
@@ -394,10 +395,17 @@ export class IngressEngine {
 
     // supply-chain pass (underlight lineage): manifests, lockfiles, install commands
     const tsc = performance.now();
-    const sc = scanSupplyChain({ kind: a.kind, raw, segments: cleanedSegments, decodedPayloads: charAll.decodedPayloads });
+    const sc = scanSupplyChain({ kind: a.kind, raw, segments: cleanedSegments, decodedPayloads: charAll.decodedPayloads, pageHost: a.finalUrl.startsWith("inline:") ? undefined : hostOf(a.finalUrl) });
     findings.push(...sc);
     timings.supplychain = performance.now() - tsc;
     passesRun.push("supplychain");
+
+    // code behavior pass: what code the model receives would do
+    const tcode = performance.now();
+    const codeScan = scanCode({ kind: a.kind, raw, segments: cleanedSegments, decodedPayloads: charAll.decodedPayloads });
+    findings.push(...codeScan.findings);
+    timings.code = performance.now() - tcode;
+    passesRun.push("code");
 
     // meaning pass over cleaned segments and decoded payloads
     const tm = performance.now();
@@ -456,7 +464,7 @@ export class IngressEngine {
 
     if (tier !== "clean") this.deps.log(buildLogEntry(a.finalUrl, tier, score, findings, safePayloads, receipt, overridden));
 
-    return { tier, score, contentKind: a.kind, delivered, envelope, findings, receipt, timings, overridden };
+    return { tier, score, contentKind: a.kind, delivered, envelope, findings, receipt, timings, overridden, coverage: { code: codeScan.coverage } };
   }
 
   private async fetchStylesheets(html: string, baseUrl: string): Promise<{ hidden: HiddenRule[]; color: ColorRule[] }> {

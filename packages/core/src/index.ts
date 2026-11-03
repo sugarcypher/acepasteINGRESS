@@ -32,3 +32,5 @@ export { ActionBroker, isSideEffectName, DEFAULT_BROKER_POLICY, canonicalJson, a
 export type { ActionDecision, ActionRule, BrokerPolicy, ProposedAction, ApprovalRequest, Approver, BrokerVerdict, BrokerEvent } from "./broker.js";
 export { macosDialogApprover, callbackApprover, denyAllApprover } from "./approvers.js";
 export { scanMultilingual, MULTILINGUAL_RULES, MULTILINGUAL_RULESET } from "./multilingual.js";
+export { scanCode, extractCodeUnits, guessLang, lex } from "./codepass.js";
+export type { CodeUnit, CodeLang, CodeCoverage } from "./codepass.js";

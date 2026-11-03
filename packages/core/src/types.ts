@@ -31,6 +31,7 @@ export type PassName =
   | "meaning"
   | "cloaking"
   | "sandbox"
+  | "code"
   | "plugin";
 
 export type FindingKind =
@@ -87,6 +88,12 @@ export type FindingKind =
   | "meaning.exfil_link"
   // cloaking pass
   | "cloaking.agent_targeted_divergence"
+  // code behavior pass
+  | "code.download_execute"
+  | "code.encoded_execution"
+  | "code.reverse_shell"
+  | "code.secret_exfiltration"
+  | "code.persistence"
   // plugin detectors
   | `plugin.${string}`;
 
@@ -231,6 +238,8 @@ export interface IngressResult {
   receipt: TaintReceipt;
   /** timing in milliseconds per pass, for the speed budget */
   timings: Partial<Record<PassName | "total", number>>;
+  /** what was inspected, and what was not (code languages, units skipped). Unknown is not clean. */
+  coverage?: { code?: import("./codepass.js").CodeCoverage };
 }
 
 export interface IngressConfig {

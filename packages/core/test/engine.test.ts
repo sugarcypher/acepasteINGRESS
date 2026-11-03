@@ -37,7 +37,7 @@ test("clean article passes clean with a versioned receipt", async () => {
   assert.equal(r.findings.length, 0);
   assert.equal(r.receipt.version, "3");
   assert.ok(r.receipt.engineVersion && r.receipt.rulesetVersion);
-  assert.deepEqual(r.receipt.passesRun, ["visibility", "character", "supplychain", "meaning", "secrets"]);
+  assert.deepEqual(r.receipt.passesRun, ["visibility", "character", "supplychain", "code", "meaning", "secrets"]);
 });
 
 test("tag-character injection is hostile and decoded", async () => {

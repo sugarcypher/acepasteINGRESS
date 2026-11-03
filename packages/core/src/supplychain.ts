@@ -76,7 +76,18 @@ export interface SupplyChainInput {
   raw: string;
   segments: ReadonlyArray<TextSegment>;
   decodedPayloads: ReadonlyArray<string>;
+  /** host of the page itself, so a site's own installer for another platform is not read as smuggled */
+  pageHost?: string;
 }
+
+const TWO_LEVEL = /\.(?:co|com|org|net|ac|gov|edu)\.[a-z]{2}$/i;
+/** registrable domain, approximately: the last two labels, three under a two-level country suffix */
+export function siteOf(host: string): string {
+  const h = host.toLowerCase().replace(/\.$/, "");
+  const labels = h.split(".");
+  return labels.slice(TWO_LEVEL.test(h) ? -3 : -2).join(".");
+}
+const hostsIn = (t: string) => [...t.matchAll(/\b(?:https?:\/\/)?((?:[a-z0-9-]+\.)+[a-z]{2,})(?=[\/:\s"']|$)/gi)].map((m) => m[1].toLowerCase());
 
 const clip = (s: string, n = 200) => (s.length > n ? s.slice(0, n) + "…" : s);
 
@@ -164,10 +175,21 @@ export function scanSupplyChain(input: SupplyChainInput): Finding[] {
   if (doc !== undefined && isManifest(doc)) findings.push(...manifestFindings(doc));
   if (input.kind === "json" || input.kind === "text") findings.push(...lockfileFindings(input.raw, doc));
   // manifests carry their scripts as JSON strings; those were judged above, so skip segment scanning of $.scripts
+  // a hidden install line that a person can also read, word for word, elsewhere on the page hides nothing:
+  // install pages keep one block per platform and reveal the right one with a script (rustup.rs)
+  const squash = (t: string) => t.replace(/\s+/g, " ").trim();
+  const visibleText = squash(input.segments.filter((s) => s.visibility === "visible").map((s) => s.text).join(" "));
   for (const s of input.segments) {
     if (s.path.startsWith("$.scripts.")) continue;
     // collapsed <details> and hidden tab panels are revealed by one click: install docs live there, so weigh them as visible
-    findings.push(...installFindings(s.text, s.visibility !== "visible" && !s.path.includes("~revealable"), s.path));
+    let hidden = s.visibility !== "visible" && !s.path.includes("~revealable");
+    if (hidden) {
+      const cmds = installFindings(s.text, true, s.path).map((f) => squash(f.excerpt ?? ""));
+      if (cmds.length && cmds.every((c) => c.length >= 12 && visibleText.includes(c))) hidden = false;
+      // or one that downloads only from the page's own site: the same installer for another platform (bun.sh, deno.com)
+      else if (cmds.length && input.pageHost && cmds.every((c) => { const hs = hostsIn(c); return hs.length > 0 && hs.every((h) => siteOf(h) === siteOf(input.pageHost!)); })) hidden = false;
+    }
+    findings.push(...installFindings(s.text, hidden, s.path));
   }
   for (const p of input.decodedPayloads) findings.push(...installFindings(p, true, "decoded payload"));
   return findings;
