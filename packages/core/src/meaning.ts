@@ -17,6 +17,7 @@
  * is tracked as an open item, not shipped as Claude-generated translations.
  */
 
+import { scanMultilingual } from "./multilingual.js";
 import type { Finding, TextSegment } from "./types.js";
 import { variants } from "./normalize.js";
 
@@ -195,14 +196,15 @@ export function scanMeaning(input: MeaningInput): Finding[] {
   // code blocks are scored separately with the documentation discount
   const codeBlocks = visibleRaw.match(FENCED) ?? [];
   const visible = visibleRaw.replace(FENCED, " ");
-  if (visible.trim()) scoreText(visible, false, "visible text", findings);
+  if (visible.trim()) { scoreText(visible, false, "visible text", findings); findings.push(...scanMultilingual(visible, false, "visible text")); }
   if (codeBlocks.length) scoreText(codeBlocks.join("\n"), false, "visible code block", findings, true);
   for (const s of input.segments) {
     if (s.visibility === "visible" || (s.visibility === "attribute" && s.path.endsWith("@alt"))) continue;
-    if (s.text.trim().split(/\s+/).length < 4) continue;
-    scoreText(s.text, true, s.path, findings);
+    // scripts without spaces between words (Japanese, Chinese) are never "too short" by word count
+    if (s.text.trim().split(/\s+/).length >= 4) scoreText(s.text, true, s.path, findings);
+    if (s.text.trim().length >= 6) findings.push(...scanMultilingual(s.text, true, s.path));
   }
-  for (const p of input.decodedPayloads) scoreText(p, true, "decoded payload", findings);
+  for (const p of input.decodedPayloads) { scoreText(p, true, "decoded payload", findings); findings.push(...scanMultilingual(p, true, "decoded payload")); }
   return findings;
 }
 

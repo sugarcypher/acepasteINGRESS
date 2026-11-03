@@ -8,7 +8,7 @@
  *   node dist/eval/run.js --json     machine-readable
  */
 import { IngressEngine } from "../src/index.js";
-import { ATTACKS, ATTACKS_R2, BENIGN, SUPPLY, SUPPLY_BENIGN, COLOR, COLOR_BENIGN, type Case } from "./corpus.js";
+import { ATTACKS, ATTACKS_R2, BENIGN, SUPPLY, SUPPLY_BENIGN, COLOR, COLOR_BENIGN, MULTILINGUAL_ATTACKS, MULTILINGUAL_BENIGN, type Case } from "./corpus.js";
 
 const verbose = process.argv.includes("--verbose");
 const json = process.argv.includes("--json");
@@ -24,7 +24,7 @@ async function run(c: Case): Promise<Row> {
 }
 
 const rows: Row[] = [];
-for (const c of [...ATTACKS, ...ATTACKS_R2, ...BENIGN, ...SUPPLY, ...SUPPLY_BENIGN, ...COLOR, ...COLOR_BENIGN]) rows.push(await run(c));
+for (const c of [...ATTACKS, ...ATTACKS_R2, ...BENIGN, ...SUPPLY, ...SUPPLY_BENIGN, ...COLOR, ...COLOR_BENIGN, ...MULTILINGUAL_ATTACKS, ...MULTILINGUAL_BENIGN]) rows.push(await run(c));
 
 const attacks = rows.filter((r) => r.label === "attack");
 const benign = rows.filter((r) => r.label === "benign");

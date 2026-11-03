@@ -31,3 +31,4 @@ export { IngressEngine as GateEngine } from "./engine.js";
 export { ActionBroker, isSideEffectName, DEFAULT_BROKER_POLICY, canonicalJson, actionDigest, destinationsIn, exfilShapes, describeApproval } from "./broker.js";
 export type { ActionDecision, ActionRule, BrokerPolicy, ProposedAction, ApprovalRequest, Approver, BrokerVerdict, BrokerEvent } from "./broker.js";
 export { macosDialogApprover, callbackApprover, denyAllApprover } from "./approvers.js";
+export { scanMultilingual, MULTILINGUAL_RULES, MULTILINGUAL_RULESET } from "./multilingual.js";
