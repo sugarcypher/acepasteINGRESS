@@ -107,6 +107,22 @@ if (env.INGRESS_KEYS_FILE) {
   for (const pair of env.INGRESS_KEYS.split(",")) { const [k, name] = pair.split(":"); if (k) keys.set(k.trim(), { name: (name ?? k.slice(0, 6)).trim(), rpm: 60, daily: 5000 }); }
 }
 const open = keys.size === 0;
+
+// ---------- quarantine (per customer key; never shared across keys, never on the public feed) ----------
+interface QuarantineEntry { key: string; match: string; kind: "host" | "url" | "receipt"; reason: string; at: string }
+const quarantinePath = env.INGRESS_QUARANTINE_FILE;
+const quarantine: QuarantineEntry[] = [];
+if (quarantinePath && existsSync(quarantinePath)) {
+  for (const l of readFileSync(quarantinePath, "utf8").split("\n").filter(Boolean)) { try { const e = JSON.parse(l); if (e.removed) { const i = quarantine.findIndex((q) => q.key === e.key && q.match === e.match); if (i >= 0) quarantine.splice(i, 1); } else quarantine.push(e); } catch { /* skip */ } }
+}
+const persistQuarantine = (e: object) => { if (quarantinePath) { try { appendFileSync(quarantinePath, JSON.stringify(e) + "\n"); } catch { /* best effort */ } } };
+function quarantinedFor(key: string, url: string | undefined): string | undefined {
+  if (!url) return undefined;
+  let host = "";
+  try { host = new URL(url).hostname.toLowerCase(); } catch { /* not a URL */ }
+  const hit = quarantine.find((q) => q.key === key && ((q.kind === "host" && host && (host === q.match || host.endsWith("." + q.match))) || (q.kind === "url" && url.startsWith(q.match))));
+  return hit ? `${hit.match} (${hit.reason || "no reason given"}, since ${hit.at})` : undefined;
+}
 if (open) process.stderr.write(JSON.stringify({ event: "ingress.warn", message: "no API keys configured; server is open (development only)" }) + "\n");
 
 class Meter {
@@ -202,6 +218,7 @@ const server = createServer(async (req, res) => {
       return send(res, 200, { ...out, stats: store.stats(a.info.name) });
     }
     if (req.method === "GET" && path === "/v1/receipts/stats") return send(res, 200, store.stats(a.info.name));
+    if (req.method === "GET" && path === "/v1/quarantine") return send(res, 200, { items: quarantine.filter((q) => q.key === a.info.name).map(({ key: _k, ...rest }) => rest) });
 
     if (req.method !== "POST") return send(res, 405, { error: "method not allowed" });
 
@@ -211,6 +228,33 @@ const server = createServer(async (req, res) => {
       return send(res, 200, IngressEngine.verifyReceipt(body.receipt as TaintReceipt, (body.receipt as TaintReceipt).signatureAlg === "ecdsa-p256-sha256" ? engine.publicKey()?.publicKeyPem : env.INGRESS_SIGNING_KEY));
     }
 
+    // quarantine a source for this key, and see where it already reached (blast radius in this key's receipts)
+    if (path === "/v1/quarantine" || path === "/v1/quarantine/remove") {
+      const body = await readJson(req);
+      const raw = typeof body.host === "string" ? body.host : typeof body.url === "string" ? body.url : typeof body.receipt === "string" ? body.receipt : "";
+      const kind: QuarantineEntry["kind"] = typeof body.host === "string" ? "host" : typeof body.url === "string" ? "url" : "receipt";
+      const match = kind === "host" ? raw.toLowerCase().replace(/^\*\./, "") : raw;
+      if (!match || match.length > 2048) return send(res, 400, { error: "host, url or receipt required" });
+      if (path.endsWith("remove")) {
+        const i = quarantine.findIndex((q) => q.key === a.info.name && q.match === match);
+        if (i >= 0) { quarantine.splice(i, 1); persistQuarantine({ key: a.info.name, match, removed: true, at: new Date().toISOString() }); }
+        return send(res, 200, { removed: i >= 0 });
+      }
+      const e: QuarantineEntry = { key: a.info.name, match, kind, reason: String(body.reason ?? "").slice(0, 500), at: new Date().toISOString() };
+      if (!quarantine.some((q) => q.key === e.key && q.match === e.match)) { quarantine.push(e); persistQuarantine(e); }
+      const reached = kind === "host"
+        ? store.query({ key: a.info.name, host: match, limit: 1000 }).items.concat(store.query({ key: a.info.name, limit: 100000 }).items.filter((r) => r.sourceHost.endsWith("." + match)))
+        : kind === "url" ? store.query({ key: a.info.name, url: match, limit: 1000 }).items
+        : [store.get(a.info.name, match)].filter((x): x is NonNullable<typeof x> => !!x);
+      log({ event: "ingress.quarantine", key: a.info.name, kind, reached: reached.length });
+      return send(res, 200, {
+        quarantined: { match, kind, reason: e.reason, at: e.at },
+        // where it already reached: every stored receipt from that source, newest first. Only what passed through this service is visible.
+        blastRadius: { receipts: reached.length, delivered: reached.filter((r) => r.tier === "clean" || r.overridden).length, items: reached.slice(0, 200) },
+        note: "Future fetches and scans of this source by your key are refused. Content delivered before now may already sit in caches, summaries or memory outside this service; review the delivered receipts listed here.",
+      });
+    }
+
     // scan / fetch consume the quota
     const m = meter.take(a.key, a.info);
     if (!m.ok) return send(res, 429, { error: m.reason }, { "retry-after": String(m.retryAfter) });
@@ -218,14 +262,14 @@ const server = createServer(async (req, res) => {
 
     if (path === "/v1/fetch") {
       if (typeof body.url !== "string") return send(res, 400, { error: "url required" });
-      const r = await engine.fetch(body.url, { override: body.override === true });
+      const r = await engine.fetch(body.url, { override: body.override === true, quarantined: quarantinedFor(a.info.name, body.url) });
       record(a.info.name, r);
       log({ event: "ingress.usage", key: a.info.name, op: "fetch", tier: r.tier, ms: Date.now() - started, usage: meter.usage(a.key) });
       return send(res, r.tier === "clean" || r.overridden ? 200 : r.tier === "unreachable" ? 502 : 422, r);
     }
     if (path === "/v1/scan") {
       if (typeof body.content !== "string") return send(res, 400, { error: "content required" });
-      const r = await engine.scan(body.content, { url: body.source, contentType: body.contentType, isHtml: body.isHtml, override: body.override === true });
+      const r = await engine.scan(body.content, { url: body.source, contentType: body.contentType, isHtml: body.isHtml, override: body.override === true, quarantined: quarantinedFor(a.info.name, typeof body.source === "string" ? body.source : undefined) });
       record(a.info.name, r);
       log({ event: "ingress.usage", key: a.info.name, op: "scan", tier: r.tier, ms: Date.now() - started, usage: meter.usage(a.key) });
       return send(res, r.tier === "clean" || r.overridden ? 200 : r.tier === "unreachable" ? 502 : 422, r);

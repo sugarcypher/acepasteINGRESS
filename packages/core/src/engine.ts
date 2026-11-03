@@ -43,6 +43,12 @@ import {
 export interface IngressOptions {
   /** human explicitly asked for a suspect page anyway; delivers neutralized text. Never applies to hostile. */
   override?: boolean;
+  /**
+   * the caller's own quarantine: refuse this source without fetching it. Logged as
+   * ingress.quarantined, never as an attack verdict, so a customer's list never reaches
+   * the public feed.
+   */
+  quarantined?: string;
 }
 
 export interface EngineDeps {
@@ -114,6 +120,7 @@ export class IngressEngine {
   async fetch(url: string, opts: IngressOptions = {}): Promise<IngressResult> {
     const t0 = performance.now();
     const timings: IngressResult["timings"] = {};
+    if (opts.quarantined) return this.refuse(url, [{ pass: "policy", kind: "policy.denied_source", confidence: 1, severity: 1, message: `source is quarantined by your organization: ${opts.quarantined}`, action: "none" }], timings, t0, "text", "hostile", true);
     const cached = this.cacheGet(url, opts);
     if (cached) return cached;
 
@@ -214,6 +221,7 @@ export class IngressEngine {
   async scan(content: string, opts: IngressOptions & { url?: string; isHtml?: boolean; contentType?: string } = {}): Promise<IngressResult> {
     const t0 = performance.now();
     const url = opts.url ?? "inline:";
+    if (opts.quarantined) return this.refuse(url, [{ pass: "policy", kind: "policy.denied_source", confidence: 1, severity: 1, message: `source is quarantined by your organization: ${opts.quarantined}`, action: "none" }], {}, t0, "text", "hostile", true);
     const bytes = Buffer.byteLength(content, "utf8");
     if (bytes > this.config.maxBodyBytes) {
       return this.refuse(url, [{ pass: "policy", kind: "policy.denied_source", confidence: 0.5, severity: 0.5, message: `content is ${bytes} bytes, over the ${this.config.maxBodyBytes} byte limit`, action: "none" }], {}, t0, "text");
@@ -496,14 +504,15 @@ export class IngressEngine {
     });
   }
 
-  private refuse(url: string, findings: Finding[], timings: IngressResult["timings"], t0: number, kind: ContentKind, tier: "hostile" | "unreachable" = "hostile"): IngressResult {
+  private refuse(url: string, findings: Finding[], timings: IngressResult["timings"], t0: number, kind: ContentKind, tier: "hostile" | "unreachable" = "hostile", quarantine = false): IngressResult {
     attachEvidence(findings, sha256(""));
     const score = tier === "hostile" ? 1 : 0;
     const receipt = this.receipt({ url, finalUrl: url, redirectChain: [], kind, raw: "", delivered: "", tier, score, findings, overridden: false, passesRun: tier === "hostile" ? ["policy"] : ["acquire"], acepasteInvisibleCount: 0 });
     const envelope = buildEnvelope(url, tier, "", findings, receipt, false);
     timings.total = performance.now() - t0;
     // unreachable is not an attack: it goes to the operational log, never to the attack log or public feed
-    if (tier === "hostile") this.deps.log(buildLogEntry(url, "hostile", 1, findings, [], receipt, false));
+    if (quarantine) this.deps.log({ event: "ingress.quarantined", at: this.deps.now().toISOString(), url });
+    else if (tier === "hostile") this.deps.log(buildLogEntry(url, "hostile", 1, findings, [], receipt, false));
     else this.deps.log({ event: "ingress.unreachable", at: this.deps.now().toISOString(), url, reason: findings[0]?.message ?? "" });
     return { tier, score, contentKind: kind, delivered: "", envelope, findings, receipt, timings, overridden: false };
   }
