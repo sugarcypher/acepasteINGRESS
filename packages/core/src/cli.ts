@@ -11,6 +11,8 @@
  */
 import { readFileSync } from "node:fs";
 import { IngressEngine } from "./engine.js";
+import { HONEST_USER_AGENT } from "./acquire.js";
+import { summarize, cloakingConfigFromEnv } from "./summary.js";
 import { loadPolicyFile } from "./policyfile.js";
 import type { IngressConfig, TaintReceipt } from "./types.js";
 
@@ -34,7 +36,9 @@ async function main() {
     return;
   }
   const cfg: Partial<IngressConfig> = opt("policy") ? loadPolicyFile(opt("policy")!) : {};
+  Object.assign(cfg, cloakingConfigFromEnv(process.env, HONEST_USER_AGENT));
   if (flag("no-cloaking")) cfg.cloakingCheck = false;
+  const hf = opt("human-fetch"); if (hf === "browser" || hf === "http") cfg.humanFetch = hf;
   const sb = opt("sandbox"); if (sb === "always" || sb === "escalate" || sb === "off") cfg.sandbox = sb;
   if (process.env.INGRESS_SIGNING_KEY) cfg.signingKey = process.env.INGRESS_SIGNING_KEY;
   const pk = process.env.INGRESS_SIGNING_PRIVATE_KEY_FILE ? readFileSync(process.env.INGRESS_SIGNING_PRIVATE_KEY_FILE, "utf8") : process.env.INGRESS_SIGNING_PRIVATE_KEY;
@@ -45,9 +49,10 @@ async function main() {
   let result;
   if (flag("text")) result = await engine.scan(await chunksIn(), { override });
   else if (url) result = await engine.fetch(url, { override });
-  else { console.error("usage: ingress <url> | ingress --text < file   [--json] [--no-cloaking] [--override] [--sandbox=always|escalate|off] [--policy=file.json] | ingress --verify < receipt.json"); process.exit(2); }
+  else { console.error("usage: ingress <url> | ingress --text < file   [--json | --summary] [--no-cloaking] [--human-fetch=http|browser] [--override] [--sandbox=always|escalate|off] [--policy=file.json] | ingress --verify < receipt.json"); process.exit(2); }
 
   if (flag("json")) { console.log(JSON.stringify(result, null, 2)); return; }
+  if (flag("summary")) { console.log(JSON.stringify(summarize(result))); if (result.tier === "unreachable") process.exitCode = 1; return; }
   console.log(result.envelope);
   console.error(`\n[timings] ${Object.entries(result.timings).map(([k, v]) => `${k}=${v!.toFixed(1)}ms`).join(" ")}`);
 }

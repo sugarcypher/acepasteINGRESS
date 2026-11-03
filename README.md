@@ -35,7 +35,7 @@ Defaults: suspect 0.25, hostile 0.70. Per-domain rules override both. A lone **s
 
 ## What it catches, measured
 
-Against the bundled corpus (`npm run eval`): **85/85 attacks refused** (62 outright hostile), **45/45 benign documents pass clean**, **3/3 ambiguous documents land on suspect** (overridable, never hostile). Median analysis time **0.2 ms** per document (static passes; the browser sandbox adds ~2 s and runs only on escalation). These are regression numbers on fixtures written for this project. The original passes were hardened across three rounds of adversarial review; the passes added in 0.6 and 0.7 (supply chain, same-colour text, whitespace channels, secrets) have tests and corpus cases but have not yet had that adversarial review. Treat all of it as a floor, not a claim about the open web.
+Against the bundled corpus (`npm run eval`): **85/85 attacks refused** (63 outright hostile), **45/45 benign documents pass clean**, **3/3 ambiguous documents land on suspect** (overridable, never hostile). Median analysis time **0.2 ms** per document (static passes; the browser sandbox adds ~2 s and runs only on escalation). These are regression numbers on fixtures written for this project. The original passes were hardened across three rounds of adversarial review; the passes added in 0.6 and 0.7 (supply chain, same-colour text, whitespace channels, secrets) and the 0.8 cloaking rebuild have tests and corpus cases but have not yet had that adversarial review. Treat all of it as a floor, not a claim about the open web.
 
 The corpus covers: Unicode tag characters, zero-width binary channels, bidi overrides, variation-selector and entity smuggling, full-width/mathematical/homoglyph look-alikes across seven scripts, base64 (short, split, chunked), base32, hex, octal, quoted-printable, percent-encoding; CSS hiding by `display`/`visibility`/`opacity`/`clip-path`/`transform`/`scale`/`translate`/`inset`/`font` shorthand/custom-property indirection/off-screen offsets; collapsed `details`, `noscript`, `iframe srcdoc`, SVG text, `title`/`alt`/`meta` carriers; role tokens for six model families, tool-call shapes, EchoLeak images, webhook exfiltration; paraphrased, spaced, dotted, leet, reversed, and rot13 instructions; agent-targeted cloaking and webdriver-keyed render divergence; credential-stealing install scripts, pipe-to-shell commands hidden or base64-encoded, npx-from-URL in markdown comments, environment variables piped to a remote host. Benign cases include multilingual text (Persian, Arabic, Hebrew, Hindi, CJK, Coptic), emoji ZWJ sequences, legitimate accessibility markup, analytics snippets, minified bundles, security articles, fiction, runbooks, support macros, API JSON, ordinary package manifests, native-module install scripts, and the rustup and Homebrew install lines.
 
@@ -156,6 +156,27 @@ python3 tools/underlight/underlight.py explain node_modules/some-pkg/index.js
 
 See `tools/underlight/README.md`. It is untested on a real macOS fleet; treat findings as leads.
 
+## How the cloaking check works
+
+Every URL fetch is made twice and the two copies compared.
+
+- **The agent fetch** presents the user agent of a real AI assistant's fetcher (ChatGPT-User, Claude-User or Perplexity-User, one at random per fetch), because that is what agent-targeted cloaking keys on. Set `INGRESS_AGENT_UA=honest` to send only the gate's own name, or a `|`-separated list of your own. If a site refuses the AI user agent while serving the browser, the gate fetches once more under its own name (`acquire.ai_agent_refused` on the receipt).
+- **The browser fetch** presents desktop Chrome headers. By default it is a plain HTTP request; `INGRESS_HUMAN_FETCH=browser` makes it in a real headless Chromium (real browser handshake, JavaScript on, fresh profile, every request checked against the network policy). `INGRESS_HUMAN_PROXY` sends it through an HTTP(S) proxy, such as a residential proxy you supply, so the two fetches leave from different networks.
+- **Timing:** which goes first is random, and the second starts after a random gap (`INGRESS_CLOAKING_JITTER`, default 250 to 1500 ms).
+- **Comparison:** words, not markup. A site that hands agents Markdown and browsers HTML of the same page is not cloaking. The check asks how much of what the AI fetcher received never appears anywhere in the browser's copy: most of it (a different page), or a solid block of it (the real page plus a passage only the AI gets).
+- **Error pages are not pages.** If the AI fetcher gets an error status, the result is `unreachable`, not an attack; if only the browser fetch fails, the page is still judged and the receipt records that the comparison was skipped.
+
+What it cannot see: a site that verifies AI fetchers by their published IP ranges serves the gate the human page under any user agent, and a site that profiles the client deeply enough will tell the plain HTTP fetch from a person. The browser fetch and a separate network narrow that gap; they do not close it.
+
+## Changes in 0.8.0 (2026-11-03)
+
+- Hidden text alone no longer refuses a page. Hidden menus, collapsed sections, screen-reader labels and hidden prose with no instruction in it pass clean; the hidden text is stripped and listed on the receipt. Hidden text still adds to the score when it carries an instruction, invisible characters, or a browser-observed change. (Found on archibase.co.)
+- Cloaking check rebuilt (see above): AI-assistant user agents, random order and gap, optional browser fetch and proxy, word comparison against the browser's full copy. Fixes the false alarm on sites that serve agents Markdown (lawsofux.com).
+- New tier `unreachable`: network errors, timeouts, unresolvable hosts and error statuses. Score 0, nothing delivered, written to the operational log as `ingress.unreachable`, never to the attack log or public feed. The HTTP service answers 502.
+- Page scripts (automation probes, obfuscation, minified bundles) no longer add to the score once the two fetches agree, since scripts are never delivered to the model. Fixes the refusal of ordinary GitHub repository pages.
+- Visible tool-call text that is quoted or attributed is treated as documentation.
+- `ingress <url> --summary`: findings grouped by pass and kind with counts and peak weight, plus the heaviest findings; `summarize()` in the library. Adapted from a probe script by Briar Greenway.
+
 ## Changes in 0.7.0 (2026-11-01)
 
 - Renamed AcePaste Gate to AcePaste Ingress: packages `@acepaste/ingress`, `@acepaste/ingress-mcp`, `@acepaste/ingress-http`; commands `ingress`, `ingress-mcp`, `ingress-http`; Model Context Protocol server `acepaste-ingress` with tools `ingress_fetch`, `ingress_scan`, `ingress_status`, `ingress_confirm`, `ingress_verify_receipt`; envelope marker `<<acepaste-ingress …>>`; environment variables `INGRESS_*` (formerly `GATE_*`); class `IngressEngine` (`GateEngine` kept as a deprecated alias).
@@ -175,6 +196,7 @@ See `tools/underlight/README.md`. It is untested on a real macOS fleet; treat fi
 - One engine (TypeScript); other languages bind to it, a future Rust/WASM port replaces it, never runs beside it.
 - clean / suspect / hostile; suspect and hostile both refuse; suspect is overridable by explicit human request, hostile is not.
 - A lone strong visible instruction shape refuses; a lone weak shape passes.
+- Hidden text with no instruction in it does not refuse a page: it is stripped and noted on the receipt (2026-11-03).
 - Cloaking check on everywhere, both fetches, cached 24h.
 - Taint and capability control ship as opt-in middleware in the same package.
 - AcePaste product line; attack feed exposes attacking domains, never customer fetches.
@@ -204,7 +226,7 @@ What this project combines in one engine, as far as we know: rendered-page analy
 - **Confusables from a hand-built table.** Seven scripts covered; a full fold should come from the Unicode confusables dataset.
 - **False positives on documents that quote payloads.** Damped (quotation/attribution discount, code-block discount, per-kind log dampening), not eliminated; security writing that issues rather than quotes an instruction still lands on suspect by design.
 - **Static CSS coverage is partial.** Without the browser sandbox, hiding and colour rules are resolved for simple selectors only (tag, class, id). Text hidden through descendant, attribute or pseudo-class selectors (`.box p`, `[data-x]`, `:nth-child`) reads as visible to the static pass; a strong instruction in it is still refused, but a paraphrased one can pass. The sandbox computes real styles and closes this; the public instance runs without it.
-- **Hosted billing, residential egress for the human fingerprint, enterprise policy console.**
+- **Hosted billing, a managed residential egress option for the browser fetch (today you supply the proxy), enterprise policy console.**
 
 ## Provenance of the hardening
 

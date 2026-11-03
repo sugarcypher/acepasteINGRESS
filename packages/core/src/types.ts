@@ -7,11 +7,16 @@
 
 import type { NetPolicy } from "./netpolicy.js";
 
-export const ENGINE_VERSION = "0.7.0";
+export const ENGINE_VERSION = "0.8.0";
 /** bump whenever a detector's behavior changes; receipts carry it so verdicts are reproducible */
-export const RULESET_VERSION = "2026.10.31-1";
+export const RULESET_VERSION = "2026.11.03-1";
 
-export type Tier = "clean" | "suspect" | "hostile";
+/**
+ * clean: delivered. suspect: refused, overridable. hostile: refused, not overridable.
+ * unreachable: nothing could be fetched or read (network error, timeout, redirect loop,
+ * binary or oversized body). Not an attack verdict, and never written to the attack log.
+ */
+export type Tier = "clean" | "suspect" | "hostile" | "unreachable";
 
 export type ContentKind = "html" | "markdown" | "json" | "text" | "javascript";
 
@@ -32,6 +37,10 @@ export type FindingKind =
   // policy
   | "policy.denied_source"
   | "policy.redirect_chain"
+  // acquire pass
+  | "acquire.unreachable"
+  | "acquire.cloaking_check_incomplete"
+  | "acquire.ai_agent_refused"
   // character pass
   | "unicode.tag_characters"
   | "unicode.zero_width"
@@ -94,6 +103,8 @@ export interface Finding {
   excerpt?: string;
   /** location hint: character offset, selector path, or script index */
   location?: string;
+  /** meaning pass: the match was in text a human would not see */
+  inHidden?: boolean;
   /** what the engine did about it */
   action: "none" | "neutralized" | "quarantined";
   /** Kith & Revere evidence model, attached by the engine: a finding is a conclusion, never a Fact */
@@ -117,6 +128,10 @@ export interface AcquireResult {
   body: string;
   /** which fingerprint this acquisition used */
   fingerprint: "human" | "agent";
+  /** the user-agent string actually sent */
+  userAgent: string;
+  /** how it was fetched: plain HTTP client, or a real browser (human fingerprint only) */
+  via: "http" | "browser";
   fetchedAt: string;
 }
 
@@ -225,6 +240,21 @@ export interface IngressConfig {
   suspectThreshold: number;
   /** run the second, human-fingerprinted fetch and compare */
   cloakingCheck: boolean;
+  /**
+   * user agents for the agent fetch, one picked at random per fetch. Defaults to the
+   * user-triggered fetchers of the major AI assistants, because those are what
+   * agent-targeted cloaking keys on. Set to one honest string to stop impersonating.
+   */
+  agentUserAgents: string[];
+  /** random gap between the two fetches, [min, max] milliseconds; the order is random too */
+  cloakingJitterMs: [number, number];
+  /**
+   * optional HTTP(S) proxy for the human fetch only, e.g. a residential proxy, so the two
+   * fetches leave from different networks. Credentials go in the URL. Never logged.
+   */
+  humanProxy?: string;
+  /** "http": the human fetch is a plain request with browser headers. "browser": a real headless Chromium loads the page. */
+  humanFetch: "http" | "browser";
   /** maximum body size accepted, bytes */
   maxBodyBytes: number;
   /** fetch timeout, milliseconds */
@@ -257,6 +287,14 @@ export const DEFAULT_CONFIG: IngressConfig = {
   hostileThreshold: 0.7,
   suspectThreshold: 0.25,
   cloakingCheck: true,
+  agentUserAgents: [
+    // sources: OpenAI bot docs; Cloudflare Radar bot directory; Perplexity agent docs (checked 2026-11-03)
+    "Mozilla/5.0 AppleWebKit/537.36 (KHTML, like Gecko); compatible; ChatGPT-User/1.0; +https://openai.com/bot",
+    "Mozilla/5.0 AppleWebKit/537.36 (KHTML, like Gecko; compatible; Claude-User/1.0; +Claude-User@anthropic.com)",
+    "Mozilla/5.0 AppleWebKit/537.36 (KHTML, like Gecko; compatible; Perplexity-User/1.0; +https://www.perplexity.ai)",
+  ],
+  cloakingJitterMs: [250, 1500],
+  humanFetch: "http",
   maxBodyBytes: 5 * 1024 * 1024,
   fetchTimeoutMs: 15000,
   cacheTtlSeconds: 86400,

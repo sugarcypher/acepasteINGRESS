@@ -1,6 +1,6 @@
 {
   "name": "@acepaste/ingress-mcp",
-  "version": "0.7.0",
+  "version": "0.8.0",
   "description": "AcePaste Ingress as a Model Context Protocol server: ingress_fetch and ingress_scan tools.",
   "type": "module",
   "main": "dist/server.js",
@@ -12,7 +12,7 @@
     "start": "node dist/server.js"
   },
   "dependencies": {
-    "@acepaste/ingress": "0.7.0",
+    "@acepaste/ingress": "0.8.0",
     "@modelcontextprotocol/sdk": "^1.12.0",
     "zod": "^4.6.7"
   },

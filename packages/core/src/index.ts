@@ -1,7 +1,9 @@
-export { IngressEngine, aggregate, buildEnvelope, buildLogEntry } from "./engine.js";
+export { IngressEngine, aggregate, buildEnvelope, buildLogEntry, compareServed, servedWords, VISIBILITY_ONLY_CAP } from "./engine.js";
 export type { EngineDeps, IngressOptions } from "./engine.js";
-export { acquire, AcquireError, MAX_REDIRECTS } from "./acquire.js";
-export type { FetchLike } from "./acquire.js";
+export { acquire, acquireWithBrowser, AcquireError, MAX_REDIRECTS, HONEST_USER_AGENT } from "./acquire.js";
+export type { FetchLike, AcquireOptions } from "./acquire.js";
+export { summarize, findingWeight, cloakingConfigFromEnv } from "./summary.js";
+export type { ResultSummary, FindingGroup, TopFinding } from "./summary.js";
 export { checkTarget, isPrivateIP, isPrivateIPv4, isPrivateIPv6, NetPolicyError, DEFAULT_NET_POLICY } from "./netpolicy.js";
 export type { NetPolicy } from "./netpolicy.js";
 export { analyzeHtml, findStylesheetLinks, rulesFromCss, colorRulesFromCss } from "./visibility.js";

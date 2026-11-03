@@ -128,13 +128,14 @@ function scoreText(text: string, hidden: boolean, where: string, findings: Findi
   if (roleToken) {
     findings.push({
       pass: "meaning", kind: "meaning.role_token", confidence: Math.min(0.98, (roleToken.weight + hiddenBoost) * roleToken.discount * codeFactor), severity: 0.85,
-      message: `${roleToken.weight < 0.5 ? "line-start role label (transcript-shaped)" : "chat-template role token"} in content${inCode ? " (inside a code block)" : ""}${tag(roleToken.variant)}`, excerpt: roleToken.match.slice(0, 80), location: where, action: "neutralized",
+      message: `${roleToken.weight < 0.5 ? "line-start role label (transcript-shaped)" : "chat-template role token"} in content${inCode ? " (inside a code block)" : ""}${tag(roleToken.variant)}`, excerpt: roleToken.match.slice(0, 80), location: where, inHidden: hidden, action: "neutralized",
     });
   }
   if (toolCall) {
     findings.push({
-      pass: "meaning", kind: "meaning.tool_call_shaped", confidence: Math.min(0.95, (0.6 + hiddenBoost) * toolCall.discount * codeFactor), severity: 0.8,
-      message: `tool-invocation shaped text in content${inCode ? " (inside a code block)" : ""}${tag(toolCall.variant)}`, excerpt: toolCall.match.slice(0, 120), location: where, action: "neutralized",
+      // visible tool-call text is usually documentation; quoted or attributed, it is talking about one
+      pass: "meaning", kind: "meaning.tool_call_shaped", confidence: Math.min(0.95, (0.6 + hiddenBoost) * toolCall.discount * codeFactor * (!hidden && isQuotedOrAttributed(text, toolCall.match) ? 0.55 : 1)), severity: hidden ? 0.8 : 0.6,
+      message: `tool-invocation shaped text in content${inCode ? " (inside a code block)" : ""}${tag(toolCall.variant)}`, excerpt: toolCall.match.slice(0, 120), location: where, inHidden: hidden, action: "neutralized",
     });
   }
   const links = [...text.matchAll(EXFIL_LINK)];
@@ -156,7 +157,7 @@ function scoreText(text: string, hidden: boolean, where: string, findings: Findi
       pass: "meaning", kind: n >= 3 || /system\s+prompt/i.test(best.match) ? "meaning.system_prompt_imitation" : "meaning.instruction_shaped",
       confidence: conf, severity,
       message: `${best.label}${n > 1 ? ` (+${n - 1} more instruction shapes)` : ""}${hidden ? ", in text a human would not see" : ""}${inCode ? " (inside a code block)" : ""}${tag(best.variant)}`,
-      excerpt: best.match.slice(0, 120), location: where, action: hidden ? "quarantined" : "neutralized",
+      excerpt: best.match.slice(0, 120), location: where, inHidden: hidden, action: hidden ? "quarantined" : "neutralized",
     });
   }
 
@@ -170,10 +171,10 @@ function scoreText(text: string, hidden: boolean, where: string, findings: Findi
     findings.push({
       pass: "meaning", kind: "meaning.exfil_markdown_image", confidence: (strongImg ? 0.85 : 0.25) * codeFactor, severity: 0.9,
       message: `markdown image whose URL carries ${imgs[0][1].split("?")[1].length} bytes of query data (EchoLeak pattern)`,
-      excerpt: imgs[0][1].slice(0, 120), location: where, action: "neutralized",
+      excerpt: imgs[0][1].slice(0, 120), location: where, inHidden: hidden, action: "neutralized",
     });
   } else if (hidden && MD_IMAGE_ANY.test(text)) {
-    findings.push({ pass: "meaning", kind: "meaning.exfil_markdown_image", confidence: 0.6, severity: 0.7, message: `markdown image reference inside hidden text`, location: where, action: "neutralized" });
+    findings.push({ pass: "meaning", kind: "meaning.exfil_markdown_image", confidence: 0.6, severity: 0.7, message: `markdown image reference inside hidden text`, location: where, inHidden: hidden, action: "neutralized" });
   }
   MD_IMAGE_ANY.lastIndex = 0;
 
@@ -182,7 +183,7 @@ function scoreText(text: string, hidden: boolean, where: string, findings: Findi
       // a webhook URL in visible prose is documentation more often than exfiltration; hidden or alongside an instruction it is not
       pass: "meaning", kind: "meaning.exfil_link", confidence: (hooks.length ? (hidden || hits.some((h) => h.weight >= 0.8) ? 0.8 : 0.3) : hidden ? 0.6 : 0.3) * codeFactor, severity: 0.8,
       message: hooks.length ? `link to a known collection endpoint (${hooks[0][1]})` : `link with templated query parameters for context exfiltration`,
-      excerpt: (hooks[0]?.[0] ?? links[0]?.[1] ?? "").slice(0, 120), location: where, action: "neutralized",
+      excerpt: (hooks[0]?.[0] ?? links[0]?.[1] ?? "").slice(0, 120), location: where, inHidden: hidden, action: "neutralized",
     });
   }
 }

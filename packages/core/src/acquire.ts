@@ -10,7 +10,7 @@
  * defense). Redirects are followed manually so each hop is checked.
  */
 
-import { Agent, fetch as undiciFetch, type Dispatcher } from "undici";
+import { Agent, ProxyAgent, fetch as undiciFetch, type Dispatcher } from "undici";
 import { checkTarget, NetPolicyError, type NetPolicy } from "./netpolicy.js";
 import type { AcquireResult, IngressConfig } from "./types.js";
 
@@ -27,8 +27,11 @@ const HUMAN_HEADERS: Record<string, string> = {
   "upgrade-insecure-requests": "1",
 };
 
+/** the gate's own name, used when agentUserAgents is empty */
+export const HONEST_USER_AGENT = "AcePasteIngress/0.8 (+https://acepaste.xyz/ingress)";
+
 const AGENT_HEADERS: Record<string, string> = {
-  "user-agent": "AcePasteIngress/0.7 (+https://acepaste.xyz/ingress)",
+  "user-agent": HONEST_USER_AGENT,
   accept: "text/html,application/xhtml+xml,text/markdown,text/plain;q=0.9,application/json;q=0.8,*/*;q=0.5",
 };
 
@@ -56,6 +59,22 @@ function pinnedFetch(addrs: string[]): FetchLike {
   return (url, init) => undiciFetch(url, { ...(init as any), dispatcher: agent }) as unknown as Promise<Response>;
 }
 
+/** undici fetch through an HTTP(S) proxy. The target was already checked against the network policy; the proxy sits outside our network, so it cannot be used to reach it. */
+const proxyAgents = new Map<string, ProxyAgent>();
+function proxiedFetch(proxyUrl: string): FetchLike {
+  let agent = proxyAgents.get(proxyUrl);
+  if (!agent) { agent = new ProxyAgent(proxyUrl); proxyAgents.set(proxyUrl, agent); }
+  const a = agent;
+  return (url, init) => undiciFetch(url, { ...(init as any), dispatcher: a }) as unknown as Promise<Response>;
+}
+
+export interface AcquireOptions {
+  /** user-agent to send (agent fingerprint); defaults to the gate's own name */
+  userAgent?: string;
+  /** HTTP(S) proxy for this fetch */
+  proxyUrl?: string;
+}
+
 export async function acquire(
   url: string,
   fingerprint: "human" | "agent",
@@ -63,13 +82,14 @@ export async function acquire(
   policy: NetPolicy,
   fetchImpl?: FetchLike,
   resolver?: (host: string) => Promise<string[]>,
+  opts: AcquireOptions = {},
 ): Promise<AcquireResult> {
   let current = new URL(url);
   if (current.protocol !== "http:" && current.protocol !== "https:") {
     throw new AcquireError(`unsupported scheme ${current.protocol}`, "unsupported_scheme");
   }
   const chain: string[] = [];
-  const headersIn = fingerprint === "human" ? HUMAN_HEADERS : AGENT_HEADERS;
+  const headersIn = fingerprint === "human" ? HUMAN_HEADERS : { ...AGENT_HEADERS, ...(opts.userAgent ? { "user-agent": opts.userAgent } : {}) };
 
   for (let hop = 0; hop <= MAX_REDIRECTS; hop++) {
     let addrs: string[];
@@ -79,7 +99,7 @@ export async function acquire(
       if (e instanceof NetPolicyError) throw new AcquireError(e.message, "policy", e.code);
       throw e;
     }
-    const doFetch = fetchImpl ?? pinnedFetch(addrs);
+    const doFetch = fetchImpl ?? (opts.proxyUrl ? proxiedFetch(opts.proxyUrl) : pinnedFetch(addrs));
 
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), config.fetchTimeoutMs);
@@ -141,8 +161,96 @@ export async function acquire(
       contentType,
       body,
       fingerprint,
+      userAgent: headersIn["user-agent"],
+      via: "http",
       fetchedAt: new Date().toISOString(),
     };
   }
   throw new AcquireError("unreachable", "network");
+}
+
+/**
+ * Human fetch in a real headless Chromium: real browser handshake, JavaScript on,
+ * a fresh profile. Every request the page makes is checked against the network
+ * policy first, so a page cannot use the browser to reach private addresses.
+ * Returns the document after scripts have run.
+ */
+export async function acquireWithBrowser(
+  url: string,
+  config: IngressConfig,
+  policy: NetPolicy,
+  resolver?: (host: string) => Promise<string[]>,
+  opts: { proxyUrl?: string; executablePath?: string } = {},
+): Promise<AcquireResult> {
+  const first = new URL(url);
+  if (first.protocol !== "http:" && first.protocol !== "https:") throw new AcquireError(`unsupported scheme ${first.protocol}`, "unsupported_scheme");
+  try { await checkTarget(first, policy, resolver); } catch (e) {
+    if (e instanceof NetPolicyError) throw new AcquireError(e.message, "policy", e.code);
+    throw e;
+  }
+  let pw: typeof import("playwright");
+  try { pw = await import("playwright"); } catch { throw new AcquireError("browser fetch needs playwright installed", "network"); }
+  let proxy: { server: string; username?: string; password?: string } | undefined;
+  if (opts.proxyUrl) {
+    const p = new URL(opts.proxyUrl);
+    proxy = { server: `${p.protocol}//${p.host}`, username: decodeURIComponent(p.username) || undefined, password: decodeURIComponent(p.password) || undefined };
+  }
+  let browser: import("playwright").Browser;
+  try {
+    browser = await pw.chromium.launch({
+      headless: true, proxy,
+      executablePath: opts.executablePath ?? process.env.INGRESS_CHROMIUM ?? undefined,
+      args: ["--disable-gpu", "--no-sandbox", "--disable-dev-shm-usage", "--disable-extensions", "--no-first-run"],
+    });
+  } catch (e) {
+    throw new AcquireError(`browser launch failed: ${(e as Error).message.split("\n")[0]}`, "network");
+  }
+  try {
+    // headless Chromium announces itself ("HeadlessChrome", navigator.webdriver); present as ordinary desktop Chrome
+    const ctx = await browser.newContext({ userAgent: HUMAN_HEADERS["user-agent"], viewport: { width: 1280, height: 900 }, locale: "en-US", storageState: { cookies: [], origins: [] } });
+    await ctx.addInitScript(() => {
+      Object.defineProperty(navigator, "webdriver", { get: () => false });
+      Object.defineProperty(navigator, "languages", { get: () => ["en-US", "en"] });
+    });
+    const checked = new Map<string, boolean>();
+    await ctx.route("**/*", async (route) => {
+      let u: URL;
+      try { u = new URL(route.request().url()); } catch { return route.abort("blockedbyclient"); }
+      if (u.protocol === "data:" || u.protocol === "blob:") return route.continue();
+      if (u.protocol !== "http:" && u.protocol !== "https:") return route.abort("blockedbyclient");
+      const key = `${u.protocol}//${u.host}`;
+      let ok = checked.get(key);
+      if (ok === undefined) {
+        try { await checkTarget(u, policy, resolver); ok = true; } catch { ok = false; }
+        checked.set(key, ok);
+      }
+      return ok ? route.continue() : route.abort("blockedbyclient");
+    });
+    const page = await ctx.newPage();
+    let status = 0;
+    let contentType = "";
+    try {
+      const res = await page.goto(url, { waitUntil: "domcontentloaded", timeout: config.fetchTimeoutMs });
+      status = res?.status() ?? 0;
+      contentType = res?.headers()["content-type"] ?? "";
+      await page.waitForTimeout(Math.min(1500, config.fetchTimeoutMs / 4));
+    } catch (e) {
+      const msg = (e as Error).message.split("\n")[0];
+      throw new AcquireError(/timeout/i.test(msg) ? "browser fetch timed out" : `network error: ${msg}`, /timeout/i.test(msg) ? "timeout" : "network");
+    }
+    const finalUrl = page.url();
+    try { await checkTarget(new URL(finalUrl), policy, resolver); } catch (e) {
+      if (e instanceof NetPolicyError) throw new AcquireError(e.message, "policy", e.code);
+      throw e;
+    }
+    const body = await page.content();
+    if (body.length > config.maxBodyBytes) throw new AcquireError(`body exceeds ${config.maxBodyBytes} bytes`, "too_large");
+    const userAgent = await page.evaluate(() => navigator.userAgent);
+    return {
+      url, finalUrl, redirectChain: finalUrl === url ? [] : [url], status, headers: { "content-type": contentType },
+      contentType: contentType || "text/html", body, fingerprint: "human", userAgent, via: "browser", fetchedAt: new Date().toISOString(),
+    };
+  } finally {
+    await browser.close().catch(() => {});
+  }
 }

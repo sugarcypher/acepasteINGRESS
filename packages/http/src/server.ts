@@ -29,7 +29,7 @@ import { createServer, type IncomingMessage, type ServerResponse } from "node:ht
 import { appendFileSync, readFileSync, writeFileSync, existsSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join, normalize } from "node:path";
-import { IngressEngine, loadPolicyFile, type IngressConfig, type IngressResult, type TaintReceipt } from "@acepaste/ingress";
+import { IngressEngine, loadPolicyFile, cloakingConfigFromEnv, HONEST_USER_AGENT, type IngressConfig, type IngressResult, type TaintReceipt } from "@acepaste/ingress";
 import { JsonlReceiptStore, toStored, type ReceiptStore } from "./store.js";
 
 const env = process.env;
@@ -46,6 +46,7 @@ if (env.INGRESS_SIGNING_KEY) cfg.signingKey = env.INGRESS_SIGNING_KEY;
   if (k) cfg.signingPrivateKey = k.includes("BEGIN") ? k.replace(/\\n/g, "\n") : readFileSync(k, "utf8");
 }
 if (env.INGRESS_SANDBOX === "off" || env.INGRESS_SANDBOX === "escalate" || env.INGRESS_SANDBOX === "always") cfg.sandbox = env.INGRESS_SANDBOX;
+Object.assign(cfg, cloakingConfigFromEnv(env, HONEST_USER_AGENT));
 if (env.INGRESS_CLOAKING === "0") cfg.cloakingCheck = false;
 
 // ---------- attack log + feed ----------
@@ -220,14 +221,14 @@ const server = createServer(async (req, res) => {
       const r = await engine.fetch(body.url, { override: body.override === true });
       record(a.info.name, r);
       log({ event: "ingress.usage", key: a.info.name, op: "fetch", tier: r.tier, ms: Date.now() - started, usage: meter.usage(a.key) });
-      return send(res, r.tier === "clean" || r.overridden ? 200 : 422, r);
+      return send(res, r.tier === "clean" || r.overridden ? 200 : r.tier === "unreachable" ? 502 : 422, r);
     }
     if (path === "/v1/scan") {
       if (typeof body.content !== "string") return send(res, 400, { error: "content required" });
       const r = await engine.scan(body.content, { url: body.source, contentType: body.contentType, isHtml: body.isHtml, override: body.override === true });
       record(a.info.name, r);
       log({ event: "ingress.usage", key: a.info.name, op: "scan", tier: r.tier, ms: Date.now() - started, usage: meter.usage(a.key) });
-      return send(res, r.tier === "clean" || r.overridden ? 200 : 422, r);
+      return send(res, r.tier === "clean" || r.overridden ? 200 : r.tier === "unreachable" ? 502 : 422, r);
     }
     return send(res, 404, { error: "not found" });
   } catch (e) {

@@ -31,7 +31,7 @@ export interface TaintGuard {
   readonly state: { tainted: boolean; sources: string[]; confirmedUntil: number };
 }
 
-const TIER_RANK: Record<Tier, number> = { clean: 0, suspect: 1, hostile: 2 };
+const TIER_RANK: Record<Tier, number> = { clean: 0, unreachable: 0, suspect: 1, hostile: 2 };
 
 export function createTaintGuard(policy: Partial<TaintPolicy> = {}): TaintGuard {
   const p: TaintPolicy = {

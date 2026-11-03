@@ -12,7 +12,7 @@
  */
 
 import { createHash, createHmac, randomBytes, createPrivateKey, createPublicKey, generateKeyPairSync, sign as cryptoSign, verify as cryptoVerify, type KeyObject } from "node:crypto";
-import { acquire, AcquireError, type FetchLike } from "./acquire.js";
+import { acquire, acquireWithBrowser, AcquireError, HONEST_USER_AGENT, type FetchLike } from "./acquire.js";
 import { analyzeHtml, rulesFromCss, colorRulesFromCss, type HiddenRule, type ColorRule } from "./visibility.js";
 import { scanCharacters } from "./character.js";
 import { countHostileInvisibles } from "./acepaste-alphabet.js";
@@ -53,6 +53,12 @@ export interface EngineDeps {
   log?: (entry: Record<string, unknown>) => void;
   /** sandbox runner override (tests) */
   sandboxImpl?: typeof runSandbox;
+  /** browser fetch override for humanFetch: "browser" (tests) */
+  browserAcquireImpl?: typeof acquireWithBrowser;
+  /** randomness for user-agent choice, fetch order and jitter (tests pin it) */
+  random?: () => number;
+  /** delay between the two fetches (tests skip it) */
+  sleep?: (ms: number) => Promise<void>;
 }
 
 const sha256 = (s: string) => createHash("sha256").update(s, "utf8").digest("hex");
@@ -62,7 +68,7 @@ interface CacheEntry { expires: number; result: IngressResult }
 export class IngressEngine {
   readonly config: IngressConfig;
   private cache = new Map<string, CacheEntry>();
-  private deps: Required<Pick<EngineDeps, "now" | "log" | "sandboxImpl">> & Pick<EngineDeps, "fetchImpl" | "resolver">;
+  private deps: Required<Pick<EngineDeps, "now" | "log" | "sandboxImpl" | "browserAcquireImpl" | "random" | "sleep">> & Pick<EngineDeps, "fetchImpl" | "resolver">;
   private lastReceiptDigest: string | undefined;
 
   constructor(config: Partial<IngressConfig> = {}, deps: EngineDeps = {}) {
@@ -80,7 +86,12 @@ export class IngressEngine {
       now: deps.now ?? (() => new Date()),
       log: deps.log ?? ((e) => process.stderr.write(JSON.stringify(e) + "\n")),
       sandboxImpl: deps.sandboxImpl ?? runSandbox,
+      browserAcquireImpl: deps.browserAcquireImpl ?? acquireWithBrowser,
+      random: deps.random ?? Math.random,
+      sleep: deps.sleep ?? ((ms) => new Promise((r) => setTimeout(r, ms))),
     };
+    const [jmin, jmax] = this.config.cloakingJitterMs;
+    if (!(jmin >= 0 && jmax >= jmin)) throw new Error("IngressEngine: cloakingJitterMs must be [min, max] with 0 <= min <= max");
   }
 
   /** Gate a URL: policy check, acquire (twice when cloaking check is on), analyze, decide. */
@@ -97,30 +108,71 @@ export class IngressEngine {
     }
     const cloaking = rule?.cloakingCheck ?? this.config.cloakingCheck;
 
-    let agentRes: AcquireResult | undefined, humanRes: AcquireResult | undefined;
-    try {
-      const ta = performance.now();
-      if (cloaking) {
-        [agentRes, humanRes] = await Promise.all([
-          acquire(url, "agent", this.config, this.config.net, this.deps.fetchImpl, this.deps.resolver),
-          acquire(url, "human", this.config, this.config.net, this.deps.fetchImpl, this.deps.resolver),
-        ]);
-      } else {
-        agentRes = await acquire(url, "agent", this.config, this.config.net, this.deps.fetchImpl, this.deps.resolver);
+    // Two fetches, told apart only by what they present. The agent fetch wears the user agent of a
+    // real AI assistant's fetcher (that is what agent-targeted cloaking keys on). The human fetch looks
+    // like desktop Chrome, optionally through a different network (humanProxy) and optionally in a real
+    // browser (humanFetch: "browser"). Which goes first and the gap between them are random, so the pair
+    // does not arrive as a simultaneous, identically-timed signature.
+    const agentUA = this.pickAgentUserAgent();
+    const fetchAgent = () => acquire(url, "agent", this.config, this.config.net, this.deps.fetchImpl, this.deps.resolver, { userAgent: agentUA });
+    const fetchHuman = () => this.config.humanFetch === "browser"
+      ? this.deps.browserAcquireImpl(url, this.config, this.config.net, this.deps.resolver, { proxyUrl: this.config.humanProxy })
+      : acquire(url, "human", this.config, this.config.net, this.deps.fetchImpl, this.deps.resolver, { proxyUrl: this.config.humanProxy });
+
+    const findings: Finding[] = [];
+    let agentRes: AcquireResult, humanRes: AcquireResult | undefined;
+    const ta = performance.now();
+    if (cloaking) {
+      const [jmin, jmax] = this.config.cloakingJitterMs;
+      const gap = Math.round(jmin + this.deps.random() * (jmax - jmin));
+      const humanFirst = this.deps.random() < 0.5;
+      const later = <T>(f: () => Promise<T>) => this.deps.sleep(gap).then(f);
+      const [agentS, humanS] = await Promise.allSettled(humanFirst ? [later(fetchAgent), fetchHuman()] : [fetchAgent(), later(fetchHuman)]);
+      timings.acquire = performance.now() - ta;
+      if (agentS.status === "rejected") {
+        if (agentS.reason instanceof AcquireError) return this.refuseOnAcquire(url, agentS.reason, timings, t0);
+        throw agentS.reason;
+      }
+      agentRes = agentS.value;
+      if (humanS.status === "fulfilled") humanRes = humanS.value;
+      else {
+        // the page itself was fetched; only the comparison is missing. Recorded, weightless.
+        findings.push({ pass: "acquire", kind: "acquire.cloaking_check_incomplete", confidence: 0, severity: 0, message: `cloaking check skipped: the browser-fingerprint fetch failed (${(humanS.reason as Error)?.message ?? "unknown"})`, action: "none" });
+      }
+    } else {
+      try { agentRes = await fetchAgent(); } catch (e) {
+        if (e instanceof AcquireError) return this.refuseOnAcquire(url, e, timings, t0);
+        throw e;
       }
       timings.acquire = performance.now() - ta;
-    } catch (e) {
-      if (e instanceof AcquireError) return this.refuseOnAcquire(url, e, timings, t0);
-      throw e;
     }
 
-    if (!agentRes) throw new Error("acquire returned nothing");
-    const findings: Finding[] = [];
     if (agentRes.redirectChain.length) {
       const hosts = new Set(agentRes.redirectChain.concat(agentRes.finalUrl).map(hostOf));
       if (hosts.size > 2) findings.push({ pass: "policy", kind: "policy.redirect_chain", confidence: 0.4, severity: 0.3, message: `redirected through ${hosts.size} hosts: ${[...hosts].join(" -> ")}`, action: "none" });
       const finalRule = this.domainRule(agentRes.finalUrl);
       if (finalRule?.deny) return this.refuse(url, [{ pass: "policy", kind: "policy.denied_source", confidence: 1, severity: 1, message: `redirect target ${hostOf(agentRes.finalUrl)} is denied by policy`, action: "none" }], timings, t0, "text");
+    }
+
+    // Many sites refuse AI-assistant user agents outright. When the browser fetch got through, fetch
+    // once more under the gate's own name so the page can still be read and compared.
+    if (cloaking && [401, 403, 429].includes(agentRes.status) && humanRes && humanRes.status < 400 && agentUA !== HONEST_USER_AGENT) {
+      try {
+        const retry = await acquire(url, "agent", this.config, this.config.net, this.deps.fetchImpl, this.deps.resolver, { userAgent: HONEST_USER_AGENT });
+        findings.push({ pass: "acquire", kind: "acquire.ai_agent_refused", confidence: 0, severity: 0, message: `the site refused an AI-assistant user agent (HTTP ${agentRes.status}); fetched again as AcePaste Ingress (HTTP ${retry.status})`, action: "none" });
+        agentRes = retry;
+      } catch { /* keep the refusal */ }
+    }
+
+    // An error page is not the page. If the site refused the AI fetcher (many block AI user agents or
+    // challenge non-browsers), there is nothing to deliver and nothing to compare: unreachable, not an attack.
+    if (agentRes.status >= 400) {
+      const both = humanRes ? `; the browser fetch got HTTP ${humanRes.status}` : "";
+      return this.refuse(url, [{ pass: "acquire", kind: "acquire.unreachable", confidence: 0, severity: 0, message: `the site answered the AI fetcher with HTTP ${agentRes.status}${both}`, action: "none" }], timings, t0, "text", "unreachable");
+    }
+    if (humanRes && humanRes.status >= 400) {
+      findings.push({ pass: "acquire", kind: "acquire.cloaking_check_incomplete", confidence: 0, severity: 0, message: `cloaking check skipped: the browser-fingerprint fetch got HTTP ${humanRes.status}`, action: "none" });
+      humanRes = undefined;
     }
 
     const kind = detectKind(agentRes.contentType, agentRes.body, agentRes.finalUrl);
@@ -136,7 +188,7 @@ export class IngressEngine {
 
     const result = await this.guarded(url, kind, t0, () => this.analyze({
       url, finalUrl: agentRes.finalUrl, redirectChain: agentRes.redirectChain, raw: agentRes.body, kind,
-      humanRaw: humanRes?.body, externalRules, externalColorRules, timings, t0, override: !!opts.override, extraFindings: findings, rule,
+      humanRaw: humanRes?.body, humanContentType: humanRes?.contentType, externalRules, externalColorRules, timings, t0, override: !!opts.override, extraFindings: findings, rule,
     }));
     this.cacheSet(url, opts, result);
     return result;
@@ -188,7 +240,7 @@ export class IngressEngine {
   }
 
   private async analyze(a: {
-    url: string; finalUrl: string; redirectChain: string[]; raw: string; kind: ContentKind; humanRaw?: string;
+    url: string; finalUrl: string; redirectChain: string[]; raw: string; kind: ContentKind; humanRaw?: string; humanContentType?: string;
     externalRules: HiddenRule[]; externalColorRules?: ColorRule[]; timings: IngressResult["timings"]; t0: number; override: boolean; extraFindings: Finding[];
     rule: ReturnType<IngressEngine["domainRule"]>;
   }): Promise<IngressResult> {
@@ -230,14 +282,25 @@ export class IngressEngine {
     // cloaking: compare visible text under the two fingerprints
     if (a.humanRaw !== undefined) {
       const tc = performance.now();
-      const humanVisible = a.kind === "html" ? analyzeHtml(a.humanRaw, a.externalRules, a.externalColorRules ?? []).visibleText : a.humanRaw;
-      const sim = jaccardWords(visibleText, humanVisible);
-      if (sim < 0.6 && (visibleText.length > 200 || humanVisible.length > 200)) {
+      // The two fetches may legitimately get different formats (a site that hands agents Markdown and
+      // browsers HTML). Compare words, not markup: the question is whether the agent was told anything
+      // the person would not have seen.
+      const humanKind = detectKind(a.humanContentType ?? "", a.humanRaw, a.finalUrl);
+      // Against everything in the browser's copy, hidden or not: cloaking means the agent got words the
+      // browser was never sent. (Text the browser got but hides is the visibility pass's business, and
+      // static CSS analysis can wrongly mark a JavaScript-revealed page as hidden.)
+      const humanText = humanKind === "html" ? analyzeHtml(a.humanRaw, a.externalRules, a.externalColorRules ?? []).segments.map((x) => x.text).join(" ") : a.humanRaw;
+      const cmp = compareServed(visibleText, humanText);
+      // two bands: most of the agent's page is unseen by the browser (a different page), or a solid
+      // block of it is (the usual cloaking move: the real page plus a passage only the AI receives)
+      const wholesale = cmp.agentWords >= 30 && cmp.agentOnlyShare > 0.4 && cmp.agentOnlyWords >= 15;
+      const block = cmp.agentOnlyWords >= 25 && cmp.agentOnlyShare >= 0.15 && cmp.longestAgentOnlyRun >= 12;
+      if (wholesale || block) {
         findings.push({
           pass: "cloaking", kind: "cloaking.agent_targeted_divergence",
-          confidence: Math.min(0.95, 0.5 + (0.6 - sim)), severity: 0.9,
-          message: `page served to an agent fingerprint shares only ${(sim * 100).toFixed(0)}% of its words with the page served to a browser fingerprint`,
-          excerpt: diffSample(visibleText, humanVisible), action: "none",
+          confidence: wholesale ? Math.min(0.95, 0.5 + (cmp.agentOnlyShare - 0.4)) : Math.min(0.6, 0.3 + cmp.agentOnlyShare / 2), severity: 0.9,
+          message: `${(cmp.agentOnlyShare * 100).toFixed(0)}% of the words served to an AI fetcher do not appear on the page served to a browser`,
+          excerpt: `agent-only words: ${cmp.sample}`, action: "none",
         });
       }
       timings.cloaking = performance.now() - tc;
@@ -331,7 +394,7 @@ export class IngressEngine {
     attachEvidence(findings, sha256(a.raw));
 
     // score and tier (per-domain thresholds override)
-    const score = aggregate(findings);
+    const score = aggregate(findings, { cloakingCompared: passesRun.includes("cloaking") });
     const hostileAt = a.rule?.hostileThreshold ?? this.config.hostileThreshold;
     const suspectAt = a.rule?.suspectThreshold ?? this.config.suspectThreshold;
     const tier: Tier = score >= hostileAt ? "hostile" : score >= suspectAt ? "suspect" : "clean";
@@ -385,20 +448,30 @@ export class IngressEngine {
     });
   }
 
-  private refuse(url: string, findings: Finding[], timings: IngressResult["timings"], t0: number, kind: ContentKind): IngressResult {
+  private refuse(url: string, findings: Finding[], timings: IngressResult["timings"], t0: number, kind: ContentKind, tier: "hostile" | "unreachable" = "hostile"): IngressResult {
     attachEvidence(findings, sha256(""));
-    const receipt = this.receipt({ url, finalUrl: url, redirectChain: [], kind, raw: "", delivered: "", tier: "hostile", score: 1, findings, overridden: false, passesRun: ["policy"], acepasteInvisibleCount: 0 });
-    const envelope = buildEnvelope(url, "hostile", "", findings, receipt, false);
+    const score = tier === "hostile" ? 1 : 0;
+    const receipt = this.receipt({ url, finalUrl: url, redirectChain: [], kind, raw: "", delivered: "", tier, score, findings, overridden: false, passesRun: tier === "hostile" ? ["policy"] : ["acquire"], acepasteInvisibleCount: 0 });
+    const envelope = buildEnvelope(url, tier, "", findings, receipt, false);
     timings.total = performance.now() - t0;
-    this.deps.log(buildLogEntry(url, "hostile", 1, findings, [], receipt, false));
-    return { tier: "hostile", score: 1, contentKind: kind, delivered: "", envelope, findings, receipt, timings, overridden: false };
+    // unreachable is not an attack: it goes to the operational log, never to the attack log or public feed
+    if (tier === "hostile") this.deps.log(buildLogEntry(url, "hostile", 1, findings, [], receipt, false));
+    else this.deps.log({ event: "ingress.unreachable", at: this.deps.now().toISOString(), url, reason: findings[0]?.message ?? "" });
+    return { tier, score, contentKind: kind, delivered: "", envelope, findings, receipt, timings, overridden: false };
   }
 
   private refuseOnAcquire(url: string, e: AcquireError, timings: IngressResult["timings"], t0: number): IngressResult {
-    const f: Finding = e.code === "policy"
-      ? { pass: "acquire", kind: "policy.denied_source", confidence: 1, severity: 1, message: `network policy refused the fetch (${e.policyCode}): ${e.message}`, action: "none" }
-      : { pass: "acquire", kind: "policy.denied_source", confidence: 0.5, severity: 0.5, message: `acquisition refused (${e.code}): ${e.message}`, action: "none" };
-    return this.refuse(url, [f], timings, t0, "text");
+    // a network-policy refusal (private address, denied port) is the gate doing its job; everything else is the source failing to deliver
+    if (e.code === "policy" && e.policyCode !== "unresolvable") {
+      return this.refuse(url, [{ pass: "acquire", kind: "policy.denied_source", confidence: 1, severity: 1, message: `network policy refused the fetch (${e.policyCode}): ${e.message}`, action: "none" }], timings, t0, "text");
+    }
+    return this.refuse(url, [{ pass: "acquire", kind: "acquire.unreachable", confidence: 0, severity: 0, message: `could not fetch or read the source (${e.policyCode ?? e.code}): ${e.message}`, action: "none" }], timings, t0, "text", "unreachable");
+  }
+
+  private pickAgentUserAgent(): string {
+    const list = this.config.agentUserAgents.filter((u) => typeof u === "string" && u.trim());
+    if (!list.length) return HONEST_USER_AGENT;
+    return list[Math.min(list.length - 1, Math.floor(this.deps.random() * list.length))];
   }
 
   private receipt(r: { url: string; finalUrl: string; redirectChain: string[]; kind: ContentKind; raw: string; delivered: string; tier: Tier; score: number; findings: Finding[]; overridden: boolean; passesRun: PassName[]; acepasteInvisibleCount: number }): TaintReceipt {
@@ -518,10 +591,23 @@ function hostOf(url: string): string {
 /** below the default suspect threshold (0.25), so hidden text alone never refuses */
 export const VISIBILITY_ONLY_CAP = 0.2;
 
-export function aggregate(findings: Finding[]): number {
-  if (!findings.length) return 0;
+export function aggregate(findings: Finding[], ctx: { cloakingCompared?: boolean } = {}): number {
+  const weighted = findings.filter((f) => f.confidence * f.severity > 0);
+  if (!weighted.length) return 0;
+  const passesAll = new Set(weighted.map((f) => f.pass));
+  // Hidden text matters when it carries something: an instruction found inside it, invisible
+  // characters, or a browser-observed change. Otherwise it is page furniture (menus, labels,
+  // collapsed sections), never delivered, and does not add to the score. It stays on the receipt.
+  const hiddenCarries = weighted.some((f) => f.pass === "meaning" && f.inHidden) || passesAll.has("character") || passesAll.has("sandbox");
+  // Page scripts are never delivered to the model, only the static text is. Their findings
+  // (automation probes, obfuscation, minified bundles) predict that the page shows bots something
+  // else. Once the two-fingerprint comparison has run and found no divergence, that prediction is
+  // answered, so they do not add to the score.
+  const scriptsAnswered = !!ctx.cloakingCompared && !passesAll.has("cloaking") && !passesAll.has("sandbox");
+  const scored = weighted.filter((f) => (f.pass !== "visibility" || hiddenCarries || passesAll.size === 1) && (f.pass !== "script" || !scriptsAnswered));
+  if (!scored.length) return 0;
   const byKind = new Map<string, number[]>();
-  for (const f of findings) {
+  for (const f of scored) {
     const p = Math.max(0, Math.min(1, f.confidence * f.severity));
     const arr = byKind.get(f.kind) ?? [];
     arr.push(p);
@@ -534,29 +620,35 @@ export function aggregate(findings: Finding[]): number {
     notP *= 1 - Math.min(1, max * bonus);
   }
   let score = 1 - notP;
-  const passes = new Set(findings.map((f) => f.pass));
-  const onlyVisibility = [...passes].every((p) => p === "visibility");
-  if (onlyVisibility) score = Math.min(score, VISIBILITY_ONLY_CAP);
-  const hiddenAndMeaning = (passes.has("visibility") || passes.has("character") || passes.has("sandbox")) && passes.has("meaning");
+  const passes = new Set(scored.map((f) => f.pass));
+  if ([...passes].every((p) => p === "visibility")) score = Math.min(score, VISIBILITY_ONLY_CAP);
+  const hiddenAndMeaning = scored.some((f) => f.pass === "meaning" && f.inHidden) || ((passes.has("character") || passes.has("sandbox")) && passes.has("meaning"));
   if (hiddenAndMeaning) score = Math.min(1, score + 0.15);
   if (passes.has("cloaking")) score = Math.min(1, score + 0.1);
-  if (findings.some((f) => f.kind === "sandbox.webdriver_keyed_divergence")) score = Math.min(1, score + 0.1);
+  if (scored.some((f) => f.kind === "sandbox.webdriver_keyed_divergence")) score = Math.min(1, score + 0.1);
   return +score.toFixed(4);
 }
 
-function jaccardWords(a: string, b: string): number {
-  const A = new Set(a.toLowerCase().split(/\W+/).filter((w) => w.length > 2));
-  const B = new Set(b.toLowerCase().split(/\W+/).filter((w) => w.length > 2));
-  if (!A.size && !B.size) return 1;
-  let inter = 0;
-  for (const w of A) if (B.has(w)) inter++;
-  return inter / (A.size + B.size - inter);
+/** words of served text with markup, link targets and bare URLs removed, so Markdown and HTML of the same page compare equal */
+export function servedWords(text: string): string[] {
+  const t = text
+    .replace(/!?\[([^\]]*)\]\([^)]*\)/g, " $1 ")          // [label](target) and ![alt](src) -> label
+    .replace(/<\/?[a-z][^>]*>/gi, " ")                         // stray tags
+    .replace(/\b(?:https?:\/\/|www\.)\S+/gi, " ")            // bare URLs
+    .replace(/[#>*_`~|\-]{1,}/g, " ");                         // markdown syntax
+  return t.toLowerCase().split(/[^\p{L}\p{N}']+/u).filter((w) => w.length > 2);
 }
 
-function diffSample(agent: string, human: string): string {
-  const H = new Set(human.toLowerCase().split(/\W+/));
-  const onlyAgent = agent.split(/\s+/).filter((w) => !H.has(w.toLowerCase())).slice(0, 30).join(" ");
-  return `agent-only words: ${onlyAgent}`;
+/** how much of what the agent received is absent from what the browser received (word occurrences, not distinct words) */
+export function compareServed(agentText: string, humanText: string): { agentWords: number; agentOnlyWords: number; agentOnlyShare: number; longestAgentOnlyRun: number; sample: string } {
+  const A = servedWords(agentText);
+  const H = new Set(servedWords(humanText));
+  const only = A.filter((w) => !H.has(w));
+  let run = 0, longestAgentOnlyRun = 0;
+  for (const w of A) { run = H.has(w) ? 0 : run + 1; if (run > longestAgentOnlyRun) longestAgentOnlyRun = run; }
+  const sampleSeen = new Set<string>();
+  const sample = only.filter((w) => (sampleSeen.has(w) ? false : (sampleSeen.add(w), true))).slice(0, 30).join(" ");
+  return { agentWords: A.length, agentOnlyWords: only.length, agentOnlyShare: A.length ? only.length / A.length : 0, longestAgentOnlyRun, sample };
 }
 
 /**
@@ -572,6 +664,12 @@ export function buildEnvelope(source: string, tier: Tier, delivered: string, fin
     `verdict: ${tier}${overridden ? " (delivered under human override)" : ""} (score ${receipt.score})`,
     `receipt: ${receipt.digest.slice(0, 16)} issued ${receipt.issuedAt} engine ${receipt.engineVersion} ruleset ${receipt.rulesetVersion}`,
   ];
+  if (tier === "unreachable") {
+    head.push(`content: UNAVAILABLE. The source could not be fetched or read, so nothing was delivered. This is not an attack verdict; the source may be down, slow or not text.`);
+    for (const f of findings.slice(0, 2)) head.push(`  - ${f.message}`);
+    head.push(`<</acepaste-ingress ${b}>>`);
+    return head.join("\n");
+  }
   if (tier === "hostile" || (tier === "suspect" && !overridden)) {
     head.push(`attack: ${kinds.join(", ")}`);
     head.push(tier === "hostile"

@@ -1,6 +1,6 @@
 {
   "name": "@acepaste/ingress",
-  "version": "0.7.0",
+  "version": "0.8.0",
   "description": "AcePaste Ingress engine: acquire, visibility, character, script, supply-chain, sandbox, meaning, verdict, envelope, receipts.",
   "type": "module",
   "main": "dist/src/index.js",

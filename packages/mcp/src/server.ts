@@ -25,7 +25,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
 import { appendFileSync, readFileSync } from "node:fs";
-import { IngressEngine, createTaintGuard, loadPolicyFile, ENGINE_VERSION, type IngressConfig, type TaintReceipt } from "@acepaste/ingress";
+import { IngressEngine, createTaintGuard, loadPolicyFile, cloakingConfigFromEnv, HONEST_USER_AGENT, ENGINE_VERSION, type IngressConfig, type TaintReceipt } from "@acepaste/ingress";
 
 const env = process.env;
 const logPath = env.INGRESS_LOG;
@@ -38,6 +38,7 @@ if (env.INGRESS_SIGNING_KEY) cfg.signingKey = env.INGRESS_SIGNING_KEY;
 }
 if (env.INGRESS_HOSTILE) cfg.hostileThreshold = Number(env.INGRESS_HOSTILE);
 if (env.INGRESS_SUSPECT) cfg.suspectThreshold = Number(env.INGRESS_SUSPECT);
+Object.assign(cfg, cloakingConfigFromEnv(env, HONEST_USER_AGENT));
 if (env.INGRESS_CLOAKING === "0") cfg.cloakingCheck = false;
 if (env.INGRESS_SANDBOX === "off" || env.INGRESS_SANDBOX === "escalate" || env.INGRESS_SANDBOX === "always") cfg.sandbox = env.INGRESS_SANDBOX;
 
