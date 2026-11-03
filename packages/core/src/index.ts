@@ -1,5 +1,6 @@
 export { IngressEngine, aggregate, buildEnvelope, buildLogEntry, compareServed, servedWords, VISIBILITY_ONLY_CAP } from "./engine.js";
-export type { EngineDeps, IngressOptions } from "./engine.js";
+export type { EngineDeps, IngressOptions, AssembledResult } from "./engine.js";
+export { ASSEMBLED_LIMITS } from "./engine.js";
 export { acquire, acquireWithBrowser, AcquireError, MAX_REDIRECTS, HONEST_USER_AGENT } from "./acquire.js";
 export type { FetchLike, AcquireOptions } from "./acquire.js";
 export { summarize, findingWeight, cloakingConfigFromEnv } from "./summary.js";
@@ -27,3 +28,6 @@ export * from "./types.js";
 
 /** @deprecated renamed to IngressEngine in 0.7.0 (AcePaste Gate -> AcePaste Ingress) */
 export { IngressEngine as GateEngine } from "./engine.js";
+export { ActionBroker, isSideEffectName, DEFAULT_BROKER_POLICY, canonicalJson, actionDigest, destinationsIn, exfilShapes, describeApproval } from "./broker.js";
+export type { ActionDecision, ActionRule, BrokerPolicy, ProposedAction, ApprovalRequest, Approver, BrokerVerdict, BrokerEvent } from "./broker.js";
+export { macosDialogApprover, callbackApprover, denyAllApprover } from "./approvers.js";

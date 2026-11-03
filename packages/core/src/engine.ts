@@ -65,6 +65,21 @@ const sha256 = (s: string) => createHash("sha256").update(s, "utf8").digest("hex
 
 interface CacheEntry { expires: number; result: IngressResult }
 
+export const ASSEMBLED_LIMITS = { fragments: 32, fragmentBytes: 64_000, assembledBytes: 256_000 } as const;
+
+export interface AssembledResult {
+  /** worst of every fragment and the combination */
+  tier: Tier;
+  /** the combination is worse than each fragment alone: a split instruction */
+  composedOnly: boolean;
+  fragments: IngressResult[];
+  assembled: IngressResult;
+  /** digest of the exact combined text; send this text, unaltered, as the external-data block */
+  sha256: string;
+  /** the combined text when everything is clean, else "" */
+  delivered: string;
+}
+
 export class IngressEngine {
   readonly config: IngressConfig;
   private cache = new Map<string, CacheEntry>();
@@ -205,6 +220,31 @@ export class IngressEngine {
     const kind: ContentKind = opts.isHtml === true ? "html" : opts.isHtml === false ? "text" : detectKind(opts.contentType ?? "", content, opts.url ?? "");
     const rule = url.startsWith("inline:") ? undefined : this.domainRule(url);
     return this.guarded(url, kind, t0, () => this.analyze({ url, finalUrl: url, redirectChain: [], raw: content, kind, externalRules: [], timings: {}, t0, override: !!opts.override, extraFindings: [], rule }));
+  }
+
+  /**
+   * Gate what the model will actually receive when several sources are combined (search
+   * results, retrieved chunks, several tool results). An instruction can be split so each
+   * fragment looks harmless alone: each fragment is gated, then the text that would be
+   * delivered from all of them together is gated as one. `composedOnly` is true when the
+   * combination is worse than every fragment on its own.
+   */
+  async scanAssembled(fragments: ReadonlyArray<{ sourceId: string; text: string; isHtml?: boolean; contentType?: string }>): Promise<AssembledResult> {
+    if (!fragments.length || fragments.length > ASSEMBLED_LIMITS.fragments) throw new Error(`scanAssembled: between 1 and ${ASSEMBLED_LIMITS.fragments} fragments`);
+    for (const f of fragments) {
+      if (!f.sourceId || Buffer.byteLength(f.sourceId, "utf8") > 256) throw new Error("scanAssembled: each fragment needs a sourceId of at most 256 bytes");
+      if (Buffer.byteLength(f.text, "utf8") > ASSEMBLED_LIMITS.fragmentBytes) throw new Error(`scanAssembled: fragment ${f.sourceId} is over ${ASSEMBLED_LIMITS.fragmentBytes} bytes`);
+    }
+    const results: IngressResult[] = [];
+    for (const f of fragments) results.push(await this.scan(f.text, { url: `inline:${f.sourceId}`, isHtml: f.isHtml, contentType: f.contentType }));
+    // the combined representation: what each clean fragment would deliver, joined in order
+    const joined = results.filter((r) => r.tier === "clean").map((r) => r.delivered).join("\n");
+    if (Buffer.byteLength(joined, "utf8") > ASSEMBLED_LIMITS.assembledBytes) throw new Error(`scanAssembled: combined text is over ${ASSEMBLED_LIMITS.assembledBytes} bytes`);
+    const assembled = await this.scan(joined, { url: "inline:assembled", isHtml: false });
+    const rank = (t: Tier) => ({ clean: 0, unreachable: 0, suspect: 1, hostile: 2 })[t];
+    const worstFragment = results.reduce((m, r) => Math.max(m, rank(r.tier)), 0);
+    const tier: Tier = (["clean", "suspect", "hostile"] as const)[Math.max(worstFragment, rank(assembled.tier))];
+    return { tier, composedOnly: rank(assembled.tier) > worstFragment, fragments: results, assembled, sha256: sha256(joined), delivered: tier === "clean" ? joined : "" };
   }
 
   /** Any analysis failure is a refusal, never a pass: the gate fails closed. */
