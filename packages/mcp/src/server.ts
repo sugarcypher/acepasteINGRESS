@@ -39,7 +39,7 @@ import { z } from "zod";
 import { appendFileSync, readFileSync } from "node:fs";
 import { randomBytes } from "node:crypto";
 import {
-  IngressEngine, ActionBroker, DEFAULT_BROKER_POLICY, ASSEMBLED_LIMITS, loadInstructionFiles, macosDialogApprover, denyAllApprover, loadPolicyFile, cloakingConfigFromEnv, HONEST_USER_AGENT, ENGINE_VERSION,
+  IngressEngine, ActionBroker, DEFAULT_BROKER_POLICY, auditEnvironment, formatAudit, ASSEMBLED_LIMITS, loadInstructionFiles, macosDialogApprover, denyAllApprover, loadPolicyFile, cloakingConfigFromEnv, HONEST_USER_AGENT, ENGINE_VERSION,
   type IngressConfig, type IngressResult, type TaintReceipt, type BrokerPolicy, type Approver,
 } from "@acepaste/ingress";
 
@@ -152,6 +152,12 @@ const OWN_TOOLS = [
     inputSchema: { type: "object", properties: { root: { type: "string", description: "repository directory" } }, required: ["root"] },
   },
   {
+    name: "ingress_environment_audit",
+    title: "Audit this machine for anything that changes what agents receive",
+    description: "Read-only. Checks the hosts file, DNS and per-domain resolvers (dnsmasq, dnscrypt-proxy, scutil), proxies and PAC files, browser search engines, browser policies and extensions that rewrite pages or results, custom-trusted certificates, network extensions, MCP server configs, hooks and global agent instruction files. With network=true it also compares name resolution with DNS-over-HTTPS and tests TLS to sites agents rely on. Changes nothing. Report findings to the person; do not act on them yourself.",
+    inputSchema: { type: "object", properties: { network: { type: "boolean" } } },
+  },
+  {
     name: "ingress_verify_receipt",
     title: "Verify a gate receipt",
     description: "Checks a receipt's digest and signature against this server's public key (ECDSA) or shared secret (HMAC).",
@@ -200,6 +206,11 @@ async function callOwn(name: string, raw: unknown) {
     }
     if (!parts.length) parts.push("no instruction files found");
     return { content: [{ type: "text" as const, text: parts.join("\n\n") }], structuredContent: { files: files.map(({ relPath, status, inDependency, tier, sha256 }) => ({ relPath, status, inDependency, tier, sha256 })) } };
+  }
+  if (name === "ingress_environment_audit") {
+    const { network } = z.object({ network: z.boolean().optional() }).parse(raw);
+    const r = await auditEnvironment({ network: !!network, gate: (t, src) => engine.scan(t, { url: src, contentType: "text/markdown" }) });
+    return { content: [{ type: "text" as const, text: formatAudit(r) }], structuredContent: r as unknown as Record<string, unknown> };
   }
   if (name === "ingress_verify_receipt") {
     const { receipt } = verifyArgs.parse(raw);

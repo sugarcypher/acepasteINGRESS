@@ -128,6 +128,21 @@ To put other MCP servers behind the broker, list them in a proxy config and poin
 
 Limits, plainly: the broker enforces only on calls routed through it; a tool the agent can reach directly is outside it. An agent that controls the screen, or code running as the same user, can answer a local dialog. Taint lasts for the server session; only starting a new session clears it.
 
+### Environment audit: has something already got in?
+
+The gate checks what arrives. `ingress audit` checks the machine it arrives on: anything set up, by you or by someone else, that changes what agents receive before any gate sees it. It is read-only and prints no secrets.
+
+- **Hosts file and local DNS**: hosts entries, dnsmasq `address=`, `server=/domain/` and `addn-hosts` files, dnscrypt-proxy cloaking and forwarding rules, per-domain resolvers (`scutil --dns`, `/etc/resolver`), and the system's DNS servers. Redirects of sites agents rely on (search engines, AI providers, code registries, Wikipedia) are high; blocklists are noted.
+- **Proxies**: environment variables, the system proxy, PAC files (high when fetched over plain HTTP), proxy auto-discovery, Firefox proxy settings.
+- **Browsers** (Chrome, Brave, Edge, Arc, Vivaldi, Chromium, Firefox): the default search engine, managed policies (forced search engines, force-installed extensions, proxies, URL block and allow lists, DNS-over-HTTPS servers), and extensions that replace search, set proxies or run scripts on every page, especially ones not from the store.
+- **Certificates**: custom-trusted roots, which allow reading and changing encrypted traffic; names of traffic-inspection tools are high.
+- **Network extensions**: firewalls, VPNs, DNS proxies and content filters that are active.
+- **Agent configuration**: MCP servers in Claude Desktop, Claude Code, Cursor, Windsurf, VS Code and Gemini CLI (unpinned `npx` servers and remote servers are flagged; environment values are never shown), hooks, and global instruction files, each gated.
+- `--network` also compares name resolution with DNS-over-HTTPS for 26 sites agents rely on and checks TLS to them with Node's own certificate list, so interception through a locally trusted root shows up.
+- `--remote=<gate URL>` with `INGRESS_API_KEY` fetches three stable pages from this machine and through a gate on another network and compares them.
+
+Every report ends with what was checked and what was not (Safari's settings are sandboxed; Firefox's search settings are stored compressed and not read). The MCP tool `ingress_environment_audit` runs the same audit. Severity: high = can steer what agents receive and looks out of place; review = changes what agents receive and may well be yours.
+
 ### Agent instruction files
 
 `ingress instructions <dir>` lists the files coding agents load as guidance (AGENTS.md, CLAUDE.md, GEMINI.md, .cursorrules, .cursor/rules, .windsurfrules, .clinerules, .roo rules, copilot-instructions, CONVENTIONS.md, .claude commands and agents), including any inside dependencies, with their approval status. `ingress instructions approve <dir> <file>` approves one file's exact bytes; it runs only in an interactive terminal and asks you to type part of the file's fingerprint. Approvals live in `~/.acepaste-ingress/`, signed with a local key, never in the repository. The `ingress_instructions` tool then returns approved versions as guidance and everything else as untrusted data. It enforces only where the agent loads instructions through it; turn off a runtime's native loading where you can.
@@ -202,8 +217,9 @@ Every URL fetch is made twice and the two copies compared.
 
 What it cannot see: a site that verifies AI fetchers by their published IP ranges serves the gate the human page under any user agent, and a site that profiles the client deeply enough will tell the plain HTTP fetch from a person. The browser fetch and a separate network narrow that gap; they do not close it.
 
-## Changes in 0.9.0 (unreleased, branch `next`)
+## Changes in 0.9.0 (2026-11-04)
 
+- Environment audit (`ingress audit`, MCP `ingress_environment_audit`): hosts, DNS overrides and scoped resolvers, proxies and PAC, browser search engines, policies and extensions, custom-trusted certificates, network extensions, MCP configs, hooks and global agent instructions; optional live DNS-over-HTTPS and TLS comparison, and comparison with a gate on another network.
 - Action broker and MCP broker proxy (above). `ingress_confirm` removed.
 - `engine.scanAssembled(fragments)`: gates each fragment and the combined text the model receives, so an instruction split across sources is caught.
 - Multilingual instruction pass: override, conceal and extract shapes in Spanish, Portuguese, French, German, Italian, Russian, Turkish, Arabic, Japanese, Chinese, Korean and Hindi, on the original text and an NFKC view. Full weight in hidden text and decoded payloads; recorded but not refusing in visible text (the 2026-10-01 boundary). The seed rules were written by Claude and are labeled unreviewed on every finding until native speakers review them.

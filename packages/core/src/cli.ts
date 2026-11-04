@@ -16,6 +16,7 @@ import { summarize, cloakingConfigFromEnv } from "./summary.js";
 import { loadPolicyFile } from "./policyfile.js";
 import { checkInstructionFiles, approveInstructionFile, readInstructionBytes } from "./instructions.js";
 import { macosDialogApprover } from "./approvers.js";
+import { auditEnvironment, formatAudit } from "./audit.js";
 import { createInterface } from "node:readline/promises";
 import { userInfo } from "node:os";
 import type { IngressConfig, TaintReceipt } from "./types.js";
@@ -28,6 +29,21 @@ const url = args.find((a) => /^https?:\/\//.test(a));
 async function main() {
   const chunksIn = async () => { const c: Buffer[] = []; for await (const x of process.stdin) c.push(x as Buffer); return Buffer.concat(c).toString("utf8"); };
   if (args[0] === "instructions") return instructionsCommand(args.slice(1));
+  if (args[0] === "audit") {
+    // read-only: what on this machine could change what agents receive (hosts, DNS, proxies, browsers, certificates, agent configs)
+    const gateEngine = new IngressEngine({ cloakingCheck: false, sandbox: "off" }, { log: () => {} });
+    const remoteBase = opt("remote");
+    if (remoteBase && !process.env.INGRESS_API_KEY) { console.error("--remote needs INGRESS_API_KEY (an API key for that gate)"); process.exit(2); }
+    const fetchEngine = new IngressEngine({ cloakingCheck: false, sandbox: "off", cacheTtlSeconds: 0 }, { log: () => {} });
+    const r = await auditEnvironment({
+      network: flag("network"),
+      gate: (t, src) => gateEngine.scan(t, { url: src, contentType: "text/markdown" }),
+      remote: remoteBase ? { base: remoteBase, key: process.env.INGRESS_API_KEY!, localFetch: (u) => fetchEngine.fetch(u) } : undefined,
+    });
+    console.log(flag("json") ? JSON.stringify(r, null, 2) : formatAudit(r));
+    if (r.summary.high) process.exitCode = 1;
+    return;
+  }
   if (flag("keygen")) {
     const k = IngressEngine.generateSigningKeys();
     console.log(`# keyId ${k.keyId}\n# private key: keep secret; set INGRESS_SIGNING_PRIVATE_KEY_FILE to its path\n${k.privateKeyPem}\n# public key: publish; anyone can verify receipts with it\n${k.publicKeyPem}`);

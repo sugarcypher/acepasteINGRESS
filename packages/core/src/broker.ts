@@ -61,7 +61,7 @@ export const DEFAULT_BROKER_POLICY: BrokerPolicy = {
   name: "default",
   version: 2,
   rules: [],
-  readOnlyTools: ["ingress_fetch", "ingress_scan", "ingress_status", "ingress_instructions", "ingress_verify_receipt"],
+  readOnlyTools: ["ingress_fetch", "ingress_scan", "ingress_status", "ingress_instructions", "ingress_environment_audit", "ingress_verify_receipt"],
   sideEffectHints: ["send", "email", "mail", "post", "publish", "write", "edit", "create", "update", "delete", "remove", "move", "rename", "pay", "transfer", "purchase", "order", "execute", "exec", "run", "shell", "bash", "command", "deploy", "push", "commit", "merge", "install", "upload", "share", "invite", "message", "reply", "comment", "schedule", "start", "kill", "set", "insert", "drop", "save", "put", "submit", "trigger", "invoke", "eval", "navigate", "type", "click", "fork"],
   allowHosts: [],
   guardOutboundData: true,

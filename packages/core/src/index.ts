@@ -36,3 +36,6 @@ export { scanCode, extractCodeUnits, guessLang, lex } from "./codepass.js";
 export type { CodeUnit, CodeLang, CodeCoverage } from "./codepass.js";
 export { INSTRUCTION_FILE_PATTERNS, discoverInstructionFiles, readInstructionBytes, approveInstructionFile, checkInstructionFiles, loadInstructionFiles } from "./instructions.js";
 export type { InstructionFile, InstructionCheck, InstructionStatus, ApprovalEntry } from "./instructions.js";
+export { auditEnvironment, formatAudit, readChromiumExtensions } from "./audit.js";
+export type { AuditReport, AuditCheck, AuditOptions } from "./audit.js";
+export * from "./audit-parsers.js";
