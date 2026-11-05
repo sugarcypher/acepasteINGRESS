@@ -308,4 +308,6 @@ const server = createServer(async (req, res) => {
   }
 });
 
-server.listen(PORT, () => process.stderr.write(JSON.stringify({ event: "ingress.listen", port: PORT, open, sandbox: engine.config.sandbox, audit: !!env.INGRESS_RECEIPTS_FILE }) + "\n"));
+// INGRESS_HOST=127.0.0.1 keeps a local gate off the network; unset, it listens on every interface (what a hosted deployment needs)
+const HOST = env.INGRESS_HOST || undefined;
+server.listen(PORT, HOST, () => process.stderr.write(JSON.stringify({ event: "ingress.listen", host: HOST ?? "all interfaces", port: PORT, open, sandbox: engine.config.sandbox, audit: !!env.INGRESS_RECEIPTS_FILE }) + "\n"));

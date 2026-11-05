@@ -217,6 +217,10 @@ Every URL fetch is made twice and the two copies compared.
 
 What it cannot see: a site that verifies AI fetchers by their published IP ranges serves the gate the human page under any user agent, and a site that profiles the client deeply enough will tell the plain HTTP fetch from a person. The browser fetch and a separate network narrow that gap; they do not close it.
 
+## Changes in 0.9.1 (2026-11-05, HTTP service only)
+
+- `INGRESS_HOST` sets the address the HTTP service listens on; `127.0.0.1` keeps a local gate off the network. Unset, it listens on every interface, as a hosted deployment needs.
+
 ## Changes in 0.9.0 (2026-11-04)
 
 - Environment audit (`ingress audit`, MCP `ingress_environment_audit`): hosts, DNS overrides and scoped resolvers, proxies and PAC, browser search engines, policies and extensions, custom-trusted certificates, network extensions, MCP configs, hooks and global agent instructions; optional live DNS-over-HTTPS and TLS comparison, and comparison with a gate on another network.
