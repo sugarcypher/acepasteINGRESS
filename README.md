@@ -157,7 +157,7 @@ Endpoints: `POST /v1/fetch`, `POST /v1/scan`, `POST /v1/verify`; `GET /v1/feed` 
 
 **The audit plane is what the hosted tier sells.** The code is public under the licence below; customers pay for the hosted, retained, supported version. Every verdict's signed receipt is stored, scoped to the API key that produced it, and searchable by URL, host, tier, kind and time; exportable as a JSON download; retained per `INGRESS_RETENTION_DAYS`. This is the record an enterprise security review asks for — proof of what untrusted content its agents ingested and what the gate did about it. The store is an append-only file behind a `ReceiptStore` interface; swap it for Postgres/ClickHouse for volume. The public feed shows attacks found on public web pages: attacking host, finding kinds, payload excerpts (credentials redacted) and outbound hosts. Text a customer submits through `/v1/scan`, and pages on private hosts, never appear in it. With `INGRESS_FEED_FILE` set the feed survives restarts.
 
-**Deploy:** `Dockerfile`, `fly.toml` and `DEPLOY.md` stand up a single small host. The public instance runs with the sandbox off (no Chromium shipped); the paid/self-hosted tier turns `INGRESS_SANDBOX=escalate` on. `LAUNCH.md` has the launch copy and the MCP install snippet.
+**Deploy:** `Dockerfile` and `DEPLOY.md` stand up a single small host. The public instance runs with the sandbox off (no Chromium shipped); the paid/self-hosted tier turns `INGRESS_SANDBOX=escalate` on. `LAUNCH.md` has the launch copy and the MCP install snippet.
 
 ## As a library, with the taint guard
 
@@ -308,4 +308,4 @@ The hostile-invisible alphabet (`acepaste-alphabet.ts`) is ported verbatim from 
 
 ## License
 
-[Functional Source License 1.1, Apache 2.0 future licence](LICENSE) (FSL-1.1-ALv2). In plain terms: you may use, modify and redistribute this, including inside your own commercial products and at work, for any purpose except offering a product or service that competes with it. Each version becomes Apache 2.0, with no restrictions, two years after its release. Copyright 2026 ThinkWell Labs LLC.
+[Functional Source License 1.1, Apache 2.0 future licence](LICENSE) (FSL-1.1-ALv2). In plain terms: you may use, modify and redistribute this, including inside your own commercial products and at work, for any purpose except offering a product or service that competes with it. Each version becomes Apache 2.0, with no restrictions, two years after its release. Copyright 2026 Briar Morgan Greenway (ThinkWell Labs). FSL is a fair-source license: source-available, but not an OSI-approved open source license until each version converts to Apache 2.0.

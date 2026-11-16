@@ -41,7 +41,7 @@
   "bugs": {
     "url": "https://github.com/sugarcypher/acepasteINGRESS/issues"
   },
-  "author": "Briar Morgan Greenway (ThinkWell Labs LLC)",
+  "author": "Briar Morgan Greenway (ThinkWell Labs)",
   "engines": {
     "node": ">=20"
   },

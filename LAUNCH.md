@@ -23,9 +23,9 @@ What it deliberately keeps narrow: judging plain visible prose. A modern model a
 
 It runs three ways from one engine: a Model Context Protocol proxy you drop in front of an agent's fetch tool, a library, and a hosted HTTP service. Every verdict comes with a receipt signed with a public key, so a security reviewer can check what an agent took in without trusting me. Source-available and free to use (FSL: anything except a competing product; each version turns Apache 2.0 after two years).
 
-Honest about the numbers: against my own corpus (85 attack cases, 45 benign, hardened over three adversarial review passes) it refuses every attack with zero false positives — but that's a regression floor on fixtures I wrote, not a claim about the open web. The live feed below shows what it actually catches in the wild; that's the real test, and I'd rather you watch that than trust my corpus.
+Honest about the numbers: against my own corpus (85 attack cases, 45 benign, hardened over three adversarial review passes) it refuses every attack with zero false positives — but that's a regression floor on fixtures I wrote, not a claim about the open web. The real test is the open web, so send me bypasses rather than trusting my corpus.
 
-Live feed: <https://acepaste-ingress.fly.dev/>
+Page: <https://acepaste.xyz/ingress/>
 Repo: <https://github.com/sugarcypher/acepasteINGRESS>
 
 I built this because I've been on the receiving end of the invisible kind of attack. Feedback welcome, especially bypasses — there's a taint/capability layer and a sandbox I'd like to stress against real traffic.
@@ -53,13 +53,13 @@ What it keeps narrow, on purpose: judging plain visible text. Your model already
 One engine, three shapes: a Model Context Protocol proxy in front of an agent's fetch tool, a library, a hosted service. Every verdict gets a receipt anyone can verify with a public key: the part that matters if you have to prove to a security review what your agents ingested. Prior art and neighbours are credited in the README.
 
 **7/**
-I built this because I spent years as the target of the invisible kind of attack and learned forensics the hard way. Watch it work on live traffic: <https://acepaste-ingress.fly.dev/> · Code: <https://github.com/sugarcypher/acepasteINGRESS>
+I built this because I spent years as the target of the invisible kind of attack and learned forensics the hard way. Page: <https://acepaste.xyz/ingress/> · Code: <https://github.com/sugarcypher/acepasteINGRESS>
 
 ---
 
 ## For the acepaste.xyz "For developers" link
 
-> **AcePaste Ingress** — the same invisible-text defense that powers the cleaner, as a security gate in front of your AI. Drop it between the web and your agent: it strips the hidden channels a model can't see and hands back clean text with a signed receipt. Free to use. [See what it catches, live →](https://acepaste-ingress.fly.dev/)
+> **AcePaste Ingress** — the same invisible-text defense that powers the cleaner, as a security gate in front of your AI. Drop it between the web and your agent: it strips the hidden channels a model can't see and hands back clean text with a signed receipt. Free to use. [See how it works →](https://acepaste.xyz/ingress/)
 
 ---
 
@@ -86,6 +86,6 @@ Then the agent fetches the web through `ingress_fetch` / `ingress_scan` instead 
 ## Sequencing when you post
 
 1. Deploy first (DEPLOY.md), confirm the feed page loads and `/v1/scan` works, and let a little real traffic through so the feed isn't empty on launch day.
-2. Live service: https://acepaste-ingress.fly.dev/ (deployed 2026-11-01). Publish the npm packages before posting so the install snippet works.
+2. Publish the npm packages before posting so the install snippet works.
 3. Post the Show HN in the morning US time; put the thread up the same hour and link the HN post from it.
 4. The ask in every one is the same: send bypasses. Every bypass that comes in is a corpus case and a reason for the next person to trust the feed.

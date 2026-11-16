@@ -3,23 +3,7 @@
 A single small host runs the HTTP service. The public instance keeps the
 browser sandbox off, so there is no Chromium to ship and the image is small.
 
-## Fly (recommended; already in your stack)
-
-```sh
-fly launch --no-deploy          # creates the app; keep the generated name or set it in fly.toml
-fly volumes create ingress_data --size 1 --region sjc
-node packages/core/dist/src/cli.js --keygen > ~/ingress-keys.txt   # outside the project folder; keep it secret
-fly secrets set INGRESS_SIGNING_PRIVATE_KEY="$(awk '/BEGIN PRIVATE/,/END PRIVATE/' ~/ingress-keys.txt)"
-fly secrets set INGRESS_KEYS="$(openssl rand -hex 16):design-partner-a"
-fly deploy
-```
-
-Then:
-- `https://<app>.fly.dev/` — the live attack feed (public)
-- `https://<app>.fly.dev/console` — the audit console (needs an API key)
-- `POST https://<app>.fly.dev/v1/scan` and `/v1/fetch` — the metered API (Bearer key)
-
-## Any container host
+## Run it (any container host)
 
 `docker build -t acepaste-ingress . && docker run -p 8787:8787 -e INGRESS_SIGNING_KEY=… -e INGRESS_KEYS="k:name" -v $PWD/data:/data -e INGRESS_RECEIPTS_FILE=/data/receipts.jsonl acepaste-ingress`
 
