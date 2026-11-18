@@ -217,6 +217,16 @@ Every URL fetch is made twice and the two copies compared.
 
 What it cannot see: a site that verifies AI fetchers by their published IP ranges serves the gate the human page under any user agent, and a site that profiles the client deeply enough will tell the plain HTTP fetch from a person. The browser fetch and a separate network narrow that gap; they do not close it.
 
+## Changes in 0.9.2 (2026-11-18, ruleset 2026.11.18-1)
+
+- Agent-directed meaning shapes: jailbreak personas, fake system and agent headers, decode-and-obey, sensitive path access, escalating commands, approval claims, tool impersonation, context extraction, tracking links, parameter tampering. Visible foreign-language overrides weigh the same as English; quoted ones get the same discount.
+- Precision: shapes that name a topic (environment variables, stack traces, `.env`, conversations) count only in imperative position, and weak shapes corroborate each other only within 600 characters. The first version of the agent shapes refused docs.python.org, MDN, the dotenv README and 23 of 27 everyday developer sentences; none of them refuse now.
+- InjectBench (Kong, Virginia Tech 2024) attack goals: false availability claims, link coercion, redirect claims, narrative manipulation, summary / in-addition / spell-check separators, conversation data appended to a URL, covert actions.
+- Hidden menus and footers count as evidence only with an attack-grade character finding (a stray zero-width character turned git-scm.com hostile).
+- The structural nesting check follows implied end tags and skips script, style and comment bodies (nodejs.org/api/fs.html was refused as 513-deep).
+- A well-known token sent only to its own service in an Authorization header is use, not exfiltration (GitHub's REST authentication docs were refused).
+- Versions: every package is 0.9.2 and pins `@acepaste/ingress` 0.9.2 (0.9.1 had left the HTTP service ahead of the engine).
+
 ## Changes in 0.9.1 (2026-11-05, HTTP service only)
 
 - `INGRESS_HOST` sets the address the HTTP service listens on; `127.0.0.1` keeps a local gate off the network. Unset, it listens on every interface, as a hosted deployment needs.
