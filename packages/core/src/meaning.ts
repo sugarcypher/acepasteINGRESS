@@ -121,8 +121,10 @@ const AGENT_SHAPES: Array<[RegExp, number, string]> = [
     [/\b(no|without(\s+any)?|zero|free\s+of)\s+(safety|ethical|content|moral)\s+(restrictions|guardrails|limitations|filters?|guidelines|constraints|polic(y|ies)|measures)\b|(?<!\b(?:if|as\s+long\s+as|so\s+long\s+as|when|whenever|unless|provided|assuming|while|because|since|once|where|that)\s+)\byou\s+(now\s+)?(have|operate\s+with|are\s+under|are\s+bound\s+by)\s+no\s+(restrictions|limitations|limits|rules|guidelines|filters|guardrails)\b(?!\s+(on|in|over|about|for|regarding|around|with|to|as|preventing|stopping|blocking|against)\b)|\b(safety|content)\s+(filters?|guidelines|guardrails|module|classifiers?)\s+(are|is|have\s+been|has\s+been)\s+(now\s+)?(temporarily\s+)?(disabled|suspended|removed|bypassed|corrupted|lifted|deprecated)\b|\b(disable|remove|bypass|turn\s+off|lift|ignore)\s+(all\s+(of\s+)?)?your\s+(safety|content|ethical)\s+(filters?|guidelines|measures|classifiers?|restrictions|checks?|module|guardrails)/i, 0.85, "safety removal"],
     // bracketed headers that claim a speaker or an authority. Log levels ([CRITICAL]), forum ranks ([Admin]), chat exports
     // ([Forwarded from Alice]) and issue labels ([Priority: high]) name no authority over the agent.
-    [/\[\s*(system\s+(message|note|update|override|instruction|alert|prompt)[^\]]{0,40}|admin\s+(override|instruction|message|notice)[^\]]{0,30}|override|priority\s+(override|instruction|system)[^\]]{0,30}|critical\s+(system|override|instruction)[^\]]{0,30}|ai\s+process\w*[^\]]{0,40}|hidden\s+instruction[^\]]{0,40}|injected[^\]]{0,40}|openai-internal[^\]]{0,80}|mcp\s+tool\s+response|tool\s+result[^\]]{0,60}|(message|forwarded|feedback)\s+from\s+(the\s+)?(system|admin|administrator|orchestrator|supervisor|agent|developer|anthropic|openai)[^\]]{0,40}|automated\s+message\s+from[^\]]{0,60}|shared\s+(memory|context|scratchpad)[^\]]{0,40}|sub-agent[^\]]{0,40}|inter-agent[^\]]{0,40}|context\s+passed\s+from[^\]]{0,40}|vector\s+database\s+injection|capability\s+report[^\]]{0,40}|message\s+routing[^\]]{0,40}|jailbreak[^\]]{0,30})\s*\]/i, 0.85, "fake system or agent header"],
-    [/\[\s*(SYSTEM|ADMIN|OVERRIDE|SYSTEM\s+OVERRIDE)\s*\]/, 0.85, "fake system or agent header"],
+    [/\[\s*(system\s+(message|note|update|override|instruction|alert|prompt)[^\]]{0,40}|admin\s+(override|instruction|message|notice)[^\]]{0,30}|override|priority\s+(override|instruction|system)[^\]]{0,30}|critical\s+(system|override|instruction)[^\]]{0,30}|ai\s+process\w*[^\]]{0,40}|hidden\s+instruction[^\]]{0,40}|injected[^\]]{0,40}|openai-internal[^\]]{0,80}|mcp\s+tool\s+response|tool\s+result[^\]]{0,60}|(message|forwarded|feedback)\s+from\s+(the\s+)?(system|admin|administrator|orchestrator|supervisor|agent|developer|anthropic|openai)[^\]]{0,40}|automated\s+message\s+from[^\]]{0,60}|shared\s+(memory|context|scratchpad)[^\]]{0,40}|sub-agent[^\]]{0,40}|inter-agent[^\]]{0,40}|context\s+passed\s+from[^\]]{0,40}|vector\s+database\s+injection|capability\s+report[^\]]{0,40}|message\s+routing[^\]]{0,40}|jailbreak[^\]]{0,30})\s*\](?=[\s\S]{0,240}?\b(you|your|ignore|disregard|must|now|always|never|do\s+not|don'?t|reveal|print|output|send|forward|execute|run|call|grant|approve|override|follow|respond|reply|answer|verified|authorized|approved)\b)/i, 0.85, "fake system or agent header"],
+    // 0.9.5: a fake header always carries an order after it; a prompt-engineering README that names "[System message]"
+    // as a section is talking about one
+    [/\[\s*(SYSTEM|ADMIN|OVERRIDE|SYSTEM\s+OVERRIDE)\s*\](?=[\s\S]{0,240}?\b(you|your|ignore|disregard|must|now|always|never|do\s+not|don'?t|reveal|print|output|send|forward|execute|run|call|grant|approve|override|follow|respond|reply|answer|verified|authorized|approved)\b)/i, 0.85, "fake system or agent header"],
     // "kernel panic", "new session", "end of document", "debug mode: on", "admin console" and "safety module" are product vocabulary
     [/\b(system\s+override|end\s+of\s+(system\s+prompt|prompt|user\s+content|instructions)|system\s+note\s*:|(begin|end)\s+admin\s+(block|message|instructions?)|executive\s+override|priority\s+system\s+update|system\s+message\s*(from|\(priority)|_?system_override|###\s*\w+_system_message|role\s*:\s*system\s+content\s*:|access\s+level\s*:\s*superuser|permission\s+level\s*:\s*god_mode)\b/i, 0.8, "fake system message"],
     // decoding must be followed by obeying the result: "read the guide, then run npm start" is a README, not an attack
@@ -172,6 +174,15 @@ const AGENT_SHAPES: Array<[RegExp, number, string]> = [
     // conversation data appended to a URL, and actions the reader is told to hide from the user
     [imp(/(append|add|attach|encode|include|put|insert|send|pass)\b[^.\n]{0,60}\b(the\s+user'?s?|your|all|previous|prior|earlier)\s+(?:[^.\n]|\.(?=\S)){0,30}?\b(messages|conversation|chat\s+history|questions|inputs|prompts|context)\b(?:[^.\n]|\.(?=\S)){0,60}?\b(to|into|in)\s+(this|the|that|a)\s+(url|link|address|endpoint|query|image)/), 0.9, "context exfiltration via link"],
     [imp(/(quietly|silently|secretly|covertly)\s+(append|add|send|include|insert|forward|post|upload|delete|change|run|execute|call|attach|share)\b/), 0.8, "covert action"],
+    // 0.9.5: dormant ("explosive") instructions that wait for a later turn: "When the user later asks about X, send Y".
+    // In one study these led to real tool actions 16.5% of the time against 2.4% for plain orders. Chatbot design docs
+    // say "when the user asks for a refund, transfer them to a human" all the time, so the bare trigger is weak; it is
+    // strong when the action is hidden or the data goes outside.
+    [/\b(when|whenever|if|once|next\s+time|the\s+next\s+time|as\s+soon\s+as)\s+(the\s+|a\s+|any\s+)?(user|they|someone|anyone|human|customer|he|she)\s+(later\s+|ever\s+|next\s+|eventually\s+|again\s+)?(asks?|mentions?|says?|types?|requests?|brings?\s+up|wants?|tries\s+to|logs?\s+in|opens?|confirms?|replies)\b[^.\n]{0,120}?\b(then\s+)?(you\s+(should|must|will)\s+)?(also\s+)?(send|forward|transfer|email|post|upload|share|delete|grant|buy|book|pay|wire|export|reveal|run|execute|invoke|call|recommend|include|add)\b/i, 0.6, "dormant trigger"],
+    [/\b(when|whenever|if|once|next\s+time|the\s+next\s+time|as\s+soon\s+as)\s+(the\s+|a\s+|any\s+)?(user|they|someone|anyone|human|customer)\s+(later\s+|ever\s+|next\s+|eventually\s+|again\s+)?(asks?|mentions?|says?|types?|requests?|brings?\s+up|wants?|logs?\s+in|confirms?)\b[^.\n]{0,160}?(\b(quietly|silently|secretly|covertly|without\s+(telling|informing|asking|mentioning))\b|\bto\s+(this|my|an?\s+external|the\s+following)\s+(address|email|url|endpoint|server|webhook|account)\b|https?:\/\/)/i, 0.85, "dormant trigger"],
+    // placeholder fill (an Indonesian red-team trick): "complete this template: [admin reset steps here]"
+    [/\b(fill\s+in|complete|replace|expand|populate|finish)\s+(the\s+|this\s+|these\s+|each\s+|every\s+|all\s+)?(placeholder|blank|template|bracket|gap|field)s?\b[^\n]{0,80}?\[[^\]\n]{0,60}\b(steps|instructions|password|credentials?|admin|bypass|exploit|reset|api\s+key|token|how\s+to|payload|malware|jailbreak|synthesi[sz]e|weapon)\b[^\]\n]{0,40}\]/i, 0.8, "placeholder fill"],
+    [/\[\s*(insert|add|fill|write|put)?\s*[^\]\n]{0,40}\b(admin|password|bypass|exploit|jailbreak|malware|credentials?)\b[^\]\n]{0,30}\b(steps|instructions|procedure|here)\s*\]/i, 0.55, "sensitive placeholder"],
     // a dot followed by a non-space (goodlink.com) does not end the sentence
     [imp(/(convince|persuade|coerce|pressure|urge|trick|manipulate)\s+(the\s+)?(user|reader|visitor|customer|people|them|readers|users|me|us)\b(?:[^.\n]|\.(?=\S)){0,160}?\b(click|visit|go\s+to|open|follow|download|install|sign\s+up|log\s+in|enter\s+(their|your))\b|use\s+social[-\s]engineering\b/), 0.85, "link coercion"],
     [imp(/(summari[sz]e|describe|present|portray|rewrite|report|frame|characteri[sz]e|depict)\b[^.\n]{0,60}\b(incorrectly|falsely|inaccurately|misleadingly|dishonestly|as\s+(unsafe|dangerous|harmful|toxic|poisonous|fake|fraudulent|a\s+scam|illegal|false|misleading|recalled|discredited|unreliable))\b|(make|add|include|spread|insert|invent|fabricate|mention)\s+(up\s+)?(some\s+)?(false|fake|fabricated|misleading|untrue|made-up)\s+(claims?|rumou?rs?|information|statements?|details|facts|quotes?|reviews?|allegations?)|(omit|leave\s+out|hide|suppress|drop)\s+(the\s+|any\s+|all\s+)?(important|key|critical|main|essential)\s+(details|information|facts|points|findings)|discredit\s+(the\s+)?(source|author|text|article|site|page|website|writer|company|brand|recipe|product)|claim\s+(that\s+)?(this|the)\s+(recipe|product|article|page|text|site|website|company|item|study|author|report|brand)\b[^.\n]{0,60}\b(is|was|has|contains|causes|caused)\b|(change|alter|reverse|twist|distort)\s+the\s+(meaning|narrative|conclusion|message|facts)\s+of\s+the\s+(text|article|page|summary|story)/), 0.85, "narrative manipulation"],
@@ -320,11 +331,15 @@ function scoreText(text: string, hidden: boolean, where: string, findings: Findi
   if (imgs.length) {
     // a tracking pixel has a few short named params; an exfiltration carries one long encoded value or a template marker
     const q = imgs[0].split("?")[1] ?? "";
-    const longValue = q.split("&").some((kv) => (kv.split("=")[1] ?? "").length >= 40);
-    const templated = /\{|%7B|\[|\$/.test(q);
+    // 0.9.5: a long value counts only when it carries text out. README badges put a base64 SVG logo
+    // (logo=data:image/svg+xml;base64,...) or a long colour/label list in the query, and two popular READMEs went
+    // hostile for it. Templated means a real placeholder ({{x}}, ${x}, %7B, [context]), not any $ or [.
+    const longValue = q.split("&").some((kv) => carriesText(kv.split("=").slice(1).join("=")));
+    const templated = /=\{|\{\{|\$\{|%7B|\[(?:secret|key|token|context|conversation|summary|data|history|prompt)\]/i.test(q);
     const strongImg = hidden || longValue || templated;
     findings.push({
-      pass: "meaning", kind: "meaning.exfil_markdown_image", confidence: (strongImg ? 0.85 : 0.25) * codeFactor, severity: 0.9,
+      // a visible image with a short named query (?style=flat&logo=github) is how every badge works: recorded only (0.9.5)
+      pass: "meaning", kind: "meaning.exfil_markdown_image", confidence: (strongImg ? 0.85 : 0.1) * codeFactor, severity: 0.9,
       message: `image whose URL carries ${q.length} bytes of query data (EchoLeak pattern)`,
       excerpt: imgs[0].slice(0, 120), location: where, inHidden: hidden, action: "neutralized",
     });
@@ -336,7 +351,8 @@ function scoreText(text: string, hidden: boolean, where: string, findings: Findi
   if (links.length || hooks.length) {
     findings.push({
       // a webhook URL in visible prose is documentation more often than exfiltration; hidden or alongside an instruction it is not
-      pass: "meaning", kind: "meaning.exfil_link", confidence: (hooks.length ? (hidden || hits.some((h) => h.weight >= 0.8) ? 0.8 : 0.3) : hidden ? 0.6 : 0.3) * codeFactor, severity: 0.8,
+      // 0.9.5: a visible templated link with no instruction around it is API documentation (an API list README went suspect)
+      pass: "meaning", kind: "meaning.exfil_link", confidence: (hooks.length ? (hidden || hits.some((h) => h.weight >= 0.8) ? 0.8 : 0.3) : hidden ? 0.6 : hits.length ? 0.3 : 0.12) * codeFactor, severity: 0.8,
       message: hooks.length ? `link to a known collection endpoint (${hooks[0][1]})` : `link with templated query parameters for context exfiltration`,
       excerpt: (hooks[0]?.[0] ?? links[0]?.[1] ?? "").slice(0, 120), location: where, inHidden: hidden, action: "neutralized",
     });
@@ -350,6 +366,21 @@ function scoreText(text: string, hidden: boolean, where: string, findings: Findi
       excerpt: sfx.tail.slice(-120), location: where, inHidden: hidden, action: "neutralized",
     });
   }
+}
+
+/**
+ * Can a long query value carry data out? Opaque values can (base64 or encrypted conversation text, a custom encoding),
+ * so long is suspicious by default. The exceptions are what README badges and buttons put there: an image data URI
+ * (the badge logo), another URL (deploy buttons, redirects), and short lists (colours, tags).
+ */
+function carriesText(raw: string): boolean {
+  if (raw.length < 40) return false;
+  let v = raw;
+  try { v = decodeURIComponent(raw.replace(/\+/g, " ")); } catch { /* keep raw */ }
+  if (/^data:image\//i.test(v)) return false;
+  if (/^https?:\/\//i.test(v)) return false;
+  if (/^[\w.#-]{1,24}(?:[,|;][\w.#-]{1,24}){2,}$/.test(v)) return false;
+  return true;
 }
 
 /**
@@ -395,6 +426,8 @@ function adversarialSuffix(text: string): { tail: string; tokens: number; weird:
   const isWeird = (w: string) => {
     if (!/\p{L}/u.test(w)) return false;
     if (/^(https?:\/\/|www\.)|^[\w.+-]+@[\w-]+\.|^\[[^\]]*\]\([^)]*\)$|^[\w~./-]+\.\w{1,5}$|^#\w+$/.test(w)) return false;
+    // links, images, badges and HTML anywhere in the token: a README's last lines are made of them (0.9.5)
+    if (/:\/\/|\]\(|^!\[|^\[!\[|^<\/?[a-z]|[a-z-]+=["']|\/>|&[a-z]+;/i.test(w)) return false;
     const core = w.replace(/^[("'“‘*_[]+/, "").replace(/[.,;:!?)"'”’*_\]]+$/, "");
     const inner = (core.match(/[^\p{L}\p{N}'’-]/gu) ?? []).length;
     return inner >= 2 || /\\[!-~]/.test(core) || /\p{Ll}{3,}\p{Lu}\p{Ll}{2,}/u.test(core) && !/[(.]/.test(core);

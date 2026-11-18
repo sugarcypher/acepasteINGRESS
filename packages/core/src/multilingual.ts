@@ -18,11 +18,11 @@
  */
 
 import type { Finding } from "./types.js";
-import { composeHangul, despaceCJK, foldArabicScript, hangulInitials } from "./normalize.js";
+import { composeHangul, despaceCJK, foldArabicScript, foldIndic, hangulInitials, latinKeysToPersian, stripLatinAccents } from "./normalize.js";
 
 export const MULTILINGUAL_RULESET = "multilingual-seed-v1 (unreviewed)";
 
-interface Rule { id: string; lang: string; kind: "override" | "conceal" | "extract"; re: RegExp; folded?: RegExp; initialsOnly?: boolean }
+interface Rule { id: string; lang: string; kind: "override" | "conceal" | "extract"; re: RegExp; folded?: RegExp; plain?: RegExp; initialsOnly?: boolean }
 
 const R = (id: string, lang: string, kind: Rule["kind"], re: RegExp): Rule => ({ id, lang, kind, re });
 /** a rule matched only against the initial-consonant view (초성 shorthand) */
@@ -84,10 +84,67 @@ export const MULTILINGUAL_RULES: Rule[] = [
   // fake notices in CJK brackets (【システム】, 【系统】, 【시스템】) that go on to give an order. A bracket alone is an
   // ordinary announcement header on Japanese and Chinese sites ("【システム】メンテナンスのお知らせ").
   R("header.cjk", "multi", "override", /[【［〔〖]\s*(?:システム(?:通知|メッセージ)?|管理者|運営|系统(?:通知|消息)?|系統|管理员|管理員|시스템|관리자|운영자)\s*[】］〕〗][^\n]{0,120}?(?:指示|命令|無視|従って|従え|忽略|无视|指令|遵守|服从|무시|지시|따르|따라)/u),
+
+  // ---- added 2026-11-18 (0.9.5). Seed rules, unreviewed by native speakers like the rest. ----
+  // Turkish: the word endings that change with case and possession (talimatları / talimatlarını / yönergeleri ...)
+  R("override.tr3", "tr", "override", /(?:önceki|daha\s+önceki|yukarıdaki|eski)\s+(?:tüm\s+|bütün\s+)?(?:talimat|yönerge|komut|kural|direktif|yönlendirme)(?:lar|ler)?(?:ı|i|ını|ini|ları|leri|larını|lerini|ın|in)?\s+(?:yok\s+say|görmezden\s+gel|unut|dikkate\s+alma|boş\s*ver|geçersiz\s+say|iptal\s+et|umursama)/iu),
+  // the target must be the reader's own prompt, as in English ("your system prompt"): "istemini" is ambiguous between
+  // "your" and "its", so this needs senin / kendi or the formal possessive (-inizi). A bare "show the system prompt"
+  // in a Turkish chat about prompt writing is a question, and it refused 7 benign chats in the first version.
+  R("extract.tr", "tr", "extract", /(?:senin|kendi|sizin)\s+sistem\s+(?:istem|komut|talimat|prompt|mesaj|yönerge)\S*\s+(?:göster|yaz|söyle|paylaş|açıkla|ver|ifşa\s+et|dök)|sistem\s+(?:istem|komut|talimat|prompt|mesaj|yönerge)(?:in|ın|un|ün|ler|lar)?(?:iniz|ınız|unuz|ünüz)(?:i|ı|u|ü)\s+(?:göster|yaz|söyle|paylaş|açıkla|ver|ifşa\s+et|dök)/iu),
+  // Dutch, Swedish, Danish/Norwegian, Polish, Romanian, Ukrainian, Czech/Slovak, Serbian, Indonesian/Malay
+  R("override.nl", "nl", "override", /\b(?:negeer|vergeet)\s+(?:alle\s+)?(?:vorige|eerdere|voorgaande)\s+(?:instructies|aanwijzingen|opdrachten)\b/iu),
+  R("extract.nl", "nl", "extract", /\b(?:toon|geef|laat)\s+(?:me\s+)?(?:je|jouw|de)\s+systeem(?:prompt|instructies)\b/iu),
+  R("override.sv", "sv", "override", /\b(?:ignorera|glöm)\s+(?:alla\s+)?(?:tidigare|föregående)\s+(?:instruktioner|anvisningar)\b/iu),
+  R("override.da-no", "da", "override", /\b(?:ignorer|glem)\s+(?:alle\s+)?(?:tidligere|forrige|foregående)\s+(?:instruktioner|instruksjoner|instrukser|anvisninger)\b/iu),
+  R("override.pl", "pl", "override", /\b(?:zignoruj|ignoruj|zapomnij(?:\s+o)?)\s+(?:wszystkie\s+|wszystkich\s+)?(?:poprzednie|poprzednich|wcześniejsze|wcześniejszych)\s+(?:instrukcje|instrukcjach|polecenia|poleceniach)\b/iu),
+  R("override.ro", "ro", "override", /\b(?:ignoră|ignora|uită)\s+(?:toate\s+)?instrucțiunile\s+(?:anterioare|precedente)\b/iu),
+  R("override.uk", "uk", "override", /(?:ігноруй(?:те)?|забудь(?:те)?)\s+(?:всі\s+|усі\s+)?попередні\s+(?:інструкції|вказівки)/iu),
+  R("override.cs-sk", "cs", "override", /\b(?:ignoruj(?:te)?|zapomeň(?:te)?|zabudni)\s+(?:na\s+)?(?:všechny\s+|všetky\s+)?(?:předchozí|predchádzajúce|predošlé)\s+(?:instrukce|pokyny|inštrukcie)\b/iu),
+  R("override.sr", "sr", "override", /\b(?:ignoriši|zaboravi)\s+(?:sve\s+)?prethodne\s+(?:instrukcije|uputstva|naredbe)\b|(?:игнориши|заборави)\s+(?:све\s+)?претходне\s+(?:инструкције|упутства|наредбе)/iu),
+  R("override.id", "id", "override", /\b(?:abaikan|lupakan|acuhkan)\s+(?:semua\s+|seluruh\s+)?(?:instruksi|perintah|petunjuk|arahan)\s+(?:sebelumnya|terdahulu|sebelum\s+ini|di\s+atas)\b/iu),
+  R("extract.id", "id", "extract", /\b(?:tunjukkan|tampilkan|beritahu|bocorkan)\s+(?:prompt|instruksi|pesan)\s+sistem(?:mu|\s+anda)?\b/iu),
+  // Vietnamese, written without accents: it is matched on the accent-stripped view, so "bỏ qua" and "bo qua" both hit
+  R("override.vi", "vi", "override", /\b(?:bo\s+qua|lo\s+di|quen\s+(?:di\s+)?|khong\s+can\s+quan\s+tam(?:\s+den)?|ko\s+can\s+quan\s+tam(?:\s+den)?)\s+(?:het\s+|tat\s+ca\s+|moi\s+|toan\s+bo\s+)?(?:cac\s+|nhung\s+)?(?:huong\s+dan|chi\s+dan|chi\s+thi|lenh|yeu\s+cau|quy\s+tac)\s+(?:truoc(?:\s+do|\s+day)?|o\s+tren|ban\s+dau)\b/iu),
+  R("extract.vi", "vi", "extract", /\b(?:hien\s+thi|in\s+ra|cho\s+(?:toi|minh)\s+xem|tiet\s+lo)\s+(?:loi\s+nhac|prompt|chi\s+dan|huong\s+dan)\s+(?:he\s+thong|system)\b/iu),
+  // Thai has no spaces between words, so no word boundaries here
+  R("override.th", "th", "override", /(?:ละเว้น|เพิกเฉย(?:ต่อ)?|ไม่ต้องสนใจ|ลืม|ข้าม)\s*(?:คำสั่ง|คำแนะนำ|ข้อกำหนด)(?:ทั้งหมด)?\s*(?:ที่ผ่านมา|ก่อนหน้า(?:นี้)?|ข้างต้น|เดิม)/u),
+  R("extract.th", "th", "extract", /(?:แสดง|บอก|เปิดเผย)\s*(?:พรอมต์|คำสั่ง)\s*(?:ของ)?\s*ระบบ/u),
+  // Tagalog, Finnish, Hungarian, Hebrew, Greek
+  R("override.tl", "tl", "override", /\b(?:huwag\s+(?:pansinin|sundin|intindihin)|kalimutan|balewalain)\s+(?:ang\s+)?(?:lahat\s+ng\s+)?(?:mga\s+)?(?:naunang|nakaraang|dating)\s+(?:tagubilin|utos|instruksyon|instruksiyon|panuto)\b/iu),
+  R("override.fi", "fi", "override", /\b(?:ohita|unohda|sivuuta)\s+(?:kaikki\s+)?(?:aiemmat|edelliset|aikaisemmat)\s+(?:ohjeet|käskyt|ohjeesi)\b/iu),
+  R("override.hu", "hu", "override", /\b(?:hagyd\s+figyelmen\s+kívül|felejtsd\s+el|ne\s+vedd\s+figyelembe)\s+(?:az\s+)?(?:összes\s+)?(?:korábbi|előző|eddigi)\s+(?:utasítást|utasításokat|utasítás)\b/iu),
+  R("override.he", "he", "override", /(?:התעלם|תתעלם|התעלמו|שכח|תשכח)\s+(?:מ)?(?:כל\s+)?(?:ה)?(?:הוראות|הנחיות)\s+(?:ה)?קודמות/u),
+  R("override.el", "el", "override", /(?:αγνόησε|αγνοήστε|ξέχασε|ξεχάστε)\s+(?:όλες\s+)?(?:τις\s+)?προηγούμενες\s+(?:οδηγίες|εντολές)/iu),
+  // Hindi: more word orders, and English written in Devanagari (इग्नोर ... इंस्ट्रक्शंस). Matched on the Indic fold, which
+  // drops the nukta, so these are written without it.
+  R("override.hi2", "hi", "override", /(?:सभी\s*|सारे\s*)?(?:पिछले|पिछली|पहले\s*के|पुराने)\s*(?:सभी\s*|सारे\s*)?(?:निर्देश|निर्देशों|आदेश|आदेशों|इंस्ट्रक्श\S*|इन्स्ट्रक्श\S*)\s*(?:को\s*)?(?:भूल\s*जा\S*|इग्नोर\s*कर\S*|अनदेखा\s*कर\S*|नजरअंदाज\s*कर\S*)/u),
+  R("override.hi-translit", "hi", "override", /इग्नोर\s*(?:कर\S*\s*)?(?:ऑल|सभी|सारे|सब)?\s*(?:प्रीवियस|पिछले|पिछली|पहले\s*के|पुराने)\s*(?:इंस्ट्रक्श\S*|इन्स्ट्रक्श\S*|निर्देश\S*|आदेश\S*)/u),
+  R("extract.hi", "hi", "extract", /(?:सिस्टम\s*प्रॉम्प्ट|सिस्टम\s*प्रोम्प्ट|सिस्टम\s*निर्देश)\s*(?:को\s*)?(?:दिखाओ|दिखाइए|दिखा\s*दो|बताओ|बताइए|बता\s*दो|लिखो|प्रकट\s*कर\S*)/u),
+  // Hinglish (Hindi in Latin letters), both word orders
+  R("override.hinglish", "hi-Latn", "override", /\b(?:pichl[ea]|pichhl[ea]|pehl[ea]\s+(?:ke|wale)|purane|upar\s+(?:ke|wale))\s+(?:sab(?:hi)?\s+|saar[ea]\s+)?(?:instructions?|nirdesh|hidayat(?:ein|en)?|rules)\s+(?:ko\s+)?(?:ignore|bhool|bhul|nazarandaz|andekha)\s*(?:karo|kar\s*do|kariye|karein|jao|ja|jaao)\b|\b(?:ignore|bhool|bhul)\s+(?:karo|kar\s*do|jao)\s+(?:sab(?:hi)?\s+|saar[ea]\s+)?(?:pichl[ea]|pichhl[ea]|pehl[ea]\s+ke|purane)\s+(?:instructions?|nirdesh|rules)\b/iu),
+  R("extract.hinglish", "hi-Latn", "extract", /\b(?:system\s+prompt|apn[ea]\s+(?:instructions|nirdesh))\s+(?:ko\s+)?(?:dikhao|batao|likho|bata\s+do|dikha\s+do)\b/iu),
+  // Finglish (Persian in Latin letters) and Arabizi (Arabic chat-speak with 3 7 5 2 for sounds)
+  R("override.finglish", "fa-Latn", "override", /\b(?:dastur|dastoor)(?:at|olamal|ol[ae]mal|ha(?:ye?)?)?\s*(?:e\s*)?(?:ghabli|qabli|ghabl|pishin)\s*(?:ro|ra)?\s*(?:nadide|nadideh|faramush|faramoosh)\s*(?:begir|begirid|kon|konid)\b/iu),
+  R("extract.finglish", "fa-Latn", "extract", /\b(?:prompt|payam|dastur(?:at)?)\s*(?:e\s*)?system(?:i)?\s*(?:et|eto|ro|ra)?\s*(?:neshun|neshoon|neshan)\s*(?:bede|bedid|bedin)\b/iu),
+  R("override.arabizi", "ar-Latn", "override", /\b(?:t[ae]?[jg]a?h[ae]l|t2[ae]hal|insa|ensa|9arf\s+nazar\s+3n)\s+(?:kol|kul|kel|gami3|jami3)?\s*(?:el|al|l)[- ]?(?:ta3l[ie]?ma?t|t3limat|awamer|2awamer)\s+(?:el|al|l)?[- ]?(?:sab[2']?[ae]?|sab9a|2adeema|qadima|adima|ola)\b/iu),
+  // Japanese politeness hides the order ("これまでのご指示はお忘れください"); Korean polite and alternative verbs
+  R("override.ja-polite", "ja", "override", /(?:これまで|以前|先ほど|前|上記)の(?:ご)?(?:指示|命令|設定|指図)(?:内容)?(?:は|を)(?:すべて|全て|一旦|いったん)?(?:お忘れ(?:ください|いただ|になって)|ご放念|破棄|取り消|無かったことに|なかったことに|リセット)/u),
+  R("extract.ja-polite", "ja", "extract", /(?:システムプロンプト|初期設定|内部の?指示)(?:の内容)?を(?:お教え|ご教示|開示|教えて|表示して)/u),
+  R("override.ko2", "ko", "override", /(?:이전|앞선|위의|기존)\s*(?:의\s*)?(?:모든\s*)?(?:지시|지침|명령|설정|규칙)(?:사항)?(?:은|는|을|를)?\s*(?:모두\s*|전부\s*)?(?:잊어|무효|따르지\s*마|폐기|취소)/u),
 ];
+
+/** JavaScript's \b is ASCII-only even with /u: it never fires beside é, ş, Cyrillic or Thai. A Unicode-aware boundary. */
+const UNICODE_BOUNDARY = String.raw`(?:(?<=[\p{L}\p{N}\p{M}_])(?![\p{L}\p{N}\p{M}_])|(?<![\p{L}\p{N}\p{M}_])(?=[\p{L}\p{N}\p{M}_]))`;
+const compile = (src: string, flags: string) => new RegExp(src.replace(/\\b/g, UNICODE_BOUNDARY), flags.includes("u") ? flags : flags + "u");
+const scriptFold = (s: string) => foldIndic(foldArabicScript(s));
 for (const r of MULTILINGUAL_RULES) {
-  const src = foldArabicScript(r.re.source);
-  if (src !== r.re.source) r.folded = new RegExp(src, r.re.flags);
+  const src = r.re.source;
+  r.re = compile(src, r.re.flags);
+  const f = scriptFold(src);
+  if (f !== src) r.folded = compile(f, r.re.flags);
+  const p = stripLatinAccents(src);
+  if (p !== src) r.plain = compile(p, r.re.flags);
 }
 
 const KIND_LABEL: Record<Rule["kind"], string> = {
@@ -105,9 +162,18 @@ export function scanMultilingual(text: string, hidden: boolean, where: string): 
   const views: Array<[string, string]> = [["original", text]];
   const nf = text.normalize("NFKC");
   if (nf !== text) views.push(["nfkc", nf]);
-  // matching-only views (0.9.3): Arabic-script fold, rejoined CJK spacing, composed Hangul letters
-  const folded = foldArabicScript(nf);
-  if (folded !== nf) views.push(["arabic-fold", folded]);
+  // matching-only views (0.9.3): script fold (Arabic, and Devanagari since 0.9.5), rejoined CJK spacing, composed Hangul
+  const folded = foldIndic(foldArabicScript(nf));
+  if (folded !== nf) views.push(["script-fold", folded]);
+  // 0.9.5: accents off Latin letters (Vietnamese, Romanian, Turkish typed without them); Turkish casing, where İ
+  // lowercases to i and I to ı (JavaScript's /i never folds İ to i); Persian typed on a Latin keyboard layout
+  const plain = stripLatinAccents(nf);
+  if (plain !== nf) views.push(["no-accents", plain]);
+  if (/[İıĞŞ]/.test(nf)) views.push(["turkish-case", nf.toLocaleLowerCase("tr-TR")]);
+  if (!/[؀-ۿ]/.test(nf)) {
+    const fa = latinKeysToPersian(nf);
+    if (fa !== nf) views.push(["persian-keyboard", foldArabicScript(fa)]);
+  }
   // compose before NFKC: NFKC turns loose Hangul letters into conjoining initials, which no longer compose
   const composed = composeHangul(despaceCJK(text));
   const joined = composed.normalize("NFKC");
@@ -117,7 +183,8 @@ export function scanMultilingual(text: string, hidden: boolean, where: string): 
   const out: Finding[] = [];
   for (const rule of MULTILINGUAL_RULES) {
     for (const [view, t] of rule.initialsOnly ? (initials ? [["hangul-initials", initials] as [string, string]] : []) : views) {
-      const m = t.match(view === "arabic-fold" && rule.folded ? rule.folded : rule.re);
+      const re = (view === "script-fold" || view === "persian-keyboard") && rule.folded ? rule.folded : view === "no-accents" && rule.plain ? rule.plain : rule.re;
+      const m = t.match(re);
       if (!m) continue;
       // two rules on the same words are one instruction
       if (out.some((f) => f.excerpt && (f.excerpt.includes(m[0].slice(0, 120)) || m[0].includes(f.excerpt)))) break;

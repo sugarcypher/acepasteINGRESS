@@ -217,6 +217,16 @@ Every URL fetch is made twice and the two copies compared.
 
 What it cannot see: a site that verifies AI fetchers by their published IP ranges serves the gate the human page under any user agent, and a site that profiles the client deeply enough will tell the plain HTTP fetch from a person. The browser fetch and a separate network narrow that gap; they do not close it.
 
+## Changes in 0.9.5 (2026-11-18, ruleset 2026.11.18-3)
+
+- Look-alike fold, fixed: a word is folded only when it mixes Latin with look-alikes or is wholly made of them inside Latin text, and combining marks come off Latin letters only. Real Russian, Ukrainian and Greek words are no longer turned into Latin junk in the matching view (й had been losing its breve).
+- Gentle matching views, never delivered: Turkish casing (İ lowercases to i, I to ı; JavaScript's `/i` never folds İ), the Indic fold (nukta, joiners, Devanagari digits and dandas), accents off Latin letters (Vietnamese, Romanian, Turkish typed without them; "70kg" untouched), upside-down text, and the Persian keyboard-layout cipher in both directions.
+- Multilingual rules use a Unicode-aware word boundary (`\b` is ASCII-only in JavaScript, even with `/u`). Thai has no word boundaries at all.
+- New seed rules (unreviewed, as before): Turkish word endings and extraction, Dutch, Swedish, Danish/Norwegian, Polish, Romanian, Ukrainian, Czech/Slovak, Serbian (Latin and Cyrillic), Indonesian/Malay, Vietnamese, Thai, Tagalog, Finnish, Hungarian, Hebrew, Greek; Hindi word orders and English written in Devanagari; Hinglish, Finglish and Arabizi; Japanese and Korean polite forms.
+- Dormant instructions ("when the user later asks X, quietly do Y"): strong when the action is hidden or the data goes outside, weak otherwise, because chatbot design docs say "when the user asks for a refund, transfer them to a human". Placeholder fills that ask for something dangerous ("complete this template: [admin reset bypass steps here]").
+- Documentation precision: visible install one-liners, code samples, badge images with short or logo-only queries and templated API links are documentation-grade; together, with no instruction or hidden text beside them, they no longer refuse a page. 8 of 35 popular READMEs had been refused; none are now. A long query value still counts unless it is an image data URI, a URL or a short list.
+- Scores (`tools/pint/README.md`): 55.6% balanced accuracy on 6,876 public inputs (55.2% for 0.9.4); Turkish attacks caught 8 → 18 of 550, false alarms 6 of 4,855 benign inputs.
+
 ## Changes in 0.9.4 (2026-11-18, dependencies only; ruleset unchanged)
 
 - Security: `hono` 4.13.12 → 4.13.19 and `@hono/node-server` 2.1.3 → 2.1.9, both pulled in by `@modelcontextprotocol/sdk`. Closes the seven Dependabot alerts (GHSA-46wx-v44x-9hh2, GHSA-4m76-xfj5-7975, GHSA-3gg2-335m-rxc6, GHSA-4h7h-rv7c-7m2v, GHSA-h7mg-cq63-vhpq, GHSA-qv5m-9pm6-hqp3, GHSA-jpvv-r467-5p4w). Neither Ingress server routes through Hono (the MCP server speaks stdio, the HTTP service uses Node's `http`), so exposure was limited to the SDK's own HTTP transport, which Ingress does not start.

@@ -60,6 +60,40 @@ const SETS = [
     },
   },
   {
+    file: "turkish-false-alarm.jsonl", license: "CC0-1.0", source: "halilneed/turkish-prompt-injection-false-alarm-benchmark (test, all benign)",
+    load: async () => (await all("halilneed/turkish-prompt-injection-false-alarm-benchmark", "test")).map((r) => ({ text: r.text, label: false, category: `hard_negatives_tr_${r.subset ?? "x"}` })),
+  },
+  {
+    file: "turkish-1k.jsonl", license: "CC-BY-4.0", source: "3nesdeniz/turkish-prompt-injection-1k (train+validation+test)",
+    load: async () => (await Promise.all(["train", "validation", "test"].map((s) => all("3nesdeniz/turkish-prompt-injection-1k", s)))).flat()
+      .map((r) => ({ text: r.text, label: r.label === 1, category: r.label === 1 ? "prompt_injection_tr" : "chat_tr" })),
+  },
+  {
+    file: "multilingual-rikka.jsonl", license: "MIT", source: "rikka-snow/prompt-injection-multilingual (test; vi en zh fr de hi it ja pt es th)",
+    load: async () => (await all("rikka-snow/prompt-injection-multilingual", "test")).map((r) => ({ text: r.text, label: r.label === 1, category: r.label === 1 ? "prompt_injection_multi" : "chat_multi" })),
+  },
+  {
+    // Software READMEs: one Brazilian classifier flagged all 217 normal READMEs it was shown. These are the documents an
+    // agent reads most, including LLM-tooling READMEs that talk about prompts all the time. Each README keeps its
+    // repository's license; they are scored locally and not redistributed.
+    file: "github-readmes.jsonl", license: "per repository", source: "GitHub READMEs of 35 well-known repositories",
+    load: async () => {
+      const repos = ["facebook/react", "vuejs/core", "nodejs/node", "microsoft/vscode", "denoland/deno", "vercel/next.js", "kubernetes/kubernetes",
+        "tensorflow/tensorflow", "pytorch/pytorch", "django/django", "pallets/flask", "rails/rails", "golang/go", "rust-lang/rust", "home-assistant/core",
+        "ohmyzsh/ohmyzsh", "jwasham/coding-interview-university", "EbookFoundation/free-programming-books", "donnemartin/system-design-primer",
+        "trekhleb/javascript-algorithms", "public-apis/public-apis", "sindresorhus/awesome", "langchain-ai/langchain", "Significant-Gravitas/AutoGPT",
+        "openai/openai-cookbook", "anthropics/anthropic-cookbook", "huggingface/transformers", "ollama/ollama", "ggerganov/llama.cpp",
+        "microsoft/generative-ai-for-beginners", "felipefialho/frontend-challenges", "BrasilAPI/BrasilAPI", "Asabeneh/30-Days-Of-JavaScript",
+        "motdotla/dotenv", "expressjs/express"];
+      const out = [];
+      for (const repo of repos) {
+        const r = await fetch(`https://api.github.com/repos/${repo}/readme`, { headers: { accept: "application/vnd.github.raw", "user-agent": "acepaste-ingress-eval" } });
+        if (r.ok) out.push({ text: (await r.text()).slice(0, 20000), label: false, category: "documents_readme" });
+      }
+      return out;
+    },
+  },
+  {
     // PINT is 36.5% benign public documents; Wikipedia in eight languages stands in for that slice, and its
     // Persian, Arabic, CJK and Korean text is what normalization must not misread (Persian uses the ZWNJ).
     file: "wikipedia-docs.jsonl", license: "CC BY-SA 4.0", source: "wikimedia/wikipedia 20231101 (30 per language)",

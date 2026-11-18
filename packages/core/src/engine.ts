@@ -701,6 +701,16 @@ function hostOf(url: string): string {
  */
 /** below the default suspect threshold (0.25), so hidden text alone never refuses */
 export const VISIBILITY_ONLY_CAP = 0.2;
+/** visible, low-confidence findings that documentation produces on its own */
+function isDocumentationGrade(f: Finding): boolean {
+  if (f.inHidden) return false;
+  if (f.pass === "visibility") return true;
+  if (f.kind === "supplychain.install_instruction") return f.confidence <= 0.3;
+  if (f.pass === "code") return f.confidence <= 0.2;
+  if (f.kind === "meaning.exfil_markdown_image") return f.confidence <= 0.1;
+  if (f.kind === "meaning.exfil_link") return f.confidence <= 0.12;
+  return false;
+}
 /** character findings that mean someone engineered the text, so hidden segments on the same page count as evidence */
 const CHARACTER_CARRIES = new Set<string>(["unicode.tag_characters", "unicode.bidi_control", "unicode.variation_selector_smuggling", "unicode.mixed_script_confusable", "unicode.encoded_payload", "unicode.entity_smuggling", "unicode.whitespace_channel"]);
 
@@ -740,6 +750,11 @@ export function aggregate(findings: Finding[], ctx: { cloakingCompared?: boolean
   let score = 1 - notP;
   const passes = new Set(scored.map((f) => f.pass));
   if ([...passes].every((p) => p === "visibility")) score = Math.min(score, VISIBILITY_ONLY_CAP);
+  // Documentation-grade evidence does not add up to an attack (0.9.5). A README says "install" with curl | sh or
+  // iwr | iex, shows the same line as a code sample, has badges with short queries and templated API links; each
+  // is recorded at low confidence, and four of them together refused popular READMEs. Without an instruction,
+  // hidden text, character tricks or credential reach beside them, they stay below the suspect line.
+  if (scored.every(isDocumentationGrade)) score = Math.min(score, VISIBILITY_ONLY_CAP);
   const hiddenAndMeaning = scored.some((f) => f.pass === "meaning" && f.inHidden) || ((passes.has("character") || passes.has("sandbox")) && passes.has("meaning"));
   if (hiddenAndMeaning) score = Math.min(1, score + 0.15);
   if (passes.has("cloaking")) score = Math.min(1, score + 0.1);

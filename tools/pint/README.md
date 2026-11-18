@@ -31,6 +31,14 @@ measured on them, say so, and treat that set as spent for that purpose.
 | Lakera/gandalf_ignore_instructions, test | 112 attacks | MIT |
 | reshabhs/SPML_Chatbot_Prompt_Injection, stratified | 960 (500 attacks) | MIT |
 | wikimedia/wikipedia 20231101, 30 articles each in en de fr ja ko zh fa ar | 240 benign | CC BY-SA 4.0 |
+| halilneed/turkish-prompt-injection-false-alarm-benchmark | 2,875 benign | CC0-1.0 |
+| 3nesdeniz/turkish-prompt-injection-1k, all splits | 1,000 (550 attacks) | CC-BY-4.0 |
+| rikka-snow/prompt-injection-multilingual, test (vi en zh fr de hi it ja pt es th) | 1,276 (660 attacks) | MIT |
+| GitHub READMEs of 35 well-known repositories | 35 benign | per repository |
+
+Spent sets (a rule was changed after seeing results on them; say so whenever they are quoted): wikipedia-docs for the
+adversarial-suffix and bidi-isolate mechanisms (0.9.3); turkish-1k benign rows for `extract.tr` and github-readmes for
+the documentation-grade cap (0.9.5). No attack row of any set was looked at or used to write a rule.
 
 ## Results (2026-11-18, static passes, plain text)
 
@@ -39,6 +47,18 @@ measured on them, say so, and treat that set as spent for that purpose.
 | attacks caught | 200 / 811 (24.7%) | 200 / 811 (24.7%) |
 | benign passed | 878 / 879 | 879 / 879 |
 | **balanced accuracy** | **62.3%** | **62.3%** |
+
+With the multilingual, Turkish and README sets added (6,876 inputs):
+
+| | 0.9.4 | 0.9.5 |
+|---|---|---|
+| Turkish attacks caught (550) | 8 | 18 |
+| multilingual attacks caught (660) | 9 | 10 |
+| READMEs passed (35) | 27 | 35 |
+| Turkish false-alarm set passed (2,875) | 2,874 | 2,874 |
+| attacks caught, all sets | 217 / 2,021 (10.7%) | 228 / 2,021 (11.3%) |
+| benign passed, all sets | 4,841 / 4,855 | 4,849 / 4,855 |
+| **balanced accuracy** | **55.2%** | **55.6%** |
 
 For comparison only (different data): Lakera Guard scores 95.2% on PINT, AWS Bedrock Guardrails and Azure Prompt
 Shield about 89%, the best open classifiers about 79%.
@@ -49,3 +69,7 @@ results, documents) where hidden text, cloaking and character tricks are the sig
 visible, direct, paraphrased attacks, which regular expressions do not generalize to. The 0.9.3 additions
 (disguised text, suffixes, fake markers, image exfiltration) do not appear in these sets, so they do not move the
 score. Closing the gap to the PINT leaders needs a learned classifier pass, not more patterns.
+
+The non-English sets say the same louder: 0.9.5 has instruction rules in 30-odd languages and scripts and still catches
+about 3% of Turkish and multilingual attacks, because real attacks are paraphrases, not the canonical "ignore all
+previous instructions" in translation. False alarms stay near zero (6 of 4,855 benign inputs).
