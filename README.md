@@ -217,6 +217,11 @@ Every URL fetch is made twice and the two copies compared.
 
 What it cannot see: a site that verifies AI fetchers by their published IP ranges serves the gate the human page under any user agent, and a site that profiles the client deeply enough will tell the plain HTTP fetch from a person. The browser fetch and a separate network narrow that gap; they do not close it.
 
+## Changes in 0.9.4 (2026-11-18, dependencies only; ruleset unchanged)
+
+- Security: `hono` 4.13.12 → 4.13.19 and `@hono/node-server` 2.1.3 → 2.1.9, both pulled in by `@modelcontextprotocol/sdk`. Closes the seven Dependabot alerts (GHSA-46wx-v44x-9hh2, GHSA-4m76-xfj5-7975, GHSA-3gg2-335m-rxc6, GHSA-4h7h-rv7c-7m2v, GHSA-h7mg-cq63-vhpq, GHSA-qv5m-9pm6-hqp3, GHSA-jpvv-r467-5p4w). Neither Ingress server routes through Hono (the MCP server speaks stdio, the HTTP service uses Node's `http`), so exposure was limited to the SDK's own HTTP transport, which Ingress does not start.
+- Root `overrides` keep both at or above the patched versions when the lockfile is regenerated.
+
 ## Changes in 0.9.3 (2026-11-18, ruleset 2026.11.18-2)
 
 - Disguised text, matched through views that are never delivered: Arabic-script fold (Persian ی/ک and Arabic ي/ك, hamza and tā marbūṭa forms, tatweel and short vowels; the ZWNJ, a real Persian character, is ignored for matching only), composed Hangul letters (ㅁㅜㅅㅣ, ㅁ ㅜ ㅅ ㅣ, including final consonants NFKC cannot join), Korean initial-consonant shorthand (ㅇㅈ ㅈㅅ ㅁㅅ), and CJK spelled out with spaces (以 前 の 指 示 を 無 視).

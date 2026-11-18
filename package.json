@@ -1,7 +1,7 @@
 {
   "name": "acepaste-ingress",
   "private": true,
-  "version": "0.9.3",
+  "version": "0.9.4",
   "description": "AcePaste Ingress: a security gate between internet content and AI ingestion. One engine, many frontends.",
   "workspaces": [
     "packages/*"
@@ -15,6 +15,10 @@
   },
   "engines": {
     "node": ">=20"
+  },
+  "overrides": {
+    "hono": "^4.13.16",
+    "@hono/node-server": "^2.1.6"
   },
   "license": "FSL-1.1-ALv2"
 }
