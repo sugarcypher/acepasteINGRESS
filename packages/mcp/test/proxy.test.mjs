@@ -2,7 +2,7 @@
 // a real client. Run with: npm test -w @acepaste/ingress-mcp   (after npm run build)
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -16,13 +16,13 @@ const FAKE = join(here, "fake-downstream.mjs");
 const CLI = join(here, "..", "..", "core", "dist", "src", "cli.js");
 
 /** start the proxy in front of the fake server in the given mode; returns a connected client */
-async function proxy(stateDir, mode, downstream = {}, env = {}) {
+async function proxy(stateDir, mode, downstream = {}, env = {}, proxyEnv = {}) {
   const cfgPath = join(stateDir, `proxy-${mode}.json`);
   writeFileSync(cfgPath, JSON.stringify({ downstream: [{ name: "fake", command: process.execPath, args: [FAKE], env: { FAKE_MODE: mode, ...env }, ...downstream }] }));
   const client = new Client({ name: "proxy-test", version: "0" });
   await client.connect(new StdioClientTransport({
     command: process.execPath, args: [SERVER],
-    env: { ...getDefaultEnvironment(), INGRESS_PROXY_CONFIG: cfgPath, INGRESS_STATE_DIR: stateDir, INGRESS_LOG: join(stateDir, "log.jsonl"), INGRESS_APPROVER: "deny", INGRESS_SANDBOX: "off", INGRESS_CLOAKING: "0" },
+    env: { ...getDefaultEnvironment(), INGRESS_PROXY_CONFIG: cfgPath, INGRESS_STATE_DIR: stateDir, INGRESS_LOG: join(stateDir, "log.jsonl"), INGRESS_APPROVER: "deny", INGRESS_SANDBOX: "off", INGRESS_CLOAKING: "0", INGRESS_VISION_HELPER: "", ...proxyEnv },
     stderr: "ignore",
   }));
   return client;
@@ -80,6 +80,38 @@ test("a mail server behind the proxy is read as email: a hidden instruction in o
     assert.ok(!textOf(res).includes("collect.evil.example"), "the hidden text is not passed on");
     assert.ok(res.structuredContent.findings.some((f) => f.inHidden));
   } finally { await c.close(); }
+});
+
+test("a picture in a tool result is gated: withheld when it cannot be read or carries hidden text, handed on when it was read and is clean", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "ingress-proxy-"));
+  // no vision helper on this machine: the text is delivered, the picture is withheld, and the result says why
+  let c = await proxy(dir, "clean");
+  try {
+    const res = await c.callTool({ name: "fake__chart", arguments: {} });
+    assert.ok(!res.isError);
+    assert.match(textOf(res), /Sales chart for the third quarter/);
+    assert.match(textOf(res), /image 1 withheld \(its pixels could not be inspected/);
+    assert.equal(res.content.filter((x) => x.type === "image").length, 0);
+    assert.deepEqual(res.structuredContent.images, { received: 1, withheld: 1 });
+  } finally { await c.close(); }
+  // an instruction in the picture's metadata: found without reading a pixel
+  c = await proxy(dir, "clean", {}, { FAKE_IMAGE: "bad" });
+  try {
+    const res = await c.callTool({ name: "fake__chart", arguments: {} });
+    assert.match(textOf(res), /image 1 withheld \((?:suspect|hostile): [^)]*meaning\./);
+    assert.ok(!textOf(res).includes("collect.evil.example"), "the hidden text is not passed on");
+    assert.equal(res.content.filter((x) => x.type === "image").length, 0);
+  } finally { await c.close(); }
+  // with the helper built (macOS), a picture that was read and is clean is handed on as it was
+  const helper = join(here, "..", "..", "core", ".build", "ingress-vision");
+  if (process.platform === "darwin" && existsSync(helper)) {
+    c = await proxy(dir, "clean", {}, {}, { INGRESS_VISION_HELPER: helper });
+    try {
+      const res = await c.callTool({ name: "fake__chart", arguments: {} });
+      assert.equal(res.content.filter((x) => x.type === "image").length, 1, textOf(res));
+      assert.deepEqual(res.structuredContent.images, { received: 1, withheld: 0 });
+    } finally { await c.close(); }
+  }
 });
 
 test("the run's marker rides with delivered content, and an action that carries it out is refused", async () => {

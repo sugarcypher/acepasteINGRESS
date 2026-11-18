@@ -90,7 +90,10 @@ In a session, fetch a page and look for the `<<acepaste-ingress ...>>` envelope 
 - A shell command is gated when it visibly reaches the network. A local program that makes network calls of
   its own (`./fetch-data`, `make sync`) is not recognised. Background-task output files are gated however
   they were produced.
-- Images and audio in tool results are not inspected and pass through.
+- Pictures the agent reads from disk, and pictures in MCP results, are gated (0.9.18; see `docs/IMAGES.md`):
+  both the file as it is and the resized copy the harness hands the model. A refused picture is replaced by a
+  blank one with the reason beside it. Reading pixels needs the vision helper (`ingress vision build`, macOS);
+  without it pictures pass, and the model is told they were not checked. Audio is not inspected.
 - The egress gate reads the command, not the program. `python upload.py` sends whatever the script sends; a
   command that hides its destination in a variable or a file is judged without it. It is a check on what an
   agent visibly does, not a firewall: a machine-wide network filter is roadmap Phase 4 and is not built.

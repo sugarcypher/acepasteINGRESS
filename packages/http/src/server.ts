@@ -5,6 +5,8 @@
  *   POST /v1/fetch   { url, override? }                          -> IngressResult
  *   POST /v1/scan    { content, source?, contentType?, override?,
  *                      kind?, trust?, channel?, sender? }         -> IngressResult   (kind: the channel, e.g. "log"; trust: 1-6)
+ *   POST /v1/scan-image { image (base64), caption?, source?,
+ *                      override?, trust?, channel?, sender? }     -> IngressResult   (coverage.image says whether the pixels were read)
  *   POST /v1/verify  { receipt }                                 -> { digestOk, signatureOk, signatureAlg, keyId }
  *   GET  /v1/feed                 recent non-clean verdicts, anonymized (public)
  *   GET  /v1/receipts             the caller's own receipts, searchable (audit plane)
@@ -321,6 +323,16 @@ const server = createServer(async (req, res) => {
       record(a.info.name, r);
       log({ event: "ingress.usage", key: a.info.name, op: "scan", tier: r.tier, ms: Date.now() - started, usage: meter.usage(a.key) });
       return send(res, r.tier === "clean" || r.overridden ? 200 : r.tier === "unreachable" ? 502 : 422, r);
+    }
+    if (path === "/v1/scan-image") {
+      // { image: base64, caption?, source?, override?, trust?, channel?, sender? }. Reading the pixels needs the
+      // vision helper on the machine this service runs on (macOS); elsewhere the file's metadata and structure are
+      // checked and the result's coverage says the picture itself was not read.
+      if (typeof body.image !== "string" || !body.image) return send(res, 400, { error: "image (base64) required" });
+      const r = await engine.scanImage(Buffer.from(body.image, "base64"), { url: typeof body.source === "string" ? body.source : undefined, caption: typeof body.caption === "string" ? body.caption.slice(0, 2000) : undefined, override: body.override === true, quarantined: quarantinedFor(a.info.name, typeof body.source === "string" ? body.source : undefined), source: parseScanHints(body).source });
+      record(a.info.name, r);
+      log({ event: "ingress.usage", key: a.info.name, op: "scan-image", tier: r.tier, ms: Date.now() - started, usage: meter.usage(a.key) });
+      return send(res, r.tier === "clean" || r.overridden ? 200 : 422, r);
     }
     return send(res, 404, { error: "not found" });
   } catch (e) {
