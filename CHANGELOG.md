@@ -4,6 +4,42 @@ Every change bumps the patch version of all three packages. The ruleset id chang
 behavior changes; receipts carry it so verdicts are reproducible. Releases up to 0.9.6 are in the
 [README](README.md#changes-in-096-2026-11-18-ruleset-20261118-3-unchanged).
 
+## 0.9.19 (2026-11-18, ruleset 2026.11.18-9)
+
+Messages and notifications (Phase 6): chat, text messages, and the banners an operating system shows
+(`messages.ts`). JSON that is plainly a chat export or a notification is now read as one; other verdicts
+are unchanged.
+
+- **Chat messages** (`kind: "message"`): Slack, Discord, Telegram, Teams, WhatsApp, Messages and SMS exports,
+  or anything with a sender and a text when the caller says it is a conversation. Checked:
+  - what the app shows against what a program reads: Slack renders `blocks` and keeps `text` for notifications,
+    Teams has a `summary`, a link preview has a plain-text `fallback`. Words only in the unseen one are
+    concealed text;
+  - hidden text inside an HTML message body, as on a page;
+  - display names: "IT Support" or "System" from a bot, a webhook or someone outside the workspace, and names
+    shaped like role markers;
+  - scam shape, in short messages only: a link that hides where it goes with pressure or a request for a code,
+    or a stranger asking for a code in an institution's name;
+  - a verification code is noted (the action broker refuses to let one be sent to a destination from content);
+  - voice notes, stickers and files are listed as not read.
+- **Notifications** (`kind: "notification"`): app, title, body, actions, and the payload a banner does not show
+  (concealed text). An alarm in the system's voice sent by a website through a browser, or in a brand's name
+  from another site with pressure, is a source mismatch.
+- **Short-text mode for the classifier.** In chat, notifications and device names, a text under 15 words is not
+  judged by the classifier alone, and one under 40 needs 0.9. People text in imperatives; the model had never
+  seen it and rated 1 ordinary text in 100 as an attack.
+- **Measured** (`tools/message-eval`), hold-out halves scored once, every message read as from a stranger:
+  3 of 2,408 ordinary text messages refused (0.1%); 4 of 2,900 ordinary emails sent as texts; 80.8% of 3,798
+  attack emails sent as texts caught (short-text mode costs about 9 points against the email path). Spam texts
+  are not caught (0.5%) and are not the target.
+- **Not done.** The classifier was not retrained: the training tool takes ordinary texts now
+  (`build_training_set.py --benign`), and a retrained model sits outside the repository, but installing a
+  generated model file was not possible in this run. No present-day smishing corpus and no chat-native attack
+  set were scored. A native notification reader (macOS, Android) is not built: notifications come in through
+  the API, the MCP proxy or a caller.
+
+Tests: core 356 pass (13 new), proxy 7.
+
 ## 0.9.18 (2026-11-18, ruleset 2026.11.18-8)
 
 Images and QR codes (Phase 6): what a picture says to a person, and what it says only to a machine.

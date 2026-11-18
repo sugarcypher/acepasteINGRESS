@@ -136,6 +136,8 @@ const AUTHORITY: Record<string, Authority> = { email: "message", message: "messa
 // false alarms in 7,855 texts; at 0.8 the development emails give 1 in 3,000
 const VISIBLE_LINE: Record<Authority, number> = { message: 0.8, text: 0.85, document: 2 /* never */ };
 const HIDDEN_LINE = 0.9;
+/** channels made of short texts, where the classifier's visible line depends on length (see scanClassifier) */
+const SHORT_TEXT_KINDS = new Set(["message", "notification", "nearby"]);
 
 /**
  * The same text with what it quotes taken out: quotation marks, block quotes, code. An article that reports
@@ -175,7 +177,12 @@ export function scanClassifier(input: ClassifierInput): Finding[] {
   const { threshold, maxChars } = classifierInfo();
   const out: Finding[] = [];
   const authority = AUTHORITY[input.kind ?? "text"] ?? "text";
-  const line = VISIBLE_LINE[authority];
+  // Short-text mode (0.9.19). People text in imperatives ("call me now", "send me the address"), and the model
+  // was never shown how people text: on 2,419 ordinary text messages it rated 20 as attacks, at every length
+  // up to 33 words. So in chat, notifications and device names a short text is not judged by the classifier
+  // alone, and a middling one needs near-certainty. The rules still read every word.
+  const words = input.visible.trim().split(/\s+/).length;
+  const line = SHORT_TEXT_KINDS.has(input.kind ?? "") ? (words < 15 ? 2 : words < 40 ? 0.9 : VISIBLE_LINE[authority]) : VISIBLE_LINE[authority];
   const finding = (p: number, at: number, where: string, hidden: boolean): Finding => ({
     pass: "classifier", kind: "classifier.injection_likely",
     // from just over the suspect line at the threshold to 0.62 at certainty: never hostile alone

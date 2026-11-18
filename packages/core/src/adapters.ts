@@ -9,6 +9,7 @@ import type { ContentKind, Finding, TextSegment } from "./types.js";
 import { adaptTerminal } from "./terminal.js";
 import { adaptEmail, looksLikeEmailJson, looksLikeRawEmail } from "./email.js";
 import { adaptCalendar, looksLikeCalendarJson } from "./calendar.js";
+import { adaptMessages, adaptNotifications, looksLikeMessagesJson, looksLikeNotificationJson } from "./messages.js";
 
 /** JSON whose shape is a known channel (a mail message, a calendar event) is read as that channel */
 function jsonChannel(body: string): ContentKind | undefined {
@@ -16,6 +17,8 @@ function jsonChannel(body: string): ContentKind | undefined {
   try { doc = JSON.parse(body); } catch { return undefined; }
   if (looksLikeEmailJson(doc)) return "email";
   if (looksLikeCalendarJson(doc)) return "calendar";
+  if (looksLikeMessagesJson(doc)) return "message";
+  if (looksLikeNotificationJson(doc)) return "notification";
   return "json";
 }
 
@@ -158,12 +161,14 @@ export function adaptByKind(kind: ContentKind, raw: string): AdapterResult {
     case "log": return adaptTerminal(raw);
     case "email": return adaptEmail(raw);
     case "calendar": return adaptCalendar(raw);
+    case "message": return adaptMessages(raw);
+    case "notification": return adaptNotifications(raw);
     default: return adaptText(raw);
   }
 }
 
 /** kinds whose adapters parse HTML themselves: entities in them must reach that parser undecoded */
-export const KINDS_WITH_MARKUP: ReadonlySet<ContentKind> = new Set<ContentKind>(["html", "email", "calendar"]);
+export const KINDS_WITH_MARKUP: ReadonlySet<ContentKind> = new Set<ContentKind>(["html", "email", "calendar", "message", "notification"]);
 
 /** Plain JavaScript fetched directly (a module, a bundle): the whole thing is a script; any string literals are visible text. */
 export function adaptJavascript(raw: string): AdapterResult {

@@ -16,20 +16,26 @@ const args = process.argv.slice(2);
 const files = args.filter((a) => !a.startsWith("--"));
 const trust = Number(args.find((a) => a.startsWith("--trust="))?.split("=")[1] ?? 4) as TrustLevel;
 const why = args.includes("--why");
-if (!files.length) { console.error("usage: email-eval <file.jsonl>... [--trust=4] [--why]"); process.exit(2); }
+// --as=message reads each row as a text message from an unknown number (the strictest reading): rows with a
+// "text" field as they are, and email rows by their body, to check that the same words are judged alike in a chat
+const asMessage = args.includes("--as=message");
+if (!files.length) { console.error("usage: email-eval <file.jsonl>... [--trust=4] [--why] [--as=message]"); process.exit(2); }
 
 const engine = new IngressEngine({ cloakingCheck: false, cacheTtlSeconds: 0, sandbox: "off", fetchStylesheets: false, chainReceipts: false }, { log: () => {} });
 
-interface Row { raw?: string; subject?: string; from?: string; to?: string; body?: string; label: boolean | null; category: string; objectives?: string }
+interface Row { raw?: string; subject?: string; from?: string; to?: string; body?: string; text?: string; label: boolean | null; category: string; objectives?: string }
 interface Tally { n: number; refused: number; hostile: number; ms: number; kinds: Map<string, number> }
 const by = new Map<string, Tally & { label: boolean | null }>();
 
 for (const f of files) {
   const rows = readFileSync(f, "utf8").split("\n").filter(Boolean).map((l) => JSON.parse(l) as Row);
   for (const r of rows) {
-    const content = r.raw ?? JSON.stringify({ subject: r.subject ?? "", from: r.from ?? "", to: r.to ?? "", text: r.body ?? "" });
+    if (asMessage && r.raw !== undefined && r.text === undefined && r.body === undefined) continue; // a whole raw email has no single body to send as a text
+    const content = asMessage
+      ? JSON.stringify([{ is_from_me: 0, service: "SMS", sender: "+15550100", text: r.text ?? r.body ?? "" }])
+      : r.raw ?? JSON.stringify({ subject: r.subject ?? "", from: r.from ?? "", to: r.to ?? "", text: r.body ?? r.text ?? "" });
     const t0 = performance.now();
-    const res = await engine.scan(content, { kind: "email", source: { channel: "email", trust } });
+    const res = await engine.scan(content, asMessage ? { kind: "message", source: { channel: "text message", trust } } : { kind: "email", source: { channel: "email", trust } });
     const t = by.get(r.category) ?? { n: 0, refused: 0, hostile: 0, ms: 0, kinds: new Map<string, number>(), label: r.label };
     t.n++; t.ms += performance.now() - t0;
     if (res.tier !== "clean") {

@@ -85,6 +85,7 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("out")
     ap.add_argument("--exclude", action="append", default=[])
+    ap.add_argument("--benign", action="append", default=[], help="a JSON Lines file whose rows with label false are added as benign text (a development half of a public set: ordinary text messages)")
     ap.add_argument("--seed", type=int, default=7)
     a = ap.parse_args()
     os.makedirs(a.out, exist_ok=True)
@@ -184,6 +185,13 @@ def main():
             add((r["text"] for r in gen if r["source"] == src), False, src)
     else:
         print("  (no hard-negatives.jsonl beside the output: run hard_negatives.py first to include them)")
+
+    # ordinary text from a channel the other sources do not cover (0.9.19: text messages; the model had never
+    # seen how people text, and rated one ordinary message in a hundred as an attack)
+    for f in a.benign:
+        with open(f, encoding="utf-8", errors="replace") as fh:
+            extra = [json.loads(line) for line in fh if line.strip()]
+        add((r.get("text") for r in extra if r.get("label") is False), False, os.path.basename(os.path.dirname(f)) + "/" + os.path.basename(f))
 
     rng.shuffle(rows)
     out = os.path.join(a.out, "train.jsonl")

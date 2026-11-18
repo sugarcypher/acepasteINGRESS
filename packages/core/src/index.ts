@@ -35,6 +35,8 @@ export { readImageMeta, detectImageFormat, looksLike } from "./image-meta.js";
 export type { ImageMeta, ImageFormat } from "./image-meta.js";
 export { judgeQrPayload } from "./qr.js";
 export type { QrVerdict, QrKind } from "./qr.js";
+export { adaptMessages, adaptNotifications, parseMessages, parseNotifications, looksLikeMessagesJson, looksLikeNotificationJson } from "./messages.js";
+export type { ChatMessage, Notification } from "./messages.js";
 export { ProvenanceLedger, describeMark, downloadOrigin } from "./provenance.js";
 export type { ProvenanceMark } from "./provenance.js";
 export type { ShellGateOptions } from "./shell-commands.js";
