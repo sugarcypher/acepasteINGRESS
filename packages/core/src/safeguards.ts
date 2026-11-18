@@ -162,6 +162,13 @@ export class BurstCounter {
     return why;
   }
 
+  export(): { at: number[]; same: Array<[string, number[]]> } { return { at: this.at.slice(-200), same: [...this.same].slice(-200) }; }
+  import(d: { at?: unknown; same?: unknown } | undefined): void {
+    if (!d || typeof d !== "object") return;
+    if (Array.isArray(d.at)) this.at.push(...d.at.filter((x): x is number => typeof x === "number"));
+    for (const e of Array.isArray(d.same) ? d.same : []) if (Array.isArray(e) && typeof e[0] === "string" && Array.isArray(e[1])) this.same.set(e[0], (e[1] as unknown[]).filter((x): x is number => typeof x === "number"));
+  }
+
   private trim(now: number) {
     this.at = this.at.filter((t) => now - t < 600_000);
     for (const [k, v] of this.same) {

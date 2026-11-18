@@ -21,8 +21,11 @@ import { trackAudit, confirmAuditArea, formatAuditChanges, AUDIT_NEEDS_CONFIRMAT
 import { confirmServerTools, describeServerTools } from "./tooldefs.js";
 import { BaselineStore } from "./changes.js";
 import { engageStop, clearStop, stopReason } from "./safeguards.js";
-import { postToolUse, userPromptSubmit, preCompact, postCompact, sessionStart, remoteGate, type HookGate } from "./agent-hooks.js";
-import { appendFileSync } from "node:fs";
+import { postToolUse, preToolUse, userPromptSubmit, preCompact, postCompact, sessionStart, remoteGate, type HookGate } from "./agent-hooks.js";
+import { Blocklist, BLOCKLIST_FEEDS } from "./egress.js";
+import { ProvenanceLedger, describeMark, downloadOrigin } from "./provenance.js";
+import { stateDir } from "./changes.js";
+import { appendFileSync, mkdirSync, renameSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import type { AuditArea } from "./audit-parsers.js";
@@ -40,6 +43,8 @@ async function main() {
   if (args[0] === "instructions") return instructionsCommand(args.slice(1));
   if (args[0] === "hook") return hookCommand(args[1], await chunksIn());
   if (args[0] === "tools") return toolsCommand(args.slice(1));
+  if (args[0] === "blocklist") return blocklistCommand(args.slice(1));
+  if (args[0] === "provenance") return provenanceCommand(args.slice(1));
   // ingress stop [reason]: every broker on this machine refuses every agent action until `ingress resume`.
   // Anyone may stop, an agent included. Only a person at a terminal may resume.
   if (args[0] === "stop") {
@@ -132,7 +137,7 @@ main().catch((e) => { console.error(e); process.exit(1); });
 
 /**
  *   ingress hook <event>     reply to an agent harness hook: the event's JSON on stdin, the reply on stdout
- *       events: post-tool-use, user-prompt-submit, pre-compact, post-compact, session-start
+ *       events: pre-tool-use, post-tool-use, user-prompt-submit, pre-compact, post-compact, session-start
  *   The engine runs in this process unless INGRESS_HOOK_SERVICE names a running Ingress service
  *   (http://127.0.0.1:8787), whose key is read from INGRESS_HOOK_KEY_FILE (default ~/.acepaste-ingress/local-api-key);
  *   then the service's receipts and audit trail record what the hooks gated.
@@ -160,13 +165,93 @@ async function hookCommand(event: string | undefined, stdin: string) {
   }
   const out = (v: unknown) => { if (v !== undefined) process.stdout.write(JSON.stringify(v) + "\n"); };
   switch (event) {
+    // the egress gate needs no engine: it judges the action with what the session has already read.
+    // INGRESS_EGRESS_ALLOW_HOSTS: comma-separated hosts data may go to without a question (".example.com" covers subdomains)
+    case "pre-tool-use": return out(preToolUse(input, { ownPort, allowHosts: (process.env.INGRESS_EGRESS_ALLOW_HOSTS ?? "").split(",").map((s) => s.trim()).filter(Boolean) }));
     case "post-tool-use": return out(await postToolUse(input, gate, { ownPort }));
     case "user-prompt-submit": return out(await userPromptSubmit(input, gate));
     case "pre-compact": process.stdout.write(preCompact() + "\n"); return;
     case "post-compact": await postCompact(input, gate); return;
-    case "session-start": return out(sessionStart(input));
-    default: console.error("usage: ingress hook post-tool-use|user-prompt-submit|pre-compact|post-compact|session-start   (event JSON on stdin)"); process.exit(2);
+    case "session-start": return out(sessionStart(input, { marker: process.env.INGRESS_SESSION_MARKER !== "0" }));
+    default: console.error("usage: ingress hook pre-tool-use|post-tool-use|user-prompt-submit|pre-compact|post-compact|session-start   (event JSON on stdin)"); process.exit(2);
   }
+}
+
+/**
+ *   ingress provenance                 files agents wrote after reading outside content, newest first
+ *   ingress provenance <path>          where one file came from: an agent's mark, or a download
+ *   ingress provenance clear <path>    you have looked at the file: remove its mark (interactive terminal only)
+ */
+async function provenanceCommand(a: string[]) {
+  const ledger = new ProvenanceLedger();
+  if (a[0] === "clear") {
+    if (!a[1]) { console.error("usage: ingress provenance clear <path>"); process.exit(2); }
+    if (!process.stdin.isTTY || !process.stdout.isTTY) { console.error("refused: clearing a mark needs an interactive terminal, typed by a person"); process.exit(3); }
+    const found = ledger.lookup(a[1]);
+    if (!found) { console.log("no mark on that file"); return; }
+    console.log(describeMark(found.mark, found.unchanged));
+    const rl = createInterface({ input: process.stdin, output: process.stdout });
+    const typed = (await rl.question('Type "clear" if you have read the file and it is what you expect: ')).trim();
+    rl.close();
+    if (typed !== "clear") { console.log("mark kept"); process.exit(1); }
+    ledger.clear(a[1]);
+    console.log("mark removed");
+    return;
+  }
+  if (a[0]) {
+    const found = ledger.lookup(a[0]);
+    const origin = downloadOrigin(a[0]);
+    if (found) console.log(describeMark(found.mark, found.unchanged));
+    if (origin) console.log(`downloaded${origin.agent ? ` by ${origin.agent}` : ""}${origin.from ? ` from ${origin.from}` : ""}`);
+    if (!found && !origin) console.log("no mark: not written by an agent after reading outside content, and not recorded as a download");
+    return;
+  }
+  const marks = ledger.list();
+  if (!marks.length) { console.log("no marked files"); return; }
+  for (const m of marks.slice(0, 200)) console.log(`${m.at.slice(0, 16).replace("T", " ")}  ${m.path}`);
+  if (marks.length > 200) console.log(`... and ${marks.length - 200} more`);
+}
+
+/**
+ *   ingress blocklist                 the lists in use and how many entries each has
+ *   ingress blocklist update          download the free lists of botnet and attack infrastructure (Feodo Tracker, Spamhaus DROP, Emerging Threats)
+ *   ingress blocklist check <host>    is this host or address on a list?
+ * Lists are plain text files in <state>/blocklists; add your own there, one host, address or IPv4 range per line.
+ * The broker and the egress hook refuse any action whose arguments name a listed destination.
+ */
+async function blocklistCommand(a: string[]) {
+  const dir = join(stateDir(), "blocklists");
+  if (a[0] === "update") {
+    mkdirSync(dir, { recursive: true, mode: 0o700 });
+    let failed = 0;
+    for (const f of BLOCKLIST_FEEDS) {
+      try {
+        const res = await fetch(f.url, { signal: AbortSignal.timeout(30_000), redirect: "follow", headers: { "user-agent": HONEST_USER_AGENT } });
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const text = await res.text();
+        if (text.length > 50_000_000) throw new Error("larger than 50 MB");
+        // a list is kept only if it parses as one: a block page or an error page saved as a list would silently protect nothing
+        const n = new Blocklist().add(text, f.name);
+        if (n < 5) throw new Error(`only ${n} entries parsed; keeping the previous copy`);
+        const p = join(dir, `${f.name}.txt`);
+        writeFileSync(`${p}.tmp`, `# ${f.what}\n# from ${f.url} on ${new Date().toISOString()} (${f.terms})\n${text}`, { mode: 0o600 });
+        renameSync(`${p}.tmp`, p);
+        console.log(`${f.name}: ${n} entries (${f.what})`);
+      } catch (e) { failed++; console.error(`${f.name}: not updated (${(e as Error).message ?? e})`); }
+    }
+    if (failed) process.exitCode = 1;
+    return;
+  }
+  const b = Blocklist.load(dir);
+  if (a[0] === "check") {
+    if (!a[1]) { console.error("usage: ingress blocklist check <host or address>"); process.exit(2); }
+    const hit = b.match(a[1]);
+    console.log(hit ? `listed (${hit})` : "not listed");
+    if (hit) process.exitCode = 1;
+    return;
+  }
+  if (!b.size) { console.log(`no blocklists in ${dir}\nrun: ingress blocklist update`); return; }
+  console.log(`${b.size} entries in ${dir}\n${b.sources.map((s) => `  ${s}`).join("\n")}`);
 }
 
 /**

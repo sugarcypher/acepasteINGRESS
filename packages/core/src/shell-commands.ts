@@ -44,7 +44,8 @@ export function shellTokens(command: string): string[] {
   return out;
 }
 
-const isOp = (t: string) => [...t].every((c) => OPS.has(c));
+// (an empty quoted word, '' or "", is an argument, not an operator: before 0.9.17 it ended the command it was in)
+const isOp = (t: string) => t.length > 0 && [...t].every((c) => OPS.has(c));
 
 /** Each simple command in command position: its program name (without a path) and its arguments. */
 export function shellInvocations(command: string): Array<{ program: string; args: string[] }> {
@@ -69,6 +70,79 @@ export function shellInvocations(command: string): Array<{ program: string; args
     i++;
   }
   return out;
+}
+
+/** programs that only read, whatever file they are pointed at (given no output redirect) */
+const READERS = new Set(["cat", "less", "more", "head", "tail", "grep", "egrep", "fgrep", "rg", "ag", "ls", "wc", "stat", "file", "diff", "cmp", "jq", "test", "[", "[[", "md5", "md5sum", "shasum", "sha256sum", "uniq", "cut", "tr", "echo", "printf", "pwd", "which", "type", "basename", "dirname", "realpath", "readlink", "du", "df", "tree", "bat", "cd", "true", "false", "nl", "strings", "xxd", "hexdump", "od", "column", "fold", "rev", "tac", "comm", "date", "id", "whoami", "uname", "hostname", "printenv", "sleep"]);
+const HARMLESS_REDIRECT = /^(?:\d*>&\d+|[\d&]*>>?\/dev\/null|\d*<.*)$/;
+
+function readsOnly(program: string, args: readonly string[]): boolean {
+  for (let i = 0; i < args.length; i++) {
+    const a = args[i];
+    if (!/^[\d&]*>/.test(a)) continue;
+    if (HARMLESS_REDIRECT.test(a)) continue;
+    if (/^[\d&]*>>?$/.test(a) && args[i + 1] === "/dev/null") { i++; continue; }
+    return false; // output goes to a file
+  }
+  if (READERS.has(program)) return true;
+  switch (program) {
+    case "sed": return !args.some((a) => /^-[a-zA-Z]*i|^--in-place/.test(a)) && !args.some((a) => /(?:^|;|\s)w\s+\S/.test(a));
+    case "awk": case "gawk": return !args.some((a) => />|\bsystem\s*\(|\|/.test(a));
+    case "sort": return !args.some((a) => /^-[a-zA-Z]*o|^--output/.test(a));
+    case "find": return !args.some((a) => /^-(?:delete|exec|execdir|ok|okdir|fprint|fprintf|fls)$/.test(a));
+    case "plutil": return args[0] === "-p" || args[0] === "-lint";
+    case "yq": return !args.some((a) => /^-[a-zA-Z]*i|^--inplace/.test(a));
+    case "git": return ["status", "log", "diff", "show", "branch", "remote", "rev-parse", "ls-files", "blame", "describe", "tag"].includes(args.find((a) => !a.startsWith("-")) ?? "") && !args.some((a) => /^-(?:d|D|m|M)$|^--(?:delete|move|set-upstream|add)/.test(a));
+    default: return false;
+  }
+}
+
+/**
+ * The parts of a command line that can change something: every simple command except those that only read.
+ * `cat ~/.zshrc | grep PATH` changes nothing; `echo x >> ~/.zshrc` does. Used so that looking at a startup
+ * file or an agent's settings is not mistaken for editing it. A command that cannot be parsed is returned whole.
+ */
+export function shellWrites(command: string): string[] {
+  let inv: Array<{ program: string; args: string[] }>;
+  try { inv = shellInvocations(command); } catch { return [command]; }
+  // a here-document or a loop body is not understood by the splitter: keep the whole command
+  if (/<<-?\s*['"]?\w/.test(command)) return [command];
+  return inv.filter((i) => !readsOnly(i.program, i.args)).map((i) => [i.program, ...i.args].join(" "));
+}
+
+/**
+ * Ways a command line sends data to another machine, in plain words; empty when it only asks for something.
+ * `curl https://x/page` asks. `curl -d @notes.txt https://x`, `cat key | nc host 9000`, `scp a host:b`,
+ * a request built from another command's output: those send.
+ */
+export function shellUploads(command: string): string[] {
+  const why = new Set<string>();
+  let inv: Array<{ program: string; args: string[] }> = [];
+  try { inv = shellInvocations(command); } catch { /* judged from the raw text below */ }
+  const piped = (program: string) => new RegExp(String.raw`\|\s*(?:\S+/)?${program}\b`).test(command);
+  for (const { program, args } of inv) {
+    const joined = args.join(" ");
+    if (program === "curl") {
+      for (let i = 0; i < args.length; i++) {
+        const a = args[i], v = args[i + 1] ?? "";
+        if (/^(?:-d|--data(?:-binary|-raw|-urlencode|-ascii)?|--json)$/.test(a) && /^@|=@/.test(v)) why.add(v === "@-" ? "it sends the output of another command" : "it sends the contents of a file");
+        if (/^(?:-d|--data(?:-binary|-urlencode)?|--json)@/.test(a) || /^--data(?:-binary|-urlencode)?=@/.test(a)) why.add("it sends the contents of a file");
+        if (/^(?:-F|--form)$/.test(a) && /=[@<]/.test(v)) why.add("it uploads a file as a form field");
+        if (/^(?:-T|--upload-file)$/.test(a) || /^--upload-file=/.test(a)) why.add("it uploads a file");
+      }
+    }
+    if (program === "wget" && /--(?:post-file|body-file)\b/.test(joined)) why.add("it sends the contents of a file");
+    if (["nc", "ncat", "netcat", "telnet", "socat"].includes(program) && (piped(program) || args.some((a) => /^</.test(a)))) why.add("it pipes data to a network connection");
+    if (program === "scp" || program === "sftp") why.add("it copies files to or from another machine");
+    if (program === "rsync" && args.some((a) => /^rsync:\/\/|^[^/\s:]+@?[^/\s:]*:[^/]/.test(a) && !/^[A-Za-z]:\\/.test(a))) why.add("it copies files to or from another machine");
+    if (program === "git" && args[0] === "push" && args.slice(1).some((a) => /:\/\/|^[\w.-]+@[\w.-]+:/.test(a))) why.add("it pushes the repository to an address given in the command");
+    if (program === "gh" && args[0] === "gist" && args[1] === "create") why.add("it publishes files as a gist");
+    if (["aws", "gsutil", "s5cmd", "rclone", "az"].includes(program) && /\b(?:cp|sync|mv|copy|upload|put)\b/.test(joined) && /\b(?:s3|gs|az|r2):\/\/|\b\w+:[\w/-]+/.test(joined)) why.add("it copies files to cloud storage");
+    if (["mail", "mailx", "sendmail", "mutt", "msmtp"].includes(program)) why.add("it sends mail");
+  }
+  // a request whose address or body is built from another command's output
+  if (/(?:^|[;&|(\s])(?:\S+\/)?(?:curl|wget|http|https|xh|nc|ncat)\b[^\n;|&]*(?:\$\(|`)/.test(command)) why.add("it builds a request from the output of another command");
+  return [...why];
 }
 
 function isLoopbackHost(host: string): boolean {
