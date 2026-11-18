@@ -17,6 +17,10 @@ import { loadPolicyFile } from "./policyfile.js";
 import { checkInstructionFiles, approveInstructionFile, readInstructionBytes } from "./instructions.js";
 import { macosDialogApprover } from "./approvers.js";
 import { auditEnvironment, formatAudit } from "./audit.js";
+import { trackAudit, confirmAuditArea, formatAuditChanges, AUDIT_NEEDS_CONFIRMATION } from "./audit-changes.js";
+import { confirmServerTools, describeServerTools } from "./tooldefs.js";
+import { BaselineStore } from "./changes.js";
+import type { AuditArea } from "./audit-parsers.js";
 import { createInterface } from "node:readline/promises";
 import { userInfo } from "node:os";
 import type { IngressConfig, TaintReceipt } from "./types.js";
@@ -29,6 +33,7 @@ const url = args.find((a) => /^https?:\/\//.test(a));
 async function main() {
   const chunksIn = async () => { const c: Buffer[] = []; for await (const x of process.stdin) c.push(x as Buffer); return Buffer.concat(c).toString("utf8"); };
   if (args[0] === "instructions") return instructionsCommand(args.slice(1));
+  if (args[0] === "tools") return toolsCommand(args.slice(1));
   if (args[0] === "audit") {
     // read-only: what on this machine could change what agents receive (hosts, DNS, proxies, browsers, certificates, agent configs)
     const gateEngine = new IngressEngine({ cloakingCheck: false, sandbox: "off" }, { log: () => {} });
@@ -40,7 +45,27 @@ async function main() {
       gate: (t, src) => gateEngine.scan(t, { url: src, contentType: "text/markdown" }),
       remote: remoteBase ? { base: remoteBase, key: process.env.INGRESS_API_KEY!, localFetch: (u) => fetchEngine.fetch(u) } : undefined,
     });
-    console.log(flag("json") ? JSON.stringify(r, null, 2) : formatAudit(r));
+    // ingress audit confirm <area>: a person says the current items of that area are expected
+    if (args[1] === "confirm") {
+      const area = args[2] as AuditArea | undefined;
+      if (!area || !AUDIT_NEEDS_CONFIRMATION.includes(area)) { console.error(`usage: ingress audit confirm <area>   areas: ${AUDIT_NEEDS_CONFIRMATION.join(", ")}`); process.exit(2); }
+      if (!process.stdin.isTTY || !process.stdout.isTTY) { console.error("refused: confirmation needs an interactive terminal, typed by a person"); process.exit(3); }
+      const items = r.findings.filter((f) => f.area === area);
+      console.log(`\n${area}: ${items.length} item(s) found now\n`);
+      for (const f of items) console.log(`  [${f.severity}] ${f.title}\n      ${f.detail}${f.where ? `\n      where: ${f.where}` : ""}\n`);
+      const rl = createInterface({ input: process.stdin, output: process.stdout });
+      const typed = (await rl.question(`Type "${area}" to confirm these are expected: `)).trim();
+      rl.close();
+      if (typed !== area) { console.log("not confirmed"); process.exit(1); }
+      const c = confirmAuditArea(r, area);
+      console.log(`confirmed ${c.items} item(s) in ${c.area}. Any addition or removal will ask for your attention again.`);
+      return;
+    }
+    // --no-track looks without recording a snapshot (and without comparing)
+    let changes: ReturnType<typeof trackAudit> | undefined;
+    if (!flag("no-track")) { try { changes = trackAudit(r); } catch (e) { console.error(`change tracking unavailable: ${(e as Error).message}`); } }
+    if (flag("json")) console.log(JSON.stringify(changes ? { ...r, changes } : r, null, 2));
+    else console.log(`${changes ? formatAuditChanges(changes) + "\n\n" : ""}${formatAudit(r)}`);
     if (r.summary.high) process.exitCode = 1;
     return;
   }
@@ -78,6 +103,40 @@ async function main() {
   console.error(`\n[timings] ${Object.entries(result.timings).map(([k, v]) => `${k}=${v!.toFixed(1)}ms`).join(" ")}`);
 }
 main().catch((e) => { console.error(e); process.exit(1); });
+
+/**
+ *   ingress tools                      downstream MCP servers whose tools were recorded, and their state
+ *   ingress tools confirm <server>     confirm the tools that server offered when the proxy last started (interactive terminal only)
+ */
+async function toolsCommand(a: string[]) {
+  if (a[0] === "confirm") {
+    const server = a[1];
+    if (!server) { console.error("usage: ingress tools confirm <server>"); process.exit(2); }
+    if (!process.stdin.isTTY || !process.stdout.isTTY) { console.error("refused: confirmation needs an interactive terminal, typed by a person"); process.exit(3); }
+    const d = describeServerTools(server);
+    if (!d) { console.error(`no reviewed tools for "${server}": start the Ingress proxy with that server once, then confirm`); process.exit(2); }
+    console.log(`\n${server}: ${d.pending.length} tool(s) offered when the proxy last started`);
+    if (d.state.state === "changed") {
+      console.log(`changed since ${d.state.since}:`);
+      for (const x of d.state.added) console.log(`  + ${x.label} (new, or its definition changed)`);
+      for (const x of d.state.removed) console.log(`  - ${x.replace(/ @ [0-9a-f]{16}$/, "")} (previous definition)`);
+    } else console.log(`state: ${d.state.state}`);
+    console.log("Read the server's current tool descriptions before confirming; Ingress checked them for hidden instructions, not for what they do.");
+    const rl = createInterface({ input: process.stdin, output: process.stdout });
+    const typed = (await rl.question(`Type "${server}" to confirm this set of tools: `)).trim();
+    rl.close();
+    if (typed !== server) { console.log("not confirmed"); process.exit(1); }
+    const c = confirmServerTools(server);
+    console.log(`confirmed ${c.tools} tool(s) of ${c.server} at ${c.at}. Restart the proxy; a later change will be held again.`);
+    return;
+  }
+  const groups = new BaselineStore().groups().filter((g) => g.startsWith("mcp-tools:")).map((g) => g.slice("mcp-tools:".length));
+  if (!groups.length) { console.log("no downstream servers recorded yet"); return; }
+  for (const s of groups) {
+    const d = describeServerTools(s);
+    console.log(`${(d?.state.state ?? "unknown").padEnd(10)} ${s}${d ? `  (${d.pending.length} tools)` : ""}`);
+  }
+}
 
 /**
  *   ingress instructions [dir]                     list instruction files and their approval status
