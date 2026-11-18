@@ -4,6 +4,23 @@ Every change bumps the patch version of all three packages. The ruleset id chang
 behavior changes; receipts carry it so verdicts are reproducible. Releases up to 0.9.6 are in the
 [README](README.md#changes-in-096-2026-11-18-ruleset-20261118-3-unchanged).
 
+## 0.9.12 (2026-11-18, ruleset unchanged)
+
+The environment audit looks at what is attached to the machine and what it exposes (`audit-local.ts`;
+Phases 7, 10b, 10d, 11). All read-only, all tracked with the change tracking from 0.9.9.
+
+- **Devices that can type** (macOS, `hidutil list`): every external device with a keyboard interface. One whose
+  name says it is something else (a cable, a charger, a drive, a hub), or that has no name, is rated high. The
+  audit cannot watch typing; it says which keyboards exist, so a new one is noticed.
+- **Listening services** (`lsof`): grouped by program and exposure, not by port. A model or tool server
+  reachable from the network (ollama, LM Studio, an MCP server) is rated high. Local-only listeners are
+  listed but not tracked, since dev servers come and go.
+- **Tunnels and forwards** among running processes: ngrok, cloudflared, ssh `-R` and `-D`, tailscale funnel,
+  bore, frpc and others. Tokens in their arguments are not printed.
+- **Printers** (`lpstat -v`): local printers are noted; one reached outside the local network, or two that share
+  a name with different addresses, are for review. On Linux a running `cups-browsed` is flagged.
+- **Network interfaces** (macOS): tracked by port name, so a new plug-in adapter shows up as a change.
+
 ## 0.9.11 (2026-11-18, ruleset 2026.11.18-4)
 
 Streams, logs and terminal output (Phase 8a), and the groundwork every later channel uses.

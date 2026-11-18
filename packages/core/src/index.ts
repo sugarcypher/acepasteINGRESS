@@ -47,6 +47,7 @@ export type { InstructionFile, InstructionCheck, InstructionStatus, ApprovalEntr
 export { auditEnvironment, formatAudit, readChromiumExtensions } from "./audit.js";
 export type { AuditReport, AuditCheck, AuditOptions } from "./audit.js";
 export * from "./audit-parsers.js";
+export * from "./audit-local.js";
 export { diffSnapshots, confirmState, BaselineStore, SnapshotStore, stateDir, fingerprint, formatDiff } from "./changes.js";
 export type { TrackedItem, Snapshot, GroupChange, SnapshotDiff, Baseline, ConfirmState } from "./changes.js";
 export { auditSnapshot, auditItemKey, trackAudit, confirmAuditArea, formatAuditChanges, AUDIT_VOLATILE, AUDIT_NEEDS_CONFIRMATION } from "./audit-changes.js";

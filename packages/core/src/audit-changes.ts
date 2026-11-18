@@ -18,12 +18,15 @@ export const AUDIT_VOLATILE: readonly AuditArea[] = ["resolution"];
  */
 export const AUDIT_NEEDS_CONFIRMATION: readonly AuditArea[] = [
   "agent-config", "agent-instructions", "certificates", "network-extension", "proxy", "browser-policy", "browser-extension", "browser-search", "hosts", "dns",
+  "input-devices", "listening", "tunnels", "printers", "network-interfaces",
 ];
 
 /** Stable identity of one audit finding, or undefined when the finding is not worth tracking. */
 export function auditItemKey(f: AuditFinding): string | undefined {
   // the DNS servers in use change with every network a laptop joins
   if (f.area === "dns" && f.title.startsWith("DNS servers:")) return undefined;
+  // local-only listeners come and go with every dev server; the ones the network can reach are what a person confirms
+  if (f.area === "listening" && f.title.endsWith("listens on this machine only")) return undefined;
   const where = f.where ?? "";
   // content matters here: an edited instruction file or hook is a change even though its path is the same
   if (f.area === "agent-instructions") {

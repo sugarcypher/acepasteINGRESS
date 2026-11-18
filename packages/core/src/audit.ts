@@ -18,6 +18,7 @@ import {
   classifyChromiumSearch, classifyExtension, classifyChromiumPolicy, classifyTrustSettings, classifySystemExtensions, classifyMcpServers,
   classifyHooks, classifyResolution, summarizeAudit, ipv6Prefix64, WATCHED_DOMAINS, type AuditFinding, type AuditArea, type ExtensionInfo,
 } from "./audit-parsers.js";
+import { parseHidutilList, classifyInputDevices, parseLsofListen, classifyListeners, findTunnels, classifyTunnels, parseLpstatDevices, classifyPrinters, parseHardwarePorts, classifyHardwarePorts } from "./audit-local.js";
 
 export interface AuditCheck { area: AuditArea; what: string; status: "checked" | "not present" | "skipped" | "error"; note?: string }
 export interface AuditReport { at: string; platform: string; summary: { high: number; review: number; info: number }; findings: AuditFinding[]; checked: AuditCheck[] }
@@ -215,6 +216,34 @@ export async function auditEnvironment(o: AuditOptions = {}): Promise<AuditRepor
     findings.push({ area: "agent-instructions", severity: "info", title: `global agent instructions: ${p}`, detail: `${t.length} characters, fingerprint ${sha}${verdict}. Loaded into every session of that agent; check it says only what you wrote.`, where: p });
   }
   note("agent-instructions", "global instruction files (Claude, Codex, Gemini, Windsurf, Cursor)", "checked");
+
+  // ---------- what is attached to this machine, and what it exposes (audit-local.ts) ----------
+  if (os === "darwin") {
+    const hid = await run("/usr/bin/hidutil", ["list"]);
+    if (hid) { findings.push(...classifyInputDevices(parseHidutilList(hid))); note("input-devices", "devices that can type (hidutil list)", "checked", "which keyboards exist, not what is typed"); }
+    else note("input-devices", "devices that can type", "error");
+    const hw = await run("/usr/sbin/networksetup", ["-listallhardwareports"]);
+    if (hw) { findings.push(...classifyHardwarePorts(parseHardwarePorts(hw))); note("network-interfaces", "network interfaces (networksetup)", "checked"); }
+    else note("network-interfaces", "network interfaces", "error");
+  } else {
+    note("input-devices", "devices that can type", "skipped", "macOS only for now");
+    note("network-interfaces", "network interfaces", "skipped", "macOS only for now");
+  }
+  if (os !== "win32") {
+    const listen = await run("/usr/sbin/lsof", ["-nP", "-iTCP", "-sTCP:LISTEN"]) ?? await run("lsof", ["-nP", "-iTCP", "-sTCP:LISTEN"]);
+    if (listen !== undefined) { findings.push(...classifyListeners(parseLsofListen(listen))); note("listening", "listening services (lsof)", "checked", "this user's processes; others need administrator rights"); }
+    else note("listening", "listening services", "error", "lsof not available");
+    const ps = await run("/bin/ps", ["-axo", "pid=,comm=,args="]);
+    if (ps !== undefined) { findings.push(...classifyTunnels(findTunnels(ps))); note("tunnels", "tunnels and port forwards among running processes", "checked"); }
+    else note("tunnels", "tunnels and port forwards", "error");
+    const lp = await run("/usr/bin/lpstat", ["-v"]);
+    if (lp !== undefined) {
+      findings.push(...classifyPrinters(parseLpstatDevices(lp)));
+      note("printers", "configured printers (lpstat -v)", "checked");
+      // cups-browsed adds printers it hears about on the network without asking (CVE-2024-47176 and related)
+      if (os === "linux" && ps !== undefined && /\bcups-browsed\b/.test(ps)) findings.push({ area: "printers", severity: "review", title: "cups-browsed is running", detail: "It adds printers announced on the network without asking. In 2024 that let anyone on the network add a printer that ran commands when used (CVE-2024-47176 and related). Stop it unless you rely on automatic printer discovery.", where: "running processes" });
+    } else note("printers", "configured printers", "not present", "no print system found");
+  }
 
   // ---------- live resolution and TLS ----------
   if (o.network) {

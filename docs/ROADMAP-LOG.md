@@ -10,6 +10,7 @@ be tested without the listed need), **not built** (with the reason).
 | 0.9.9 | K&R | Change tracking (snapshots, confirmed baselines) for the environment audit; MCP tool definitions gated and fingerprinted | done | Found while building: downstream tool descriptions reached the model unscanned. Poisoned definitions are withheld; changed ones are held until `ingress tools confirm <server>`. First-seen sets are recorded, not confirmed |
 | 0.9.10 | 9d, 12 | Broker safeguards: persistence guard (automation write guard), canary tripwire, burst guard, stop switch | done | Persistence needs a person even in a clean run. A canary hit is a denial, not an approval question. Stop: anyone may stop, only a person at a terminal may resume |
 | 0.9.11 | 8a, foundations | Content kinds and source trust on `scan()`; log and terminal adapter; log injection; `StreamScanner` with cut and retract | done | Added beyond the plan: terminal control codes that hide text from a person or act on their machine (clipboard write, mismatched link). Streams release raw text, not normalised text |
+| 0.9.12 | 7, 10b, 10d, 11 | Audit: devices that can type, listening services, tunnels, printers, network interfaces | done (macOS; lsof/ps/lpstat parts also on Linux) | The "Allow accessories to connect" setting is not read: no documented, readable location for it was found. Composite-device detection (keyboard plus storage) is by name only |
 
 ## Needs from a person
 
