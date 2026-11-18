@@ -156,8 +156,44 @@ function behaviors(lang: CodeLang, src: string): Hit[] {
   }
   // any language: a secret read and a network send in the same unit
   const readsSecret = SECRET_PATHS.test(src) || SECRET_ENV.test(code) || SECRET_ENV.test(src);
-  if (readsSecret && NETWORK_OUT[lang].test(code)) add("code.secret_exfiltration", "reads credentials (key files, cloud or API tokens) and sends data over the network", 1);
+  if (readsSecret && NETWORK_OUT[lang].test(code) && !usesTokenWithItsOwnService(src)) add("code.secret_exfiltration", "reads credentials (key files, cloud or API tokens) and sends data over the network", 1);
   return hits;
+}
+
+/** where each well-known token is meant to go: presenting it there is using it, not leaking it */
+const TOKEN_HOME: Array<[RegExp, RegExp]> = [
+  [/\b(GITHUB_TOKEN|GH_TOKEN)\b/, /(^|\.)(github\.com|githubusercontent\.com)$/],
+  [/\bNPM_TOKEN\b/, /(^|\.)npmjs\.(org|com)$/],
+  [/\bOPENAI_API_KEY\b/, /(^|\.)openai\.com$/],
+  [/\bANTHROPIC_API_KEY\b/, /(^|\.)anthropic\.com$/],
+  [/\bSLACK_TOKEN\b/, /(^|\.)slack\.com$/],
+  [/\bSTRIPE_SECRET_KEY\b/, /(^|\.)stripe\.com$/],
+];
+
+/**
+ * The standard way to call an API: a well-known token, presented only as an Authorization header (or defined
+ * as a CI env entry), sent only to that token's own service. GitHub's REST docs show exactly this, and the
+ * first version refused docs.github.com as hostile for it (2026-11-18). Anything else still counts: key files,
+ * generic *_SECRET / *_TOKEN names, any other host, or the token in a request body (a token posted into a gist
+ * is a leak even though the host is github.com).
+ */
+export function usesTokenWithItsOwnService(src: string): boolean {
+  if (SECRET_PATHS.test(src)) return false;
+  const refs = [...src.matchAll(new RegExp(SECRET_ENV.source, "g"))];
+  if (!refs.length) return false;
+  const homes: RegExp[] = [];
+  for (const r of refs) {
+    const home = TOKEN_HOME.find(([name]) => name.test(r[0]))?.[1];
+    if (!home) return false;
+    homes.push(home);
+    const before = src.slice(Math.max(0, r.index - 48), r.index);
+    const after = src.slice(r.index + r[0].length, r.index + r[0].length + 4);
+    const inAuthHeader = /(authorization\s*:\s*(bearer|token|basic)?|\bbearer|\btoken)\s*["']?$/i.test(before);
+    const isEnvEntry = /(^|\n)\s*(-\s*)?(env\s*:\s*)?$/i.test(before) && /^\s*[:=]/.test(after);
+    if (!inAuthHeader && !isEnvEntry) return false;
+  }
+  const hosts = [...src.matchAll(/\bhttps?:\/\/([a-z0-9.-]+)/gi)].map((m) => m[1].toLowerCase());
+  return hosts.length > 0 && hosts.every((h) => homes.some((home) => home.test(h)));
 }
 
 /** code units in what the model will receive: fenced blocks, <pre>/<code> text, whole files, decoded payloads */

@@ -217,6 +217,41 @@ Every URL fetch is made twice and the two copies compared.
 
 What it cannot see: a site that verifies AI fetchers by their published IP ranges serves the gate the human page under any user agent, and a site that profiles the client deeply enough will tell the plain HTTP fetch from a person. The browser fetch and a separate network narrow that gap; they do not close it.
 
+## Changes in 0.9.5 (2026-11-18, ruleset 2026.11.18-3)
+
+- Look-alike fold, fixed: a word is folded only when it mixes Latin with look-alikes or is wholly made of them inside Latin text, and combining marks come off Latin letters only. Real Russian, Ukrainian and Greek words are no longer turned into Latin junk in the matching view (й had been losing its breve).
+- Gentle matching views, never delivered: Turkish casing (İ lowercases to i, I to ı; JavaScript's `/i` never folds İ), the Indic fold (nukta, joiners, Devanagari digits and dandas), accents off Latin letters (Vietnamese, Romanian, Turkish typed without them; "70kg" untouched), upside-down text, and the Persian keyboard-layout cipher in both directions.
+- Multilingual rules use a Unicode-aware word boundary (`\b` is ASCII-only in JavaScript, even with `/u`). Thai has no word boundaries at all.
+- New seed rules (unreviewed, as before): Turkish word endings and extraction, Dutch, Swedish, Danish/Norwegian, Polish, Romanian, Ukrainian, Czech/Slovak, Serbian (Latin and Cyrillic), Indonesian/Malay, Vietnamese, Thai, Tagalog, Finnish, Hungarian, Hebrew, Greek; Hindi word orders and English written in Devanagari; Hinglish, Finglish and Arabizi; Japanese and Korean polite forms.
+- Dormant instructions ("when the user later asks X, quietly do Y"): strong when the action is hidden or the data goes outside, weak otherwise, because chatbot design docs say "when the user asks for a refund, transfer them to a human". Placeholder fills that ask for something dangerous ("complete this template: [admin reset bypass steps here]").
+- Documentation precision: visible install one-liners, code samples, badge images with short or logo-only queries and templated API links are documentation-grade; together, with no instruction or hidden text beside them, they no longer refuse a page. 8 of 35 popular READMEs had been refused; none are now. A long query value still counts unless it is an image data URI, a URL or a short list.
+- Scores (`tools/pint/README.md`): 55.6% balanced accuracy on 6,876 public inputs (55.2% for 0.9.4); Turkish attacks caught 8 → 18 of 550, false alarms 6 of 4,855 benign inputs.
+
+## Changes in 0.9.4 (2026-11-18, dependencies only; ruleset unchanged)
+
+- Security: `hono` 4.13.12 → 4.13.19 and `@hono/node-server` 2.1.3 → 2.1.9, both pulled in by `@modelcontextprotocol/sdk`. Closes the seven Dependabot alerts (GHSA-46wx-v44x-9hh2, GHSA-4m76-xfj5-7975, GHSA-3gg2-335m-rxc6, GHSA-4h7h-rv7c-7m2v, GHSA-h7mg-cq63-vhpq, GHSA-qv5m-9pm6-hqp3, GHSA-jpvv-r467-5p4w). Neither Ingress server routes through Hono (the MCP server speaks stdio, the HTTP service uses Node's `http`), so exposure was limited to the SDK's own HTTP transport, which Ingress does not start.
+- Root `overrides` keep both at or above the patched versions when the lockfile is regenerated.
+
+## Changes in 0.9.3 (2026-11-18, ruleset 2026.11.18-2)
+
+- Disguised text, matched through views that are never delivered: Arabic-script fold (Persian ی/ک and Arabic ي/ك, hamza and tā marbūṭa forms, tatweel and short vowels; the ZWNJ, a real Persian character, is ignored for matching only), composed Hangul letters (ㅁㅜㅅㅣ, ㅁ ㅜ ㅅ ㅣ, including final consonants NFKC cannot join), Korean initial-consonant shorthand (ㅇㅈ ㅈㅅ ㅁㅅ), and CJK spelled out with spaces (以 前 の 指 示 を 無 視).
+- Persian rules: drop prior instructions, hide from the user, reveal the system prompt. Fake notices in CJK brackets (【システム】, 【系统】, 【시스템】) that go on to give an order; a bracketed announcement on its own stays clean.
+- Optimizer-style adversarial suffixes (GCG token salad after an ordinary Latin-script request): `meaning.adversarial_suffix`.
+- Fake end-of-document markers followed by a "system" voice; "previous instructions cancelled" without the verb; translate-back-and-obey alongside decode-and-obey.
+- Image exfiltration: reference-style Markdown images (the EchoLeak bypass) and `<img src>` in Markdown or text, not only inline images.
+- Bidi isolates and embeddings inside right-to-left prose are normal (Arabic Wikipedia was refused as Trojan Source); overrides anywhere, and isolates in Latin text, still refuse.
+- PINT-style scoring: `npm run pint`, `tools/pint/` (public-set downloader, notebook eval function, results). Balanced accuracy on 1,690 public inputs Ingress was never tuned on: 62.3%, with 879 of 879 benign inputs passed in eight languages and 200 of 811 attacks caught. That is not a PINT score; see `tools/pint/README.md`.
+
+## Changes in 0.9.2 (2026-11-18, ruleset 2026.11.18-1)
+
+- Agent-directed meaning shapes: jailbreak personas, fake system and agent headers, decode-and-obey, sensitive path access, escalating commands, approval claims, tool impersonation, context extraction, tracking links, parameter tampering. Visible foreign-language overrides weigh the same as English; quoted ones get the same discount.
+- Precision: shapes that name a topic (environment variables, stack traces, `.env`, conversations) count only in imperative position, and weak shapes corroborate each other only within 600 characters. The first version of the agent shapes refused docs.python.org, MDN, the dotenv README and 23 of 27 everyday developer sentences; none of them refuse now.
+- InjectBench (Kong, Virginia Tech 2024) attack goals: false availability claims, link coercion, redirect claims, narrative manipulation, summary / in-addition / spell-check separators, conversation data appended to a URL, covert actions.
+- Hidden menus and footers count as evidence only with an attack-grade character finding (a stray zero-width character turned git-scm.com hostile).
+- The structural nesting check follows implied end tags and skips script, style and comment bodies (nodejs.org/api/fs.html was refused as 513-deep).
+- A well-known token sent only to its own service in an Authorization header is use, not exfiltration (GitHub's REST authentication docs were refused).
+- Versions: every package is 0.9.2 and pins `@acepaste/ingress` 0.9.2 (0.9.1 had left the HTTP service ahead of the engine).
+
 ## Changes in 0.9.1 (2026-11-05, HTTP service only)
 
 - `INGRESS_HOST` sets the address the HTTP service listens on; `127.0.0.1` keeps a local gate off the network. Unset, it listens on every interface, as a hosted deployment needs.

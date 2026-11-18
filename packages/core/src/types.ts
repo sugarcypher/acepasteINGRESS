@@ -7,9 +7,9 @@
 
 import type { NetPolicy } from "./netpolicy.js";
 
-export const ENGINE_VERSION = "0.9.0";
+export const ENGINE_VERSION = "0.9.5";
 /** bump whenever a detector's behavior changes; receipts carry it so verdicts are reproducible */
-export const RULESET_VERSION = "2026.11.03-2";
+export const RULESET_VERSION = "2026.11.18-3";
 
 /**
  * clean: delivered. suspect: refused, overridable. hostile: refused, not overridable.
@@ -86,6 +86,7 @@ export type FindingKind =
   | "meaning.tool_call_shaped"
   | "meaning.exfil_markdown_image"
   | "meaning.exfil_link"
+  | "meaning.adversarial_suffix"
   // cloaking pass
   | "cloaking.agent_targeted_divergence"
   // code behavior pass

@@ -46,6 +46,9 @@ const CONFUSABLE: Record<string, string> = {
   "Ν": "N", "Ο": "O", "Ρ": "P", "Τ": "T", "Υ": "Y", "Χ": "X", "ο": "o",
   "А": "A", "В": "B", "Е": "E", "К": "K", "М": "M", "Н": "H", "О": "O",
   "Р": "P", "С": "C", "Т": "T", "Х": "X",
+  // lower-case Greek and further Cyrillic letters that pass for Latin in most fonts
+  "α": "a", "ι": "i", "κ": "k", "ν": "v", "ρ": "p", "υ": "u", "ϲ": "c", "ϳ": "j",
+  "ԝ": "w", "ѵ": "v", "ӏ": "l", "ԍ": "G", "Ꮪ": "S",
 };
 
 function excerptAround(text: string, idx: number, span = 40): string {
@@ -84,8 +87,10 @@ export function scanCharacters(text: string): CharacterResult {
     cleaned = cleaned.replace(TAG_RANGE, "");
   }
 
-  // 2. Bidirectional overrides and isolates: never legitimate here.
-  const bidi = [...cleaned.matchAll(BIDI_OVERRIDE_ISOLATE)];
+  // 2. Bidirectional controls. Overrides (LRO/RLO) reorder what a reader sees and are never legitimate in intake.
+  //    Isolates and embeddings are how right-to-left prose embeds numbers and Latin words, and Arabic and Persian
+  //    Wikipedia use them: inside right-to-left text they are normal; anywhere else they are Trojan Source (0.9.3).
+  const bidi = [...cleaned.matchAll(BIDI_OVERRIDE_ISOLATE)].filter((m) => /[‭‮]/.test(m[0]) || !RTL_SCRIPT.test(cleaned.slice(Math.max(0, m.index! - 24), m.index! + 25)));
   if (bidi.length) {
     findings.push({
       pass: "character",
@@ -226,16 +231,18 @@ export function scanCharacters(text: string): CharacterResult {
     cleaned = cleaned.replace(/(?:[︀-️]|[\u{E0100}-\u{E01EF}]){4,}/gu, "");
   }
 
-  // 5. Mixed-script words: Latin letters sharing a word with letters of another script. Legitimate text does this rarely
-  //    (brand names, transliteration glosses); injection spelled with look-alikes does it in every keyword.
+  // 5. Mixed-script words: Latin letters sharing a word with letters of another script that render like Latin
+  //    (іgnore with a Cyrillic і). Injection spelled with look-alikes does it in every keyword. A non-Latin letter
+  //    that looks like no Latin letter (the Ψ in a brand like Ψfiles, a transliteration gloss) spoofs nothing,
+  //    so only letters in the CONFUSABLE table count.
   const words = cleaned.match(/[\p{L}\p{M}]{3,}/gu) ?? [];
   let confusableWords = 0;
   let sample = "";
   for (const w of words) {
     const hasLatin = /\p{Script=Latin}/u.test(w);
     if (!hasLatin) continue;
-    const hasOther = /[^\p{Script=Latin}\p{Script=Common}\p{Script=Inherited}]/u.test(w);
-    if (hasOther) { confusableWords++; if (!sample) sample = w; }
+    const lookalike = [...w].some((c) => c in CONFUSABLE);
+    if (lookalike) { confusableWords++; if (!sample) sample = w; }
   }
   if (confusableWords > 0) {
     findings.push({

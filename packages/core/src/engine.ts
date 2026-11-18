@@ -278,20 +278,52 @@ export class IngressEngine {
   /** Cheap structural pre-check: pathological nesting makes the HTML parser super-linear. Refuse before parsing. */
   private structuralAbuse(raw: string, kind: ContentKind): string | null {
     if (kind !== "html") return null;
-    let depth = 0, max = 0, opens = 0, attrs = 0;
-    const re = /<\/?([a-zA-Z][\w-]*)([^>]*?)(\/?)>/g;
+    // Depth is what the parser would build, not a count of open tags: <li>, <p>, <dd>, <tr> and friends close
+    // implicitly, a closing tag closes everything still open inside it, and script, style and comment bodies are
+    // text. Counting every unclosed <li> as one level deeper refused nodejs.org/api/fs.html as hostile (2026-11-18).
+    let max = 0, opens = 0, attrs = 0;
+    const stack: string[] = [];
+    const rawClose = new Map<string, RegExp>();
+    const re = /<!--|<\/?([a-zA-Z][\w-]*)([^>]*?)(\/?)>/g;
     let m: RegExpExecArray | null;
     while ((m = re.exec(raw))) {
+      if (m[0] === "<!--") {
+        const end = raw.indexOf("-->", re.lastIndex);
+        if (end < 0) break;
+        re.lastIndex = end + 3;
+        continue;
+      }
       if (++opens > 400000) return "more than 400000 tags";
       if (m[2].length > 2000) {
-        const n = (m[2].match(/\s[\w:.-]+(=|\s|$)/g) ?? []).length;
+        // count attribute names, not words inside quoted values: a long SVG path or a JSON props blob is one attribute
+        const names = m[2].replace(/"[^"]*"|'[^']*'/g, '""');
+        const n = (names.match(/\s[\w:.-]+(=|\s|$)/g) ?? []).length;
         if (n > 300) return `element with ${n} attributes`;
         attrs += n;
         if (attrs > 50000) return "more than 50000 attributes";
       }
-      if (m[0][1] === "/") { if (depth > 0) depth--; continue; }
-      if (m[3] === "/" || /^(br|img|input|meta|link|hr|area|base|col|embed|source|track|wbr)$/i.test(m[1])) continue;
-      if (++depth > max) max = depth;
+      const tag = m[1].toLowerCase();
+      if (m[0][1] === "/") {
+        // close the nearest matching open element and everything left open inside it; a stray close tag closes nothing
+        for (let i = stack.length - 1; i >= Math.max(0, stack.length - 64); i--) if (stack[i] === tag) { stack.length = i; break; }
+        continue;
+      }
+      if (m[3] === "/" || VOID_ELEMENTS.has(tag)) continue;
+      if (RAW_TEXT_ELEMENTS.has(tag)) {
+        // jump to the matching close tag: each body is scanned once, so the check stays linear
+        let close = rawClose.get(tag);
+        if (!close) rawClose.set(tag, (close = new RegExp(`</${tag}\\b`, "gi")));
+        close.lastIndex = re.lastIndex;
+        const end = close.exec(raw);
+        if (!end) break;
+        re.lastIndex = end.index;
+        continue;
+      }
+      const top = stack[stack.length - 1];
+      if (top !== undefined && IMPLIED_END.get(tag)?.has(top)) stack.pop();
+      else if (top === "p" && P_CLOSERS.has(tag)) stack.pop();
+      stack.push(tag);
+      if (stack.length > max) max = stack.length;
       if (max > 512) return `element nesting deeper than 512 (${max}+)`;
     }
     return null;
@@ -636,6 +668,19 @@ export class IngressEngine {
   }
 }
 
+const VOID_ELEMENTS = new Set(["br", "img", "input", "meta", "link", "hr", "area", "base", "col", "embed", "source", "track", "wbr", "param", "keygen"]);
+const RAW_TEXT_ELEMENTS = new Set(["script", "style", "textarea", "title", "xmp", "noscript", "template"]);
+/** an opening tag that implicitly ends the open element on top of the stack (HTML "optional end tags") */
+const IMPLIED_END = new Map<string, Set<string>>([
+  ["li", new Set(["li"])], ["dt", new Set(["dt", "dd"])], ["dd", new Set(["dt", "dd"])],
+  ["option", new Set(["option"])], ["optgroup", new Set(["optgroup", "option"])],
+  ["tr", new Set(["tr", "td", "th"])], ["td", new Set(["td", "th"])], ["th", new Set(["td", "th"])],
+  ["tbody", new Set(["thead", "tbody", "tr", "td", "th"])], ["tfoot", new Set(["thead", "tbody", "tr", "td", "th"])],
+  ["rt", new Set(["rt", "rp"])], ["rp", new Set(["rt", "rp"])], ["p", new Set(["p"])],
+]);
+/** block-level openers that end an open <p> */
+const P_CLOSERS = new Set(["address", "article", "aside", "blockquote", "details", "div", "dl", "fieldset", "figcaption", "figure", "footer", "form", "h1", "h2", "h3", "h4", "h5", "h6", "header", "hr", "main", "menu", "nav", "ol", "pre", "section", "table", "ul"]);
+
 function hostOf(url: string): string {
   try { return new URL(url).hostname.toLowerCase(); } catch { return ""; }
 }
@@ -656,6 +701,18 @@ function hostOf(url: string): string {
  */
 /** below the default suspect threshold (0.25), so hidden text alone never refuses */
 export const VISIBILITY_ONLY_CAP = 0.2;
+/** visible, low-confidence findings that documentation produces on its own */
+function isDocumentationGrade(f: Finding): boolean {
+  if (f.inHidden) return false;
+  if (f.pass === "visibility") return true;
+  if (f.kind === "supplychain.install_instruction") return f.confidence <= 0.3;
+  if (f.pass === "code") return f.confidence <= 0.2;
+  if (f.kind === "meaning.exfil_markdown_image") return f.confidence <= 0.1;
+  if (f.kind === "meaning.exfil_link") return f.confidence <= 0.12;
+  return false;
+}
+/** character findings that mean someone engineered the text, so hidden segments on the same page count as evidence */
+const CHARACTER_CARRIES = new Set<string>(["unicode.tag_characters", "unicode.bidi_control", "unicode.variation_selector_smuggling", "unicode.mixed_script_confusable", "unicode.encoded_payload", "unicode.entity_smuggling", "unicode.whitespace_channel"]);
 
 export function aggregate(findings: Finding[], ctx: { cloakingCompared?: boolean } = {}): number {
   const weighted = findings.filter((f) => f.confidence * f.severity > 0);
@@ -664,7 +721,12 @@ export function aggregate(findings: Finding[], ctx: { cloakingCompared?: boolean
   // Hidden text matters when it carries something: an instruction found inside it, invisible
   // characters, or a browser-observed change. Otherwise it is page furniture (menus, labels,
   // collapsed sections), never delivered, and does not add to the score. It stays on the receipt.
-  const hiddenCarries = weighted.some((f) => f.pass === "meaning" && f.inHidden) || passesAll.has("character") || passesAll.has("sandbox");
+  // A character finding revives hidden text only when it is attack-grade (tag characters, bidi controls, smuggling,
+  // look-alike spelling, decoded payloads) or strong on its own. One stray zero-width character from an emoji
+  // sequence or a copy-paste must not turn a page's collapsed menus and footers into evidence: that refused
+  // git-scm.com/docs/git-commit as hostile (2026-11-18).
+  const charCarries = weighted.some((f) => f.pass === "character" && (CHARACTER_CARRIES.has(f.kind) || f.confidence * f.severity >= 0.25));
+  const hiddenCarries = weighted.some((f) => f.pass === "meaning" && f.inHidden) || charCarries || passesAll.has("sandbox");
   // Page scripts are never delivered to the model, only the static text is. Their findings
   // (automation probes, obfuscation, minified bundles) predict that the page shows bots something
   // else. Once the two-fingerprint comparison has run and found no divergence, that prediction is
@@ -688,6 +750,11 @@ export function aggregate(findings: Finding[], ctx: { cloakingCompared?: boolean
   let score = 1 - notP;
   const passes = new Set(scored.map((f) => f.pass));
   if ([...passes].every((p) => p === "visibility")) score = Math.min(score, VISIBILITY_ONLY_CAP);
+  // Documentation-grade evidence does not add up to an attack (0.9.5). A README says "install" with curl | sh or
+  // iwr | iex, shows the same line as a code sample, has badges with short queries and templated API links; each
+  // is recorded at low confidence, and four of them together refused popular READMEs. Without an instruction,
+  // hidden text, character tricks or credential reach beside them, they stay below the suspect line.
+  if (scored.every(isDocumentationGrade)) score = Math.min(score, VISIBILITY_ONLY_CAP);
   const hiddenAndMeaning = scored.some((f) => f.pass === "meaning" && f.inHidden) || ((passes.has("character") || passes.has("sandbox")) && passes.has("meaning"));
   if (hiddenAndMeaning) score = Math.min(1, score + 0.15);
   if (passes.has("cloaking")) score = Math.min(1, score + 0.1);

@@ -27,7 +27,7 @@ for (const [lang, text] of CASES) {
   });
 }
 
-test("visible foreign-language instructions are recorded but do not refuse on their own (2026-10-01 boundary)", async () => {
+test("a visible foreign-language instruction quoted by an article is recorded, not refused (unquoted ones weigh the same as English since 2026-11-17)", async () => {
   const r = await e.scan(`<html><body><p>${filler}</p><p>En este artículo explicamos por qué la frase «ignora todas las instrucciones anteriores» aparece en ataques.</p></body></html>`, { isHtml: true });
   assert.equal(r.tier, "clean");
   assert.ok(r.findings.some((f) => f.message.includes("override.es")));

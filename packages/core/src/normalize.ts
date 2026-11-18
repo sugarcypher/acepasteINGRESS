@@ -65,12 +65,173 @@ const SKELETON: Record<string, string> = {
   "ß": "ss", "ł": "l", "đ": "d", "ħ": "h", "ŧ": "t", "ɍ": "r", "ℓ": "l", "K": "K", "Ω": "O", "Å": "A",
 };
 
-/** NFKC fold + script skeleton + strip combining marks: the shape a human reads. */
+const LATIN_LETTER = /\p{Script=Latin}/u;
+const ANY_LETTER = /\p{L}/u;
+/** share of Latin among the letters within `span` characters of an offset */
+function latinShareAround(text: string, at: number, span = 160): number {
+  let latin = 0, letters = 0;
+  for (const ch of text.slice(Math.max(0, at - span), at + span)) {
+    if (!ANY_LETTER.test(ch)) continue;
+    letters++;
+    if (LATIN_LETTER.test(ch) && !SKELETON[ch]) latin++;
+  }
+  return letters ? latin / letters : 0;
+}
+
+/**
+ * NFKC fold + script skeleton + strip combining marks: the shape a human reads.
+ * A word is folded only when it is a disguise: it mixes Latin letters with look-alikes (іgnore with a Cyrillic і),
+ * or it is made wholly of look-alikes and sits in Latin text (an English word typed in Cyrillic inside English
+ * prose). Real Cyrillic, Greek or Armenian words in their own text stay as they are, so the view never turns
+ * Russian or Ukrainian into Latin junk (0.9.5).
+ */
 export function skeleton(text: string): string {
   const nfkc = text.normalize("NFKC");
+  const out = nfkc.replace(/[\p{L}\p{M}]+/gu, (w: string, off: number) => {
+    let mapped = false, latin = false, allMappable = true;
+    for (const ch of w) {
+      if (SKELETON[ch]) mapped = true;
+      else if (LATIN_LETTER.test(ch)) latin = true;
+      else if (ANY_LETTER.test(ch)) allMappable = false;
+    }
+    if (!mapped) return w;
+    if (latin || (allMappable && latinShareAround(nfkc, off) >= 0.6)) { let f = ""; for (const ch of w) f += SKELETON[ch] ?? ch; return f; }
+    return w;
+  });
+  // marks come off Latin letters only (ïgnörë, the dot of İ); й, ё, Devanagari vowel signs and Arabic vowels are letters' own
+  return out.normalize("NFD").replace(/(\p{Script=Latin})\p{M}+/gu, "$1").normalize("NFC");
+}
+
+/** Upside-down text (ɐuɐ ǝɹouƃᴉ): read it the right way up. Only when the text carries the tell-tale turned letters. */
+const FLIP: Record<string, string> = {
+  "ɐ": "a", "q": "b", "ɔ": "c", "p": "d", "ǝ": "e", "ɟ": "f", "ƃ": "g", "ɥ": "h", "ᴉ": "i", "ı": "i", "ɾ": "j", "ʞ": "k", "ɯ": "m", "u": "n", "d": "p", "b": "q", "ɹ": "r", "ʇ": "t", "n": "u", "ʌ": "v", "ʍ": "w", "ʎ": "y",
+  "∀": "A", "Ɔ": "C", "Ǝ": "E", "Ⅎ": "F", "⅁": "G", "ſ": "J", "Ʞ": "K", "˥": "L", "Ԁ": "P", "ᴚ": "R", "┴": "T", "ꓕ": "T", "∩": "U", "Λ": "V", "⅄": "Y", "W": "M", "M": "W",
+  "˙": ".", "'": ",", ",": "'", "¿": "?", "¡": "!", "(": ")", ")": "(", "[": "]", "]": "[",
+};
+const FLIP_TELLS = /[ɐɔǝɟƃɥᴉɾʞɯɹʇʌʍʎ∀ƆƎℲ⅁ſꞰ˥Ԁᴚꓕ┴∩Λ⅄]/g;
+export function unflip(text: string): string {
+  if ((text.match(FLIP_TELLS) ?? []).length < 3) return text;
+  return [...text].reverse().map((c) => FLIP[c] ?? c).join("");
+}
+
+/**
+ * Keyboard-layout cipher: English typed with a Persian layout active (هلدخقث = "ignore") and Persian typed with a
+ * Latin layout active. Red teams at an Iranian carrier's hackathon used both to get past a guard.
+ * Standard Persian layout (ISIRI 9147) on a US keyboard.
+ */
+const FA_KEYS: Record<string, string> = {
+  "ض": "q", "ص": "w", "ث": "e", "ق": "r", "ف": "t", "غ": "y", "ع": "u", "ه": "i", "خ": "o", "ح": "p", "ج": "[", "چ": "]",
+  "ش": "a", "س": "s", "ی": "d", "ي": "d", "ب": "f", "ل": "g", "ا": "h", "ت": "j", "ن": "k", "م": "l", "ک": ";", "ك": ";", "گ": "'",
+  "ظ": "z", "ط": "x", "ز": "c", "ر": "v", "ذ": "b", "د": "n", "پ": "m", "ئ": "m", "و": ",",
+};
+const LATIN_TO_FA: Record<string, string> = Object.fromEntries(Object.entries(FA_KEYS).filter(([fa]) => !"يكئ".includes(fa)).map(([fa, en]) => [en, fa]));
+export function persianKeysToLatin(text: string): string {
+  if ((text.match(/[؀-ۿ]/g) ?? []).length < 6) return text;
+  return text.replace(/[؀-ۿ]/g, (c) => FA_KEYS[c] ?? c);
+}
+export function latinKeysToPersian(text: string): string {
+  if ((text.match(/[a-z]/gi) ?? []).length < 6) return text;
+  return text.toLowerCase().replace(/[a-z;',[\]]/g, (c) => LATIN_TO_FA[c] ?? c);
+}
+
+/**
+ * Indic fold (Devanagari): the same letter is stored precomposed or as base + nukta, and casual writing drops the
+ * nukta altogether (नज़र / नजर); ZWJ and ZWNJ shape conjuncts; Devanagari digits and the danda punctuate. NFKC
+ * decomposes the nukta letters, then the nukta and joiners drop out, digits become ASCII, dandas become stops.
+ */
+export function foldIndic(text: string): string {
+  if (!/[ऀ-ॿ]/.test(text)) return text;
+  return text.normalize("NFKC")
+    .replace(/[़‌‍]/g, "")
+    .replace(/[०-९]/g, (d) => String(d.charCodeAt(0) - 0x0966))
+    .replace(/[।॥]/g, ".");
+}
+
+/**
+ * Accents off Latin letters only (bỏ qua -> bo qua, đ -> d, ş/ș -> s): how Vietnamese, Romanian or Turkish is typed
+ * on a phone without the right keyboard. Other scripts' marks are untouched, and "70kg" is not mangled.
+ */
+export function stripLatinAccents(text: string): string {
+  return text.normalize("NFD").replace(/(\p{Script=Latin})\p{M}+/gu, "$1").replace(/[đĐ]/g, (c) => (c === "đ" ? "d" : "D")).normalize("NFC");
+}
+
+// ---------- non-Latin matching views (0.9.3) ----------
+// These views exist only for matching. Nothing here is ever delivered: the text the model receives is the original.
+
+/**
+ * Arabic-script fold. Persian ی/ک and Arabic ي/ك look identical but are different code points, so a rule written
+ * with one misses text typed with the other; hamza and tā marbūṭa forms, tatweel and short-vowel marks vary the
+ * same way. The zero-width non-joiner is a real Persian character (it is not stripped from delivered text, and the
+ * character pass does not flag it between Persian letters), but it sits inside words a rule spells without it, so
+ * the matching view drops it. Rules are compiled through the same fold.
+ */
+const ARABIC_FOLD: Record<string, string> = {
+  "ي": "ی", "ى": "ی", "ئ": "ی", "ے": "ی", // ي ى ئ ے -> ی
+  "ك": "ک", // ك -> ک
+  "ة": "ه", "ۀ": "ه", // ة ۀ -> ه
+  "أ": "ا", "إ": "ا", "آ": "ا", "ٱ": "ا", // أ إ آ ٱ -> ا
+  "ؤ": "و", // ؤ -> و
+};
+export function foldArabicScript(text: string): string {
+  if (!/[؀-ۿ]/.test(text)) return text;
+  return text
+    .replace(/[ـً-ٰٟۖ-ۭ‌‍]/g, "")
+    .replace(/[يىئےكةۀأإآٱؤ]/g, (c) => ARABIC_FOLD[c] ?? c);
+}
+
+const CHO = "ㄱㄲㄴㄷㄸㄹㅁㅂㅃㅅㅆㅇㅈㅉㅊㅋㅌㅍㅎ";
+const JUNG = "ㅏㅐㅑㅒㅓㅔㅕㅖㅗㅘㅙㅚㅛㅜㅝㅞㅟㅠㅡㅢㅣ";
+const JONG = ["", "ㄱ", "ㄲ", "ㄳ", "ㄴ", "ㄵ", "ㄶ", "ㄷ", "ㄹ", "ㄺ", "ㄻ", "ㄼ", "ㄽ", "ㄾ", "ㄿ", "ㅀ", "ㅁ", "ㅂ", "ㅄ", "ㅅ", "ㅆ", "ㅇ", "ㅈ", "ㅊ", "ㅋ", "ㅌ", "ㅍ", "ㅎ"];
+const VOWEL_PAIR: Record<string, string> = { "ㅗㅏ": "ㅘ", "ㅗㅐ": "ㅙ", "ㅗㅣ": "ㅚ", "ㅜㅓ": "ㅝ", "ㅜㅔ": "ㅞ", "ㅜㅣ": "ㅟ", "ㅡㅣ": "ㅢ" };
+const FINAL_PAIR: Record<string, string> = { "ㄱㅅ": "ㄳ", "ㄴㅈ": "ㄵ", "ㄴㅎ": "ㄶ", "ㄹㄱ": "ㄺ", "ㄹㅁ": "ㄻ", "ㄹㅂ": "ㄼ", "ㄹㅅ": "ㄽ", "ㄹㅌ": "ㄾ", "ㄹㅍ": "ㄿ", "ㄹㅎ": "ㅀ", "ㅂㅅ": "ㅄ" };
+const isCons = (c: string | undefined) => !!c && c >= "ㄱ" && c <= "ㅎ";
+const isVow = (c: string | undefined) => !!c && c >= "ㅏ" && c <= "ㅣ";
+
+/**
+ * Compose loose Hangul letters into syllables: ㅁㅜㅅㅣ -> 무시, ㅇㅣㄴ -> 인, also one letter per space
+ * (ㅁ ㅜ ㅅ ㅣ). NFKC composes initial+vowel pairs but turns every consonant into an initial, so a final
+ * consonant (ㄴ in 인) never joins; this does what a Korean reader does.
+ */
+export function composeHangul(text: string): string {
+  if (!/[ㄱ-ㅣ]/.test(text)) return text;
+  const s = [...text.replace(/(?<=[ㄱ-ㅣ])[ \t　]+(?=[ㄱ-ㅣ])/g, "")];
   let out = "";
-  for (const ch of nfkc) out += SKELETON[ch] ?? ch;
-  return out.normalize("NFD").replace(/\p{M}+/gu, "").normalize("NFC");
+  for (let i = 0; i < s.length; ) {
+    const c = s[i];
+    if (isCons(c) && CHO.includes(c) && isVow(s[i + 1])) {
+      let v = s[i + 1], j = i + 2;
+      if (isVow(s[j]) && VOWEL_PAIR[v + s[j]]) { v = VOWEL_PAIR[v + s[j]]; j++; }
+      let t = "";
+      // a consonant is a final unless a vowel follows it (then it starts the next syllable)
+      if (isCons(s[j]) && !isVow(s[j + 1])) {
+        if (isCons(s[j + 1]) && FINAL_PAIR[s[j] + s[j + 1]] && !isVow(s[j + 2])) { t = FINAL_PAIR[s[j] + s[j + 1]]; j += 2; }
+        else if (JONG.includes(s[j])) { t = s[j]; j++; }
+      }
+      out += String.fromCharCode(0xac00 + (CHO.indexOf(c) * 21 + JUNG.indexOf(v)) * 28 + JONG.indexOf(t));
+      i = j;
+      continue;
+    }
+    out += c;
+    i++;
+  }
+  return out;
+}
+
+/** Each Hangul syllable reduced to its initial consonant: the shape of 초성 shorthand (이전 지시 무시 -> ㅇㅈ ㅈㅅ ㅁㅅ). */
+export function hangulInitials(text: string): string {
+  return text.replace(/[가-힣]/g, (c) => CHO[Math.floor((c.charCodeAt(0) - 0xac00) / 588)]);
+}
+
+/**
+ * Rejoin CJK spelled out with spaces (以 下 は 無 視) and runs of single Hangul syllables (무 시 하 세 요).
+ * Chinese and Japanese do not put spaces between characters, so a run of them is spacing used to break a match;
+ * Korean spaces words, so only runs of one-syllable "words" are joined.
+ */
+export function despaceCJK(text: string): string {
+  const cjk = String.raw`\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}ー`;
+  return text
+    .replace(new RegExp(`(?<=[${cjk}])[ \\t\\u3000]+(?=[${cjk}])`, "gu"), "")
+    .replace(/(?<![가-힣])[가-힣](?:[ 　][가-힣]){2,}(?![가-힣])/g, (run) => run.replace(/[ 　]/g, ""));
 }
 
 /** Variants of the text the meaning pass should score. The original is always first. */
@@ -87,6 +248,11 @@ export function variants(text: string): Variant[] {
     out.push({ name: "reversed", text: reverse(sk), discount: 0.85 });
     out.push({ name: "rot13", text: rot13(sk), discount: 0.85 });
   }
+  // 0.9.5: upside-down text, and English typed on a Persian keyboard layout
+  const uf = unflip(text);
+  if (uf !== text) out.push({ name: "unflipped", text: skeleton(uf), discount: 0.9 });
+  const fk = persianKeysToLatin(text);
+  if (fk !== text) out.push({ name: "persian-keyboard", text: fk, discount: 0.85 });
   return out;
 }
 
