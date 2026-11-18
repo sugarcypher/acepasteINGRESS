@@ -17,6 +17,15 @@ import { loadPolicyFile } from "./policyfile.js";
 import { checkInstructionFiles, approveInstructionFile, readInstructionBytes } from "./instructions.js";
 import { macosDialogApprover } from "./approvers.js";
 import { auditEnvironment, formatAudit } from "./audit.js";
+import { trackAudit, confirmAuditArea, formatAuditChanges, AUDIT_NEEDS_CONFIRMATION } from "./audit-changes.js";
+import { confirmServerTools, describeServerTools } from "./tooldefs.js";
+import { BaselineStore } from "./changes.js";
+import { engageStop, clearStop, stopReason } from "./safeguards.js";
+import { postToolUse, userPromptSubmit, preCompact, postCompact, sessionStart, remoteGate, type HookGate } from "./agent-hooks.js";
+import { appendFileSync } from "node:fs";
+import { homedir } from "node:os";
+import { join } from "node:path";
+import type { AuditArea } from "./audit-parsers.js";
 import { createInterface } from "node:readline/promises";
 import { userInfo } from "node:os";
 import type { IngressConfig, TaintReceipt } from "./types.js";
@@ -29,6 +38,28 @@ const url = args.find((a) => /^https?:\/\//.test(a));
 async function main() {
   const chunksIn = async () => { const c: Buffer[] = []; for await (const x of process.stdin) c.push(x as Buffer); return Buffer.concat(c).toString("utf8"); };
   if (args[0] === "instructions") return instructionsCommand(args.slice(1));
+  if (args[0] === "hook") return hookCommand(args[1], await chunksIn());
+  if (args[0] === "tools") return toolsCommand(args.slice(1));
+  // ingress stop [reason]: every broker on this machine refuses every agent action until `ingress resume`.
+  // Anyone may stop, an agent included. Only a person at a terminal may resume.
+  if (args[0] === "stop") {
+    const p = engageStop(args.slice(1).join(" "));
+    console.log(`stopped: agent actions routed through AcePaste Ingress are refused until you run: ingress resume\n(${p})`);
+    return;
+  }
+  if (args[0] === "resume") {
+    const why = stopReason();
+    if (!why) { console.log("not stopped"); return; }
+    if (!process.stdin.isTTY || !process.stdout.isTTY) { console.error("refused: resuming needs an interactive terminal, typed by a person"); process.exit(3); }
+    console.log(`stopped: ${why}`);
+    const rl = createInterface({ input: process.stdin, output: process.stdout });
+    const typed = (await rl.question('Type "resume" to let agents act again: ')).trim();
+    rl.close();
+    if (typed !== "resume") { console.log("still stopped"); process.exit(1); }
+    clearStop();
+    console.log("resumed");
+    return;
+  }
   if (args[0] === "audit") {
     // read-only: what on this machine could change what agents receive (hosts, DNS, proxies, browsers, certificates, agent configs)
     const gateEngine = new IngressEngine({ cloakingCheck: false, sandbox: "off" }, { log: () => {} });
@@ -40,7 +71,27 @@ async function main() {
       gate: (t, src) => gateEngine.scan(t, { url: src, contentType: "text/markdown" }),
       remote: remoteBase ? { base: remoteBase, key: process.env.INGRESS_API_KEY!, localFetch: (u) => fetchEngine.fetch(u) } : undefined,
     });
-    console.log(flag("json") ? JSON.stringify(r, null, 2) : formatAudit(r));
+    // ingress audit confirm <area>: a person says the current items of that area are expected
+    if (args[1] === "confirm") {
+      const area = args[2] as AuditArea | undefined;
+      if (!area || !AUDIT_NEEDS_CONFIRMATION.includes(area)) { console.error(`usage: ingress audit confirm <area>   areas: ${AUDIT_NEEDS_CONFIRMATION.join(", ")}`); process.exit(2); }
+      if (!process.stdin.isTTY || !process.stdout.isTTY) { console.error("refused: confirmation needs an interactive terminal, typed by a person"); process.exit(3); }
+      const items = r.findings.filter((f) => f.area === area);
+      console.log(`\n${area}: ${items.length} item(s) found now\n`);
+      for (const f of items) console.log(`  [${f.severity}] ${f.title}\n      ${f.detail}${f.where ? `\n      where: ${f.where}` : ""}\n`);
+      const rl = createInterface({ input: process.stdin, output: process.stdout });
+      const typed = (await rl.question(`Type "${area}" to confirm these are expected: `)).trim();
+      rl.close();
+      if (typed !== area) { console.log("not confirmed"); process.exit(1); }
+      const c = confirmAuditArea(r, area);
+      console.log(`confirmed ${c.items} item(s) in ${c.area}. Any addition or removal will ask for your attention again.`);
+      return;
+    }
+    // --no-track looks without recording a snapshot (and without comparing)
+    let changes: ReturnType<typeof trackAudit> | undefined;
+    if (!flag("no-track")) { try { changes = trackAudit(r); } catch (e) { console.error(`change tracking unavailable: ${(e as Error).message}`); } }
+    if (flag("json")) console.log(JSON.stringify(changes ? { ...r, changes } : r, null, 2));
+    else console.log(`${changes ? formatAuditChanges(changes) + "\n\n" : ""}${formatAudit(r)}`);
     if (r.summary.high) process.exitCode = 1;
     return;
   }
@@ -78,6 +129,79 @@ async function main() {
   console.error(`\n[timings] ${Object.entries(result.timings).map(([k, v]) => `${k}=${v!.toFixed(1)}ms`).join(" ")}`);
 }
 main().catch((e) => { console.error(e); process.exit(1); });
+
+/**
+ *   ingress hook <event>     reply to an agent harness hook: the event's JSON on stdin, the reply on stdout
+ *       events: post-tool-use, user-prompt-submit, pre-compact, post-compact, session-start
+ *   The engine runs in this process unless INGRESS_HOOK_SERVICE names a running Ingress service
+ *   (http://127.0.0.1:8787), whose key is read from INGRESS_HOOK_KEY_FILE (default ~/.acepaste-ingress/local-api-key);
+ *   then the service's receipts and audit trail record what the hooks gated.
+ */
+async function hookCommand(event: string | undefined, stdin: string) {
+  let input: Record<string, unknown>;
+  try { input = JSON.parse(stdin || "{}") as Record<string, unknown>; } catch { console.error("ingress hook: the event on stdin is not JSON"); process.exit(1); }
+  const service = process.env.INGRESS_HOOK_SERVICE;
+  let gate: HookGate;
+  let ownPort: number | undefined;
+  if (service) {
+    const keyFile = process.env.INGRESS_HOOK_KEY_FILE ?? join(homedir(), ".acepaste-ingress", "local-api-key");
+    let key = "";
+    try { key = readFileSync(keyFile, "utf8").trim(); } catch { /* the gate reports it: a missing key fails closed in the handlers */ }
+    gate = key ? remoteGate(service, key) : { fetch: async () => { throw new Error(`cannot read the Ingress API key at ${keyFile}`); }, scan: async () => { throw new Error(`cannot read the Ingress API key at ${keyFile}`); } };
+    try { const u = new URL(service); if (u.port) ownPort = Number(u.port); } catch { /* not a URL: nothing is exempt */ }
+  } else {
+    const cfg: Partial<IngressConfig> = { ...(process.env.INGRESS_POLICY ? loadPolicyFile(process.env.INGRESS_POLICY) : {}), ...cloakingConfigFromEnv(process.env, HONEST_USER_AGENT) };
+    const sb = process.env.INGRESS_SANDBOX; cfg.sandbox = sb === "always" || sb === "escalate" ? sb : "off";
+    const pk = process.env.INGRESS_SIGNING_PRIVATE_KEY_FILE ? readFileSync(process.env.INGRESS_SIGNING_PRIVATE_KEY_FILE, "utf8") : process.env.INGRESS_SIGNING_PRIVATE_KEY;
+    if (pk) cfg.signingPrivateKey = pk;
+    const logPath = process.env.INGRESS_LOG;
+    const engine = new IngressEngine(cfg, { log: (e) => { if (logPath) { try { appendFileSync(logPath, JSON.stringify(e) + "\n"); } catch { /* best effort */ } } } });
+    gate = { fetch: (u) => engine.fetch(u), scan: (c, o) => engine.scan(c, o) };
+  }
+  const out = (v: unknown) => { if (v !== undefined) process.stdout.write(JSON.stringify(v) + "\n"); };
+  switch (event) {
+    case "post-tool-use": return out(await postToolUse(input, gate, { ownPort }));
+    case "user-prompt-submit": return out(await userPromptSubmit(input, gate));
+    case "pre-compact": process.stdout.write(preCompact() + "\n"); return;
+    case "post-compact": await postCompact(input, gate); return;
+    case "session-start": return out(sessionStart(input));
+    default: console.error("usage: ingress hook post-tool-use|user-prompt-submit|pre-compact|post-compact|session-start   (event JSON on stdin)"); process.exit(2);
+  }
+}
+
+/**
+ *   ingress tools                      downstream MCP servers whose tools were recorded, and their state
+ *   ingress tools confirm <server>     confirm the tools that server offered when the proxy last started (interactive terminal only)
+ */
+async function toolsCommand(a: string[]) {
+  if (a[0] === "confirm") {
+    const server = a[1];
+    if (!server) { console.error("usage: ingress tools confirm <server>"); process.exit(2); }
+    if (!process.stdin.isTTY || !process.stdout.isTTY) { console.error("refused: confirmation needs an interactive terminal, typed by a person"); process.exit(3); }
+    const d = describeServerTools(server);
+    if (!d) { console.error(`no reviewed tools for "${server}": start the Ingress proxy with that server once, then confirm`); process.exit(2); }
+    console.log(`\n${server}: ${d.pending.length} tool(s) offered when the proxy last started`);
+    if (d.state.state === "changed") {
+      console.log(`changed since ${d.state.since}:`);
+      for (const x of d.state.added) console.log(`  + ${x.label} (new, or its definition changed)`);
+      for (const x of d.state.removed) console.log(`  - ${x.replace(/ @ [0-9a-f]{16}$/, "")} (previous definition)`);
+    } else console.log(`state: ${d.state.state}`);
+    console.log("Read the server's current tool descriptions before confirming; Ingress checked them for hidden instructions, not for what they do.");
+    const rl = createInterface({ input: process.stdin, output: process.stdout });
+    const typed = (await rl.question(`Type "${server}" to confirm this set of tools: `)).trim();
+    rl.close();
+    if (typed !== server) { console.log("not confirmed"); process.exit(1); }
+    const c = confirmServerTools(server);
+    console.log(`confirmed ${c.tools} tool(s) of ${c.server} at ${c.at}. Restart the proxy; a later change will be held again.`);
+    return;
+  }
+  const groups = new BaselineStore().groups().filter((g) => g.startsWith("mcp-tools:")).map((g) => g.slice("mcp-tools:".length));
+  if (!groups.length) { console.log("no downstream servers recorded yet"); return; }
+  for (const s of groups) {
+    const d = describeServerTools(s);
+    console.log(`${(d?.state.state ?? "unknown").padEnd(10)} ${s}${d ? `  (${d.pending.length} tools)` : ""}`);
+  }
+}
 
 /**
  *   ingress instructions [dir]                     list instruction files and their approval status

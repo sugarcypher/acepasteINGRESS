@@ -3,7 +3,8 @@
  * AcePaste Ingress — HTTP service. This is the metered product.
  *
  *   POST /v1/fetch   { url, override? }                          -> IngressResult
- *   POST /v1/scan    { content, source?, contentType?, override?}-> IngressResult
+ *   POST /v1/scan    { content, source?, contentType?, override?,
+ *                      kind?, trust?, channel?, sender? }         -> IngressResult   (kind: the channel, e.g. "log"; trust: 1-6)
  *   POST /v1/verify  { receipt }                                 -> { digestOk, signatureOk, signatureAlg, keyId }
  *   GET  /v1/feed                 recent non-clean verdicts, anonymized (public)
  *   GET  /v1/receipts             the caller's own receipts, searchable (audit plane)
@@ -23,6 +24,11 @@
  * INGRESS_SIGNING_KEY (HMAC fallback), INGRESS_SANDBOX, INGRESS_CLOAKING, INGRESS_POLICY, INGRESS_LOG,
  * INGRESS_RECEIPTS_FILE (audit store path; omit for in-memory), INGRESS_RETENTION_DAYS,
  * INGRESS_FEED_FILE (public feed persistence; omit for in-memory).
+ *
+ * Local guard: when INGRESS_HOST is a loopback address, or INGRESS_ALLOWED_HOSTS ("gate.example,10.0.0.5") is set,
+ * every request must be addressed to this service (Host header) and may not come from another site (Origin
+ * header). That stops a web page in the user's browser from reaching a local gate by DNS rebinding or a
+ * cross-site request. A hosted instance behind its own name sets INGRESS_ALLOWED_HOSTS to that name.
  */
 
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
@@ -30,7 +36,7 @@ import { createHash } from "node:crypto";
 import { appendFileSync, readFileSync, writeFileSync, existsSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join, normalize } from "node:path";
-import { IngressEngine, loadPolicyFile, cloakingConfigFromEnv, HONEST_USER_AGENT, type IngressConfig, type IngressResult, type TaintReceipt } from "@acepaste/ingress";
+import { IngressEngine, loadPolicyFile, cloakingConfigFromEnv, HONEST_USER_AGENT, checkLocalRequest, isLoopbackBind, parseScanHints, type IngressConfig, type IngressResult, type TaintReceipt } from "@acepaste/ingress";
 import { JsonlReceiptStore, toStored, type ReceiptStore } from "./store.js";
 
 const env = process.env;
@@ -194,11 +200,24 @@ function auth(req: IncomingMessage): { key: string; info: KeyInfo } | null {
   return info ? { key: m[1], info } : null;
 }
 
+// ---------- local guard ----------
+const HOST = env.INGRESS_HOST || undefined;
+const allowedHosts = (env.INGRESS_ALLOWED_HOSTS ?? "").split(",").map((h) => h.trim()).filter(Boolean);
+const localGuard = isLoopbackBind(HOST) || allowedHosts.length > 0;
+
 const server = createServer(async (req, res) => {
   const started = Date.now();
   const url = new URL(req.url ?? "/", "http://localhost");
   const path = url.pathname;
   try {
+    if (localGuard) {
+      const origin = req.headers.origin;
+      const v = checkLocalRequest({ host: req.headers.host, origin: Array.isArray(origin) ? origin[0] : origin }, { port: PORT, allowedHosts });
+      if (!v.ok) {
+        log({ event: "ingress.local_guard", at: new Date().toISOString(), reason: v.reason, path });
+        return send(res, 403, { error: `refused: ${v.reason}` });
+      }
+    }
     // public, no key
     // public: the key that verifies this instance's receipts. It can verify, never sign.
     if (req.method === "GET" && (path === "/v1/public-key" || path === "/.well-known/ingress-receipt-key")) {
@@ -296,7 +315,9 @@ const server = createServer(async (req, res) => {
     }
     if (path === "/v1/scan") {
       if (typeof body.content !== "string") return send(res, 400, { error: "content required" });
-      const r = await engine.scan(body.content, { url: body.source, contentType: body.contentType, isHtml: body.isHtml, override: body.override === true, quarantined: quarantinedFor(a.info.name, typeof body.source === "string" ? body.source : undefined) });
+      // optional hints: kind (the channel: "log", "email", ...), trust (1-6), channel, sender
+      const hints = parseScanHints(body);
+      const r = await engine.scan(body.content, { url: body.source, contentType: body.contentType, isHtml: body.isHtml, override: body.override === true, quarantined: quarantinedFor(a.info.name, typeof body.source === "string" ? body.source : undefined), ...hints });
       record(a.info.name, r);
       log({ event: "ingress.usage", key: a.info.name, op: "scan", tier: r.tier, ms: Date.now() - started, usage: meter.usage(a.key) });
       return send(res, r.tier === "clean" || r.overridden ? 200 : r.tier === "unreachable" ? 502 : 422, r);
@@ -309,5 +330,4 @@ const server = createServer(async (req, res) => {
 });
 
 // INGRESS_HOST=127.0.0.1 keeps a local gate off the network; unset, it listens on every interface (what a hosted deployment needs)
-const HOST = env.INGRESS_HOST || undefined;
-server.listen(PORT, HOST, () => process.stderr.write(JSON.stringify({ event: "ingress.listen", host: HOST ?? "all interfaces", port: PORT, open, sandbox: engine.config.sandbox, audit: !!env.INGRESS_RECEIPTS_FILE }) + "\n"));
+server.listen(PORT, HOST, () => process.stderr.write(JSON.stringify({ event: "ingress.listen", host: HOST ?? "all interfaces", port: PORT, open, sandbox: engine.config.sandbox, audit: !!env.INGRESS_RECEIPTS_FILE, localGuard }) + "\n"));

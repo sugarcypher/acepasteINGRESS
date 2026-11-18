@@ -7,9 +7,9 @@
 
 import type { NetPolicy } from "./netpolicy.js";
 
-export const ENGINE_VERSION = "0.9.6";
+export const ENGINE_VERSION = "0.9.14";
 /** bump whenever a detector's behavior changes; receipts carry it so verdicts are reproducible */
-export const RULESET_VERSION = "2026.11.18-3";
+export const RULESET_VERSION = "2026.11.18-5";
 
 /**
  * clean: delivered. suspect: refused, overridable. hostile: refused, not overridable.
@@ -18,7 +18,45 @@ export const RULESET_VERSION = "2026.11.18-3";
  */
 export type Tier = "clean" | "suspect" | "hostile" | "unreachable";
 
-export type ContentKind = "html" | "markdown" | "json" | "text" | "javascript";
+/**
+ * What the content is. The first five are document formats; the rest are channels, each with its own adapter
+ * that turns the channel's structure into segments the passes read (see docs/ROADMAP.md, shared foundations).
+ */
+export type ContentKind = "html" | "markdown" | "json" | "text" | "javascript" | "log" | "email" | "calendar" | "message" | "notification" | "nearby" | "automation" | "captions";
+
+/**
+ * Who could have written the content. Lower is more trusted. It never makes a verdict more lenient than the
+ * default; from level 4 down, less evidence is needed to refuse.
+ *   1 the person, typing or approving      2 known contacts, own calendars, lists and files
+ *   3 content an agent wrote earlier       4 strangers: unknown senders, voicemail, fax, invitations, downloads
+ *   5 open channels: public chats, group chats, subscribed feeds, logs, the web
+ *   6 broadcasts: Bonjour, Bluetooth, beacons, anything on a shared network
+ */
+export type TrustLevel = 1 | 2 | 3 | 4 | 5 | 6;
+
+/** Where a piece of content came from, as far as the caller knows. */
+export interface SourceInfo {
+  /** the app or system it arrived through: "gmail", "slack", "imessage", "bonjour", "nginx access log" */
+  channel?: string;
+  /** who sent or wrote it, as the channel names them */
+  sender?: string;
+  trust?: TrustLevel;
+}
+
+export const CONTENT_KINDS: readonly ContentKind[] = ["html", "markdown", "json", "text", "javascript", "log", "email", "calendar", "message", "notification", "nearby", "automation", "captions"];
+
+/** Read a content kind and source from untyped input (an HTTP body, tool arguments). Unknown values are dropped, never guessed. */
+export function parseScanHints(o: { kind?: unknown; trust?: unknown; channel?: unknown; sender?: unknown }): { kind?: ContentKind; source?: SourceInfo } {
+  const kind = typeof o.kind === "string" && (CONTENT_KINDS as readonly string[]).includes(o.kind) ? (o.kind as ContentKind) : undefined;
+  const trust = typeof o.trust === "number" && Number.isInteger(o.trust) && o.trust >= 1 && o.trust <= 6 ? (o.trust as TrustLevel) : undefined;
+  const channel = typeof o.channel === "string" ? o.channel.slice(0, 120) : undefined;
+  const sender = typeof o.sender === "string" ? o.sender.slice(0, 200) : undefined;
+  const source = trust !== undefined || channel !== undefined || sender !== undefined ? { trust, channel, sender } : undefined;
+  return { kind, source };
+}
+
+/** multiplier on the suspect threshold per trust level: strangers and broadcasts need less evidence */
+export const TRUST_SUSPECT_FACTOR: Record<TrustLevel, number> = { 1: 1, 2: 1, 3: 1, 4: 0.9, 5: 0.85, 6: 0.7 };
 
 export type PassName =
   | "acquire"
@@ -32,6 +70,9 @@ export type PassName =
   | "cloaking"
   | "sandbox"
   | "code"
+  // structure of the channel itself: a control code that acts on the person's machine, two parts of one
+  // message that disagree, a sender who is not who the content says
+  | "channel"
   | "plugin";
 
 export type FindingKind =
@@ -60,6 +101,8 @@ export type FindingKind =
   | "visibility.html_comment"
   | "visibility.tiny_or_transparent"
   | "visibility.markdown_hidden"
+  | "visibility.terminal_hidden"
+  | "visibility.terminal_control"
   // script pass
   | "script.obfuscation"
   | "script.runtime_codegen"
@@ -146,7 +189,8 @@ export interface AcquireResult {
 export interface TextSegment {
   text: string;
   /** visible: a sighted human reading the rendered page sees this */
-  visibility: "visible" | "css_hidden" | "offscreen" | "attribute" | "comment" | "tiny_or_transparent";
+  /** concealed: the medium itself hides it from a person (terminal control codes, a part of a message no client shows) */
+  visibility: "visible" | "css_hidden" | "offscreen" | "attribute" | "comment" | "tiny_or_transparent" | "concealed";
   /** selector-ish path for the location field */
   path: string;
 }
@@ -211,6 +255,8 @@ export interface TaintReceipt {
   overridden: boolean;
   /** which passes actually ran (sandbox may not have) */
   passesRun: PassName[];
+  /** the trust level the caller gave for the source, when it gave one */
+  trust?: TrustLevel;
   findings: Array<Pick<Finding, "pass" | "kind" | "confidence" | "severity" | "action" | "evidenceClass" | "band" | "artifactDigest">>;
   /** how `signature` was made: a shared-secret HMAC (only the key holder can verify) or ECDSA P-256 (anyone with the public key can verify, nobody without the private key can forge) */
   signatureAlg?: "hmac-sha256" | "ecdsa-p256-sha256";

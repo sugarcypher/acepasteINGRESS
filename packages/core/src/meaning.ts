@@ -49,34 +49,6 @@ const TOOL_CALL_SHAPES = [
     // same line only: "run:" followed by a code block on the next line is documentation layout, not an invocation
     /\b(run|execute|call)[ \t]*:[ \t]*`?(bash|sh|python|node|curl|wget|rm -rf|chmod|ssh)\b/i,
 ];
-const INSTRUCTION_SHAPES: Array<[RegExp, number, string]> = [
-    [/\bignore\s+(all\s+|any\s+)?(previous|prior|above|earlier|preceding)\s+(instructions?|prompts?|directions?|rules?|context)/i, 0.9, "ignore previous instructions"],
-    [/\bdisregard\s+(all\s+|any\s+)?(previous|prior|above|your)\s+(instructions?|prompts?|rules?|guidelines?)/i, 0.9, "disregard instructions"],
-    // "you are now" + a role, a mode or a loosened state. Not a clause ("where you are now"), not UI copy ("you are now logged in").
-    [/(?<!\b(?:where|what|who|how|when|which|whether|if|that|than|as|while|because|since|until|once|wherever)\s+)\byou\s+are\s+now\s+(a|an|the|my|our|acting|operating|playing|role-?playing|pretending|free|unrestricted|unfiltered|uncensored|unbound|jailbroken|dan|no\s+longer|in\s+(\w+\s+)?(mode|character|role))\b/i, 0.6, "role reassignment"],
-    [/\bfrom\s+now\s+on\s+you\s+(are|will|must)\b/i, 0.6, "role reassignment"],
-    [/\bnew\s+(instructions?|task|directive|system\s+prompt)\s*:/i, 0.7, "new instructions directive"],
-    [/\b(do\s+not|don'?t|never)\s+(tell|inform|reveal|mention|show|disclose)\s+(this\s+to\s+)?(the\s+)?(user|human|operator)/i, 0.95, "conceal from user"],
-    [/\b(ai|assistant|language\s+model|llm|agent|chatbot|copilot|claude|gpt|gemini)\b[^.\n]{0,60}\b(must|should|need\s+to|is\s+required\s+to|has\s+to)\b/i, 0.55, "addressed to the model"],
-    [/\b(important|attention|note)\s+(to|for)\s+(the\s+)?(ai|assistant|agent|llm|model|bot)s?\b/i, 0.85, "addressed to the model"],
-    [/\b(if\s+you\s+are\s+an?\s+(ai|llm|language\s+model|assistant|agent|bot))\b/i, 0.9, "conditional on being a model"],
-    // "show the context" (git-scm: diff context lines), "print the tokens" (every tokenizer tutorial) and "show the
-    // instructions" are documentation; the generic nouns count only as the reader's own: "your context", "your tokens"
-    [/\b(print|output|repeat|reveal|show|leak|exfiltrate|send)\s+(me\s+)?(your\s+(system\s+prompt|instructions|initial\s+prompt|hidden\s+prompt|context|conversation|api\s+keys?|credentials?|secrets?|tokens?)|the\s+(system\s+prompt|initial\s+prompt|hidden\s+prompt|api\s+keys?|secret\s+keys?))/i, 0.9, "prompt or secret extraction"],
-    [/\b(call|invoke|use|run|execute)\s+(the\s+)?(tool|function|command)\s+[`'"]?\w+/i, 0.5, "tool invocation request"],
-    [/\b(send|post|email|forward|upload|transmit)\s+[^.\n]{0,80}\b(to|at)\s+(https?:\/\/|[\w.-]+@[\w.-]+\.\w+)/i, 0.65, "outbound send instruction"],
-    [/\b(send|post|email|forward|upload|transmit|paste|include|attach)\s+(me\s+)?(your|the|this|all|every|our)\s+[^.\n]{0,30}\b(conversation|context|chat\s+history|message\s+history|messages|system\s+prompt|instructions|credentials?|secrets?|api\s+keys?|tokens?|cookies?|session|memory)\b/i, 0.9, "context exfiltration"],
-    [/\b(summar(y|ize)|respond|reply|answer)\s+(with|by\s+saying)\s*[:"']/i, 0.35, "forced response shape"],
-    [/\bend\s+of\s+(system|user|developer)\s+(message|prompt|instructions)/i, 0.8, "fake message boundary"],
-    [/\b(override|bypass|disable|turn\s+off)\s+(your\s+|all\s+|the\s+)?(safety|content|security)?\s*(filters?|guidelines?|restrictions?|guardrails?|rules?|policies)/i, 0.85, "guardrail override"],
-    [/\b(developer|debug|maintenance|admin|god)\s+mode\b/i, 0.55, "privileged-mode claim"],
-    [/\b(this\s+is\s+(a|an)\s+)?(authorized|official|verified|trusted)\s+(instruction|request|message|command)\s+from\s+(the\s+)?(system|developer|administrator|anthropic|openai|google)/i, 0.9, "authority impersonation"],
-    [/\bwhen\s+(you|the\s+(assistant|agent|model))\s+(read|see|process|encounter)s?\s+this\b/i, 0.7, "trigger-on-read"],
-    [/\b(remember|store|save|note)\s+(this|the\s+following)\s+(for|in)\s+(future|later|all\s+future)\s+(conversations?|sessions?|interactions?)/i, 0.7, "memory poisoning"],
-    [/\b(always|from\s+now\s+on|whenever|every\s+time|when\s+(the\s+)?(topic|subject|question)\b[^.\n]{0,30})\b[^.\n]{0,60}\b(recommend|suggest|promote|mention|prefer|rate|push|steer|favor|favour|endorse)\b[^.\n]{0,80}\b(product|site|service|brand|company|link|url|plan|offer)/i, 0.8, "persistent bias injection"],
-    [/\b(state|stating|recite|quote|echo|dump|disclose|share|expose|read\s+out|spell\s+out|list|append|attach|include|insert|embed)\s+[^.\n]{0,30}\b(system\s+prompt|hidden\s+prompt|initial\s+prompt|your\s+instructions|hidden\s+instructions|configuration|chat\s+history|conversation|credentials?|secrets?|api\s+keys?|tokens?)\b/i, 0.85, "prompt or secret extraction"],
-    [/\b(from\s+now\s+on|for\s+(every|each|all)\s+(future\s+)?(requests?|messages?|responses?|replies|answers?|inputs?|queries)|in\s+(all|every)\s+(future\s+)?(responses?|replies|answers?)|whenever\s+[^.\n]{0,40}|new\s+task\s*:)\b(?![^.\n]{0,12}\b(i|we|my|our|i'll|we'll)\b)[^.\n]{0,80}\b(respond|reply|answer|output|say|state|include|append|promote|prefer|recommend|return|print|begin|start|end|finish|only)\b/i, 0.8, "behavior binding"],
-];
 /**
  * Imperative position: the start of a line or sentence, after a colon, semicolon or comma ("Using the text above,
  * convince the reader ..."), after "please", "now", "then",
@@ -87,6 +59,49 @@ const INSTRUCTION_SHAPES: Array<[RegExp, number, string]> = [
  */
 const IMPERATIVE = String.raw`(?:^|[.!?:;,]\s*|\b(?:please|now|then|and|also|kindly|instead|first|finally|just)\s+|\byou\s+(?:must|should|will|need\s+to|have\s+to)\s+|\b(?:make|be)\s+sure\s+to\s+|\bremember\s+to\s+|\b(?:can|could|would|will)\s+you\s+)`;
 const imp = (body: RegExp, flags = "im") => new RegExp(IMPERATIVE + "(?:" + body.source + ")", flags);
+
+const INSTRUCTION_SHAPES: Array<[RegExp, number, string]> = [
+    [/\bignore\s+(all\s+|any\s+)?(previous|prior|above|earlier|preceding)\s+(instructions?|prompts?|directions?|rules?|context)/i, 0.9, "ignore previous instructions"],
+    [/\bdisregard\s+(all\s+|any\s+)?(previous|prior|above|your)\s+(instructions?|prompts?|rules?|guidelines?)/i, 0.9, "disregard instructions"],
+    // "you are now" + a role, a mode or a loosened state. Not a clause ("where you are now"), not UI copy ("you are now logged in").
+    [/(?<!\b(?:where|what|who|how|when|which|whether|if|that|than|as|while|because|since|until|once|wherever)\s+)\byou\s+are\s+now\s+(a|an|the|my|our|acting|operating|playing|role-?playing|pretending|free|unrestricted|unfiltered|uncensored|unbound|jailbroken|dan|no\s+longer|in\s+(\w+\s+)?(mode|character|role))\b/i, 0.6, "role reassignment"],
+    [/\bfrom\s+now\s+on\s+you\s+(are|will|must)\b/i, 0.6, "role reassignment"],
+    [/\bnew\s+(instructions?|task|directive|system\s+prompt)\s*:/i, 0.7, "new instructions directive"],
+    [/\b(do\s+not|don'?t|never|must\s+not|mustn'?t|should\s+not|shouldn'?t|may\s+not|cannot|can'?t)\s+(tell|inform|reveal|mention|show|disclose|notify|alert|warn)\s+(this\s+to\s+|any\s+of\s+this\s+to\s+)?(the\s+)?(user|human|operator)\b|\bwithout\s+(telling|informing|notifying|alerting|mentioning\s+it\s+to)\s+(the\s+)?(user|human|operator)\b/i, 0.95, "conceal from user"],
+    [/\b(ai|assistant|language\s+model|llm|agent|chatbot|copilot|claude|gpt|gemini)\b[^.\n]{0,60}\b(must|should|need\s+to|is\s+required\s+to|has\s+to)\b/i, 0.55, "addressed to the model"],
+    [/\b(important|attention|note)\s+(to|for)\s+(the\s+)?(ai|assistant|agent|llm|model|bot)s?\b/i, 0.85, "addressed to the model"],
+    [/\b(if\s+you\s+are\s+an?\s+(ai|llm|language\s+model|assistant|agent|bot))\b/i, 0.9, "conditional on being a model"],
+    // "show the context" (git-scm: diff context lines), "print the tokens" (every tokenizer tutorial) and "show the
+    // instructions" are documentation; the generic nouns count only as the reader's own: "your context", "your tokens"
+    [/\b(print|output|repeat|reveal|show|leak|exfiltrate|send)\s+(me\s+)?(your\s+(system\s+prompt|instructions|initial\s+prompt|hidden\s+prompt|context|conversation|api\s+keys?|credentials?|secrets?|tokens?)|the\s+(system\s+prompt|initial\s+prompt|hidden\s+prompt|api\s+keys?|secret\s+keys?))/i, 0.9, "prompt or secret extraction"],
+    [/\b(call|invoke|use|run|execute)\s+(the\s+)?(tool|function|command)\s+[`'"]?\w+/i, 0.5, "tool invocation request"],
+    [/\b(send|post|email|forward|upload|transmit)\s+[^.\n]{0,80}\b(to|at)\s+(https?:\/\/|[\w.-]+@[\w.-]+\.\w+)/i, 0.65, "outbound send instruction"],
+    // Sending the reader's own context somewhere. Three readings, strongest first (0.9.13):
+    //  - the object is unmistakably the agent's (its system prompt, "your conversation", "all your instructions")
+    //  - generic nouns (messages, tokens, session, context) count only as the reader's own. API documentation says
+    //    "send the messages", "post the session token" and "upload all files" all day.
+    //  - "include", "attach" and "paste" describe as often as they instruct ("fields include the most recent
+    //    messages", "the request must include the conversation id"): they count only in imperative position.
+    [/\b(send|post|email|forward|upload|transmit|exfiltrate|leak)\s+(me\s+)?(?:(?:your|all\s+(?:of\s+)?your|our)\s+[^.\n]{0,30}\b(conversation|context|chat\s+history|message\s+history|messages|system\s+prompt|instructions|credentials?|secrets?|api\s+keys?|tokens?|cookies?|session|memory)|(?:the|this|all|every)\s+[^.\n]{0,30}\b(system\s+prompt|hidden\s+prompt|initial\s+prompt)|all\s+(?:the\s+)?(?:previous|prior|earlier|above)\s+(?:messages|instructions|context))\b/i, 0.9, "context exfiltration"],
+    [/\b(send|post|email|forward|upload|transmit)\s+(me\s+)?(the|this|all|every)\s+[^.\n]{0,30}\b(conversation|chat\s+history|message\s+history|conversation\s+history)\b/i, 0.7, "context exfiltration"],
+    [imp(/(paste|include|attach|append|insert|add|put)\s+(?:(?:your|all\s+(?:of\s+)?your|our)\s+[^.\n]{0,30}\b(conversation|context|chat\s+history|message\s+history|messages|system\s+prompt|instructions|credentials?|secrets?|api\s+keys?|tokens?|cookies?|session|memory)|(?:the|this)\s+(?:entire\s+|whole\s+|full\s+)?(system\s+prompt|hidden\s+prompt|initial\s+prompt|conversation(?:\s+history)?|chat\s+history)|all\s+(?:the\s+)?(?:previous|prior|earlier|above)\s+(?:messages|instructions|context))\b/), 0.8, "context exfiltration"],
+    [/\b(summar(y|ize)|respond|reply|answer)\s+(with|by\s+saying)\s*[:"']/i, 0.35, "forced response shape"],
+    [/\bend\s+of\s+(system|user|developer)\s+(message|prompt|instructions)/i, 0.8, "fake message boundary"],
+    [/\b(override|bypass|disable|turn\s+off)\s+(your\s+|all\s+|the\s+)?(safety|content|security)?\s*(filters?|guidelines?|restrictions?|guardrails?|rules?|policies)/i, 0.85, "guardrail override"],
+    [/\b(developer|debug|maintenance|admin|god)\s+mode\b/i, 0.55, "privileged-mode claim"],
+    [/\b(this\s+is\s+(a|an)\s+)?(authorized|official|verified|trusted)\s+(instruction|request|message|command)\s+from\s+(the\s+)?(system|developer|administrator|anthropic|openai|google)/i, 0.9, "authority impersonation"],
+    [/\bwhen\s+(you|the\s+(assistant|agent|model))\s+(read|see|process|encounter)s?\s+this\b/i, 0.7, "trigger-on-read"],
+    [/\b(remember|store|save|note)\s+(this|the\s+following)\s+(for|in)\s+(future|later|all\s+future)\s+(conversations?|sessions?|interactions?)/i, 0.7, "memory poisoning"],
+    [/\b(always|from\s+now\s+on|whenever|every\s+time|when\s+(the\s+)?(topic|subject|question)\b[^.\n]{0,30})\b[^.\n]{0,60}\b(recommend|suggest|promote|mention|prefer|rate|push|steer|favor|favour|endorse)\b[^.\n]{0,80}\b(product|site|service|brand|company|link|url|plan|offer)/i, 0.8, "persistent bias injection"],
+    // the prompt itself is unmistakable; "configuration", "conversation", "credentials", "tokens" are the reader's only
+    // when the text says so ("list API keys for a project" and "embed the conversation widget" are documentation)
+    [/\b(state|stating|recite|quote|echo|dump|disclose|share|expose|read\s+out|spell\s+out|list|append|attach|include|insert|embed)\s+[^.\n]{0,30}\b(system\s+prompt|hidden\s+prompt|initial\s+prompt|your\s+instructions|hidden\s+instructions|your\s+(?:own\s+)?(?:configuration|chat\s+history|conversation|credentials?|secrets?|api\s+keys?|tokens?))\b/i, 0.85, "prompt or secret extraction"],
+    [/\b(recite|dump|disclose|expose|leak|reveal)\s+[^.\n]{0,30}\b(chat\s+history|conversation\s+history|credentials?|secrets?|api\s+keys?)\b/i, 0.6, "prompt or secret extraction"],
+    // A standing order for the reader's own replies: the trigger, then the order itself (an imperative, or "you
+    // must", or "the assistant will"). "Whenever a hook exits with code 2, Claude Code prints the output" has a
+    // subject doing the printing: that is a description of software, and reference pages are full of it (0.9.13).
+    [/\b(from\s+now\s+on|for\s+(every|each|all)\s+(future\s+)?(requests?|messages?|responses?|replies|answers?|inputs?|queries)|in\s+(all|every)\s+(future\s+)?(responses?|replies|answers?)|whenever\s+[^.\n,]{0,60},|new\s+task\s*:)\s*[,:]?\s*(?:(?:please|always|only|just|never|do\s+not|don'?t|you\s+(?:must|should|will|shall|need\s+to|have\s+to|are\s+to)|(?:the\s+)?(?:assistant|ai|agent|model|bot|chatbot|claude)\s+(?:must|should|will|shall|needs\s+to|has\s+to|is\s+to))\s+){0,3}(respond|reply|answer|output|say|state|include|append|promote|prefer|recommend|return|print|begin|start|end|finish|add|insert|mention|use|write|speak|translate|ignore|refuse)\b/i, 0.8, "behavior binding"],
+];
 
 /**
  * Agent-directed shapes (added 2026-11-17 after the AgentShield run; precision pass 2026-11-18). The original set
@@ -210,6 +225,16 @@ const FENCED = /```[\s\S]*?```|~~~[\s\S]*?~~~|<pre\b[\s\S]*?<\/pre>|<code\b[\s\S
 interface ShapeHit { weight: number; label: string; match: string; variant: string; discount: number }
 /** characters between two shapes for one to corroborate the other */
 const CORROBORATION_WINDOW = 600;
+/**
+ * Shapes that describe as readily as they instruct. Documentation for anything agent-shaped is made of them:
+ * "the agent must call the API", "Claude should use the weather tool", "the model is in developer mode". Two of
+ * them in one paragraph are two descriptions, so they do not corroborate each other in visible text; one of
+ * them beside any other shape (a concealment, an override, a destination, a named secret) still does.
+ * Found when the Claude Code hooks reference was refused (0.9.13).
+ */
+const DESCRIPTIVE_LABELS = new Set(["addressed to the model", "tool use directive", "tool invocation request", "privileged-mode claim", "forced response shape"]);
+/** the third-person "addressed to the model" shape only: the vocative form ("note to the AI") is not descriptive */
+const isDescriptive = (h: ShapeHit) => DESCRIPTIVE_LABELS.has(h.label) && h.weight < 0.8;
 
 function matchShapes(text: string): { hits: ShapeHit[]; roleToken?: ShapeHit; toolCall?: ShapeHit } {
   const hits: ShapeHit[] = [];
@@ -283,8 +308,14 @@ function scoreText(text: string, hidden: boolean, where: string, findings: Findi
   const { hits, roleToken, toolCall } = matchShapes(text);
 
   if (roleToken) {
+    // A weak label ("System:", "User:" at the start of a line) is a transcript only beside something said in
+    // it. Alone on a long page it is a field name: `system:masters` in Kubernetes RBAC, "User:" in a man page.
+    // With no instruction shape within reach it counts for half, so it cannot add up with an unrelated weak
+    // finding paragraphs away (0.9.13).
+    const rAt = text.indexOf(roleToken.match);
+    const alone = roleToken.weight < 0.5 && !hidden && !hits.some((h) => { const i = text.indexOf(h.match); return i >= 0 && rAt >= 0 && Math.abs(i - rAt) <= CORROBORATION_WINDOW; });
     findings.push({
-      pass: "meaning", kind: "meaning.role_token", confidence: Math.min(0.98, (roleToken.weight + hiddenBoost) * roleToken.discount * codeFactor), severity: 0.85,
+      pass: "meaning", kind: "meaning.role_token", confidence: Math.min(0.98, (roleToken.weight + hiddenBoost) * roleToken.discount * codeFactor * (alone ? 0.5 : 1)), severity: 0.85,
       message: `${roleToken.weight < 0.5 ? "line-start role label (transcript-shaped)" : "chat-template role token"} in content${inCode ? " (inside a code block)" : ""}${tag(roleToken.variant)}`, excerpt: roleToken.match.slice(0, 80), location: where, inHidden: hidden, action: "neutralized",
     });
   }
@@ -305,7 +336,9 @@ function scoreText(text: string, hidden: boolean, where: string, findings: Findi
     // topics, not one instruction (docs.python.org/3/library/os.html: "Developer Mode" and a tool mention, 2026-11-18)
     const at = (h: ShapeHit) => text.indexOf(h.match);
     const near = (h: ShapeHit) => h === best || at(h) < 0 || at(best) < 0 || Math.abs(at(h) - at(best)) <= CORROBORATION_WINDOW;
-    const n = hits.filter(near).length;
+    const nearHits = hits.filter(near);
+    // in visible text, descriptive shapes corroborate only something that is not itself descriptive
+    const n = !hidden && nearHits.every(isDescriptive) ? 1 : nearHits.length;
     // hidden: full weight. visible: a strong shape (>= 0.8: ignore-previous, conceal-from-user, extraction, authority,
     // guardrail override, addressed-to-model) refuses on its own; weak shapes need company.
     const strong = best.weight >= 0.8;
@@ -441,9 +474,13 @@ function adversarialSuffix(text: string): { tail: string; tokens: number; weird:
 export function scanMeaning(input: MeaningInput): Finding[] {
   const findings: Finding[] = [];
   // score what the model would actually receive as one unit: visible text plus delivered alt text, so a payload split across them recombines here
-  const visibleRaw = input.segments.filter((s) => s.visibility === "visible" || (s.visibility === "attribute" && s.path.endsWith("@alt"))).map((s) => s.text).join("\n");
+  const delivered = input.segments.filter((s) => s.visibility === "visible" || (s.visibility === "attribute" && s.path.endsWith("@alt")));
+  // On an HTML page a code sample is the text under <pre>. Once the tags are gone it looks like prose, and a
+  // JSON-RPC example in protocol documentation was scored as a tool call addressed to the reader (0.9.13).
+  const inPre = (s: TextSegment) => /\/pre(?:[/~@]|$)/.test(s.path);
+  const visibleRaw = delivered.filter((s) => !inPre(s)).map((s) => s.text).join("\n");
   // code blocks are scored separately with the documentation discount
-  const codeBlocks = visibleRaw.match(FENCED) ?? [];
+  const codeBlocks = [...(visibleRaw.match(FENCED) ?? []), ...delivered.filter(inPre).map((s) => s.text)];
   const visible = visibleRaw.replace(FENCED, " ");
   if (visible.trim()) {
     scoreText(visible, false, "visible text", findings);

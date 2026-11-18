@@ -53,23 +53,46 @@ export function isPrivateIPv4(ip: string): boolean {
   return BLOCKED_V4.some((c) => inCidr4(ip, c));
 }
 
-export function isPrivateIPv6(ip: string): boolean {
-  const l = ip.toLowerCase();
-  if (l === "::" || l === "::1") return true;
-  // IPv4-mapped ::ffff:a.b.c.d
-  const mapped = l.match(/^::ffff:(\d+\.\d+\.\d+\.\d+)$/);
-  if (mapped) return isPrivateIPv4(mapped[1]);
-  // IPv4-mapped in hex form ::ffff:7f00:1
-  const mappedHex = l.match(/^::ffff:([0-9a-f]{1,4}):([0-9a-f]{1,4})$/);
-  if (mappedHex) {
-    const a = parseInt(mappedHex[1], 16), b = parseInt(mappedHex[2], 16);
-    return isPrivateIPv4(`${a >> 8}.${a & 255}.${b >> 8}.${b & 255}`);
+/** Expand an IPv6 literal to its 8 groups (lower-case hex, no leading zeros), so every spelling compares alike. */
+function expandIPv6(ip: string): number[] | null {
+  let s = ip.toLowerCase().replace(/%.*$/, ""); // drop a zone id (fe80::1%en0)
+  // a dotted IPv4 tail (::ffff:127.0.0.1) becomes two groups
+  const v4 = s.match(/^(.*:)(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/);
+  if (v4) {
+    const [a, b, c, d] = v4.slice(2).map(Number);
+    if ([a, b, c, d].some((n) => n > 255)) return null;
+    s = `${v4[1]}${((a << 8) | b).toString(16)}:${((c << 8) | d).toString(16)}`;
   }
-  if (l.startsWith("fe8") || l.startsWith("fe9") || l.startsWith("fea") || l.startsWith("feb")) return true; // link-local fe80::/10
-  if (l.startsWith("fc") || l.startsWith("fd")) return true; // unique local fc00::/7
-  if (l.startsWith("ff")) return true; // multicast
-  if (l.startsWith("2001:db8")) return true; // documentation
-  if (l.startsWith("64:ff9b")) return true; // NAT64 well-known prefix can reach v4 space
+  const halves = s.split("::");
+  if (halves.length > 2) return null;
+  const head = halves[0] ? halves[0].split(":") : [];
+  const tail = halves.length === 2 && halves[1] ? halves[1].split(":") : [];
+  const fill = halves.length === 2 ? 8 - head.length - tail.length : 0;
+  if (fill < 0 || (halves.length === 1 && head.length !== 8)) return null;
+  const groups = [...head, ...Array(fill).fill("0"), ...tail];
+  if (groups.length !== 8 || groups.some((g) => !/^[0-9a-f]{1,4}$/.test(g))) return null;
+  return groups.map((g) => parseInt(g, 16));
+}
+
+const v4From = (hi: number, lo: number) => `${hi >> 8}.${hi & 255}.${lo >> 8}.${lo & 255}`;
+
+export function isPrivateIPv6(ip: string): boolean {
+  // Every spelling of an address must give the same answer: 0:0:0:0:0:0:0:1, ::ffff:127.0.0.1 and
+  // ::ffff:7f00:1 are all loopback. An address that cannot be parsed is treated as blocked.
+  const g = expandIPv6(ip);
+  if (!g) return true;
+  const zeros = (n: number) => g.slice(0, n).every((x) => x === 0);
+  if (zeros(8)) return true; // ::
+  if (zeros(7) && g[7] === 1) return true; // ::1
+  if (zeros(5) && g[5] === 0xffff) return isPrivateIPv4(v4From(g[6], g[7])); // IPv4-mapped ::ffff:a.b.c.d
+  if (zeros(6)) return isPrivateIPv4(v4From(g[6], g[7])); // IPv4-compatible ::a.b.c.d (deprecated, still parsed)
+  if (g[0] === 0x2002) return isPrivateIPv4(v4From(g[1], g[2])); // 6to4 carries an IPv4 address
+  if (g[0] === 0x64 && g[1] === 0xff9b) return true; // NAT64 well-known prefix can reach v4 space
+  if ((g[0] & 0xffc0) === 0xfe80) return true; // link-local fe80::/10
+  if ((g[0] & 0xffc0) === 0xfec0) return true; // site-local fec0::/10 (deprecated, still private by intent)
+  if ((g[0] & 0xfe00) === 0xfc00) return true; // unique local fc00::/7
+  if ((g[0] & 0xff00) === 0xff00) return true; // multicast
+  if (g[0] === 0x2001 && g[1] === 0xdb8) return true; // documentation
   return false;
 }
 
@@ -92,7 +115,8 @@ function hostMatches(host: string, pattern: string): boolean {
  * them (DNS rebinding defense: the fetch must connect to what we checked).
  */
 export async function checkTarget(url: URL, policy: NetPolicy, resolver: (host: string) => Promise<string[]> = defaultResolve): Promise<string[]> {
-  const host = url.hostname.replace(/^\[|\]$/g, "");
+  // one spelling per host: no brackets, no trailing dot ("localhost." is localhost), lower case
+  const host = url.hostname.replace(/^\[|\]$/g, "").replace(/\.$/, "").toLowerCase();
   const port = url.port ? Number(url.port) : url.protocol === "https:" ? 443 : 80;
   if (port !== 80 && port !== 443 && !policy.extraPorts.includes(port)) {
     throw new NetPolicyError(`port ${port} not allowed`, "bad_port");

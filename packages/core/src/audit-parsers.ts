@@ -12,7 +12,9 @@
  * changes what agents receive and may well be yours (say so and move on); "info" = noted.
  */
 
-export type AuditArea = "hosts" | "dns" | "proxy" | "browser-search" | "browser-policy" | "browser-extension" | "certificates" | "network-extension" | "agent-config" | "agent-instructions" | "resolution";
+export type AuditArea = "hosts" | "dns" | "proxy" | "browser-search" | "browser-policy" | "browser-extension" | "certificates" | "network-extension" | "agent-config" | "agent-instructions" | "resolution"
+  // what is attached to and listening on this machine (audit-local.ts)
+  | "input-devices" | "listening" | "tunnels" | "printers" | "network-interfaces";
 export type AuditSeverity = "high" | "review" | "info";
 export interface AuditFinding { area: AuditArea; severity: AuditSeverity; title: string; detail: string; where?: string; evidence?: string }
 

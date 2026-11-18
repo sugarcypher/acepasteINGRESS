@@ -23,65 +23,223 @@ type Element = DefaultTreeAdapterMap["element"];
 const HIDDEN_CONTAINER_TAGS = new Set(["noscript", "template"]);
 /** not rendered as page copy at all; skipped (scripts are collected separately) */
 const SKIPPED_TAGS = new Set(["script", "style", "head", "meta", "link", "base"]);
-const A11Y_CLASS_HINTS = /\b(sr-only|visually-hidden|screen-reader-only|visuallyhidden|a11y-hidden|screen-reader-text|visually-hidden-focusable)\b/i;
-const HIDDEN_CLASS_HINTS = /\b(hidden|offscreen|clip|is-hidden|d-none|invisible)\b/i;
+/**
+ * Class names that hide an element by convention, matched as whole class names. Matching inside names read
+ * `overflow-hidden`, `overflow-x-clip` and `bg-clip-text` as "hidden" and "clip", and hid the main column of
+ * every page that clips its overflow.
+ */
+const A11Y_CLASSES = new Set(["sr-only", "visually-hidden", "screen-reader-only", "visuallyhidden", "a11y-hidden", "screen-reader-text", "visually-hidden-focusable"]);
+const HIDDEN_CLASSES = new Set(["hidden", "offscreen", "is-hidden", "d-none", "invisible", "u-hidden", "hide", "is-invisible"]);
+/** utility-framework variants: `md:block` shows at a width, `dark:block` in a theme, `not-sr-only` undoes sr-only */
+const SHOWS_AT_A_WIDTH_OR_THEME = /^(?:sm|md|lg|xl|2xl|dark|light|print|max-(?:sm|md|lg|xl|2xl)|min-\[[^\]]+\]|supports-\[[^\]]+\]):(?:block|flex|grid|inline|inline-block|inline-flex|inline-grid|table|table-cell|contents|flow-root|list-item|visible|not-sr-only)$/;
+const HIDES_ON_DESKTOP = /^(?:sm|md|lg|xl|2xl):(?:hidden|invisible|sr-only)$/;
+
+/** How an element's class names hide it, if they do. A person at a desktop width in either theme is the reference. */
+function classHides(cls: string): { vis: "css_hidden"; a11y: boolean } | null {
+  const tokens = cls.toLowerCase().split(/\s+/).filter(Boolean);
+  if (!tokens.length) return null;
+  const shownSomewhere = tokens.some((t) => SHOWS_AT_A_WIDTH_OR_THEME.test(t));
+  if (tokens.some((t) => A11Y_CLASSES.has(t)) && !tokens.includes("not-sr-only") && !shownSomewhere) return { vis: "css_hidden", a11y: true };
+  // `hidden lg:block` is a desktop sidebar: hidden on a phone, shown to the reader we model
+  if (tokens.some((t) => HIDDEN_CLASSES.has(t)) && !shownSomewhere) return { vis: "css_hidden", a11y: false };
+  // `lg:hidden` is the phone menu: not shown at desktop width
+  if (tokens.some((t) => HIDES_ON_DESKTOP.test(t))) return { vis: "css_hidden", a11y: false };
+  return null;
+}
 
 export interface HiddenRule {
   selector: string; // simplified: ".class", "#id", or "tag"
   reason: TextSegment["visibility"];
+  /** other classes the element must also have (`.a.b` is keyed on b and requires a) */
+  all?: string[];
+  /** classes the element must not have (`:not(.show)`) */
+  not?: string[];
+  /** tag the element must be (`div.note`) */
+  tag?: string;
 }
 
-/** Classify a style declaration string. Returns the hiding reason or null. */
-export function classifyStyle(style: string): TextSegment["visibility"] | null {
-  const s = style.toLowerCase().replace(/\s+/g, "");
-  if (/display:none/.test(s) || /visibility:(hidden|collapse)/.test(s)) return "css_hidden";
-  if (/content-visibility:hidden/.test(s)) return "css_hidden";
-  const op = s.match(/opacity:(0?\.\d+|0|1)(?![\d.])/);
-  if (op && Number(op[1]) < 0.1) return "tiny_or_transparent";
-  const fs = s.match(/font-size:(\d*\.?\d+)(px|pt|em|rem|%)?/);
-  if (fs && Number(fs[1]) <= (fs[2] === "em" || fs[2] === "rem" ? 0.1 : fs[2] === "%" ? 10 : 1)) return "tiny_or_transparent";
-  if (/color:transparent/.test(s) || /color:rgba\([^)]*,0\)/.test(s) || /color:#[0-9a-f]{6}00\b/.test(s)) return "tiny_or_transparent";
-  if (/transform:[^;]*scale(x|y|3d)?\(0(\.0+)?[,)]/.test(s) || /transform:[^;]*scale(x|y)?\(0\.0\d/.test(s)) return "tiny_or_transparent";
-  if (/filter:[^;]*opacity\(0(\.0\d*)?\)/.test(s)) return "tiny_or_transparent";
-  if (/(^|;)scale:0(\.0\d*)?(\s|;|$)/.test(s)) return "tiny_or_transparent";
-  if (/(^|;)translate:-?\d{3,}(px|em|rem|vw|vh|%)/.test(s)) return "offscreen";
-  if (/(^|;)inset:[^;]*-\d{3,}(px|em|rem|vw|vh|%)/.test(s)) return "offscreen";
-  if (/(^|;)font:[^;]*(^|\s|:)0(px|pt|em|rem|%)?\/|(^|;)font:0(px)?(\s|\/|;|$)/.test(s)) return "tiny_or_transparent";
-  // a custom property driving display/visibility/opacity/transform cannot be resolved statically; treat as hidden (hidden text is never delivered, so the cost of being wrong is low)
-  if (/(display|visibility|opacity|transform|clip-path|font-size|scale|translate):var\(/.test(s)) return "css_hidden";
-  if (/transform:[^;]*translate(x|y|3d)?\(-?\d{3,}(px|em|rem|vw|vh)/.test(s)) return "offscreen";
-  // same-colour text is judged by contrast in the cascade (color.ts), not by comparing two strings here
-  if (/-webkit-text-fill-color:transparent/.test(s)) return "tiny_or_transparent";
-  if (/(left|top|right|bottom|margin-left|margin-top|text-indent):-\d{3,}(px|em|rem|%|vw|vh)/.test(s)) return "offscreen";
-  if (/text-indent:(1\d\d|[2-9]\d\d|\d{4,})%/.test(s) || /text-indent:\d{4,}px/.test(s)) return "offscreen";
-  if (/position:(absolute|fixed)/.test(s) && /(left|top):\d{4,}(px|vw|vh)/.test(s)) return "offscreen";
-  if (/clip:rect\(0(px)?,0(px)?,0(px)?,0(px)?\)/.test(s) || /clip:rect\(1px,1px,1px,1px\)/.test(s)) return "offscreen";
-  if (/clip-path:(inset\(([4-9]\d|100)%|circle\(0|polygon\(0(px|%)?\s*0)/.test(s)) return "offscreen";
-  if (/(width|height|max-height|max-width):0(px)?;.*overflow:hidden/.test(s) || /overflow:hidden;.*(width|height|max-height|max-width):0(px)?(;|$)/.test(s)) return "offscreen";
-  if (/(width|height):1px;.*overflow:hidden/.test(s) && /position:absolute/.test(s)) return "offscreen";
+/** Custom properties (`--name`) and every value a stylesheet or inline style gives them. */
+export type CssVars = Map<string, Set<string>>;
+
+/**
+ * Split a declaration block into property -> value (lower case, whitespace removed, `!important` dropped).
+ * The last declaration of a property wins, as in the cascade. Semicolons inside parentheses or quotes
+ * (a data: URL) do not split.
+ */
+export function parseDeclarations(style: string): Map<string, string> {
+  const out = new Map<string, string>();
+  let depth = 0, quote = "", start = 0;
+  const flush = (end: number) => {
+    const d = style.slice(start, end);
+    const i = d.indexOf(":");
+    if (i > 0) {
+      const prop = d.slice(0, i).trim().toLowerCase();
+      const value = d.slice(i + 1).toLowerCase().replace(/\s+/g, "").replace(/!important$/, "");
+      if (prop && value) { out.delete(prop); out.set(prop, value); }
+    }
+    start = end + 1;
+  };
+  for (let i = 0; i < style.length; i++) {
+    const c = style[i];
+    if (quote) { if (c === quote && style[i - 1] !== "\\") quote = ""; continue; }
+    if (c === '"' || c === "'") quote = c;
+    else if (c === "(") depth++;
+    else if (c === ")") depth = Math.max(0, depth - 1);
+    else if (c === ";" && depth === 0) flush(i);
+  }
+  flush(style.length);
+  return out;
+}
+
+/** Collect custom property definitions from CSS text (rule bodies or one inline style). */
+export function collectCssVars(css: string, into: CssVars = new Map()): CssVars {
+  for (const m of css.matchAll(/(--[\w-]+)\s*:\s*([^;{}]+)/g)) {
+    const v = m[2].toLowerCase().replace(/\s+/g, "").replace(/!important$/, "");
+    if (!v) continue;
+    const set = into.get(m[1].toLowerCase()) ?? new Set<string>();
+    if (set.size < 12) set.add(v);
+    into.set(m[1].toLowerCase(), set);
+  }
+  return into;
+}
+
+/**
+ * Every value a declaration could take once its var() references are resolved: each known definition of
+ * the variable, and the fallback. A variable nobody defines statically resolves to nothing: its value is
+ * unknown, and unknown is not hidden. (Tailwind 4 sets every text size as `font-size:var(--text-sm)`;
+ * reading that as "hidden" marked whole sites as hidden text.)
+ */
+function candidates(value: string, vars: CssVars | undefined, depth = 0): string[] {
+  const m = value.match(/var\((--[\w-]+)(?:,([^()]*(?:\([^()]*\)[^()]*)*))?\)/);
+  if (!m || depth > 4) return [value];
+  const defs = [...(vars?.get(m[1]) ?? [])];
+  if (m[2] !== undefined && m[2] !== "") defs.push(m[2]);
+  const out: string[] = [];
+  for (const d of defs.slice(0, 12)) out.push(...candidates(value.replace(m[0], d), vars, depth + 1));
+  return out.slice(0, 24);
+}
+
+const ZERO_ALPHA_COLOR = /^(?:transparent|rgba?\([^)]*[,/]0(?:\.0+)?%?\)|hsla?\([^)]*[,/]0(?:\.0+)?%?\)|#[0-9a-f]{6}00|#[0-9a-f]{3}0)$/;
+const num = (v: string) => { const m = v.match(/^(-?\d*\.?\d+)(px|pt|em|rem|%|vw|vh)?$/); return m ? { n: Number(m[1]), unit: m[2] ?? "" } : undefined; };
+
+/** One property with one concrete value: does it hide the element's text? */
+function hidesByProperty(prop: string, v: string): TextSegment["visibility"] | null {
+  switch (prop) {
+    case "display": return v === "none" ? "css_hidden" : null;
+    case "visibility": return v === "hidden" || v === "collapse" ? "css_hidden" : null;
+    case "content-visibility": return v === "hidden" ? "css_hidden" : null;
+    case "opacity": { const x = num(v); return x && (x.unit === "%" ? x.n < 10 : x.unit === "" && x.n < 0.1) ? "tiny_or_transparent" : null; }
+    case "font-size": { const x = num(v); return x && x.n <= (x.unit === "em" || x.unit === "rem" ? 0.1 : x.unit === "%" ? 10 : 1) ? "tiny_or_transparent" : null; }
+    case "color": case "-webkit-text-fill-color": return ZERO_ALPHA_COLOR.test(v) ? "tiny_or_transparent" : null;
+    case "transform": case "-webkit-transform":
+      if (/scale(x|y|3d)?\(0(\.0+)?[,)]/.test(v) || /scale(x|y)?\(0\.0\d/.test(v)) return "tiny_or_transparent";
+      return /translate(x|y|3d)?\(-?\d{3,}(px|em|rem|vw|vh)/.test(v) ? "offscreen" : null;
+    case "filter": return /opacity\(0(\.0\d*)?%?\)/.test(v) ? "tiny_or_transparent" : null;
+    case "scale": return /^0(\.0\d*)?($|[^\d.])/.test(v) ? "tiny_or_transparent" : null;
+    case "translate": return /^-?\d{3,}(px|em|rem|vw|vh|%)/.test(v) ? "offscreen" : null;
+    case "inset": return /-\d{3,}(px|em|rem|vw|vh|%)/.test(v) ? "offscreen" : null;
+    case "font": return /(^|[^\d.])0(px|pt|em|rem|%)?\//.test(v) || /^0(px)?(\/|$)/.test(v) ? "tiny_or_transparent" : null;
+    case "left": case "top": case "right": case "bottom": case "margin-left": case "margin-top":
+      return /^-\d{3,}(px|em|rem|%|vw|vh)/.test(v) ? "offscreen" : null;
+    case "text-indent": return /^-\d{3,}(px|em|rem|%|vw|vh)/.test(v) || /^(1\d\d|[2-9]\d\d|\d{4,})%/.test(v) || /^\d{4,}px/.test(v) ? "offscreen" : null;
+    case "clip": return /^rect\(0(px)?,?0(px)?,?0(px)?,?0(px)?\)/.test(v) || /^rect\(1px,?1px,?1px,?1px\)/.test(v) ? "offscreen" : null;
+    case "clip-path": return /^(inset\(([4-9]\d|100)%|circle\(0|polygon\(0(px|%)?0)/.test(v) ? "offscreen" : null;
+    default: return null;
+  }
+}
+
+/**
+ * Classify a declaration block. Returns the hiding reason or null. Properties are matched by their exact
+ * names (so `-webkit-tap-highlight-color:transparent`, `background-color:rgba(0,0,0,0)` and
+ * `fill-opacity:0` hide nothing), and var() references are resolved against `vars` before judging.
+ */
+export function classifyStyle(style: string, vars?: CssVars): TextSegment["visibility"] | null {
+  const d = parseDeclarations(style);
+  // variables this very block defines apply to it too (style="--o:0;opacity:var(--o)")
+  let scope = vars;
+  for (const [p, v] of d) if (p.startsWith("--")) { scope = scope === vars ? new Map(vars ?? []) : scope; const s = new Set(scope!.get(p) ?? []); s.add(v); scope!.set(p, s); }
+  for (const [prop, value] of d) {
+    if (prop.startsWith("--")) continue;
+    for (const v of value.includes("var(") ? candidates(value, scope) : [value]) {
+      const r = hidesByProperty(prop, v);
+      if (r) return r;
+    }
+  }
+  // combinations
+  const get = (p: string) => d.get(p) ?? "";
+  const zero = (p: string) => /^0(px)?$/.test(get(p));
+  const clips = get("overflow") === "hidden" || get("overflow-x") === "hidden" || get("overflow-y") === "hidden";
+  if (clips && (zero("width") || zero("height") || zero("max-height") || zero("max-width"))) return "offscreen";
+  if (clips && (get("width") === "1px" || get("height") === "1px") && get("position") === "absolute") return "offscreen";
+  if (/^(absolute|fixed)$/.test(get("position")) && (/^\d{4,}(px|vw|vh)/.test(get("left")) || /^\d{4,}(px|vw|vh)/.test(get("top")))) return "offscreen";
   return null;
 }
 
-export function rulesFromCss(cssIn: string): HiddenRule[] {
+/** Split a selector list on commas that are not inside parentheses or brackets (`:is(.a, .b)` is one selector). */
+function splitSelectors(list: string): string[] {
+  const out: string[] = [];
+  let depth = 0, start = 0;
+  for (let i = 0; i < list.length; i++) {
+    const c = list[i];
+    if (c === "(" || c === "[") depth++;
+    else if (c === ")" || c === "]") depth = Math.max(0, depth - 1);
+    else if (c === "," && depth === 0) { out.push(list.slice(start, i)); start = i + 1; }
+  }
+  out.push(list.slice(start));
+  return out.map((s) => s.trim()).filter(Boolean);
+}
+
+/** an ancestor that names a theme, a state or a script-set class: the rule applies in one mode of the page, not always */
+const CONDITIONAL_ANCESTOR = /(^|[.#\[="'_-])(dark|light|theme|mode|print|no-?js|js|open|opened|closed|active|inactive|collapsed|expanded|loading|loaded|ready|is-|has-)/i;
+
+/**
+ * Turn one selector into a rule the static pass can apply, or nothing when the selector does not describe
+ * what a reader at a desktop sees by default:
+ *   - a pseudo-element (`::-webkit-scrollbar`, `::before`) styles another box, not the element's text.
+ *     `.scroll::-webkit-scrollbar{display:none}` hides a scrollbar; read as hiding `.scroll`, it hid every
+ *     table on a documentation page.
+ *   - a state (`:hover`, `:checked`, `[data-state=closed]`, `[hidden]`) holds only sometimes. The `hidden`
+ *     attribute itself is handled where elements are read.
+ *   - an ancestor that names a theme or a state makes the rule one mode of the page.
+ * `:not(.class)` on the element is kept and checked (`.collapse:not(.show)`).
+ */
+function ruleFromSelector(sel: string, reason: TextSegment["visibility"]): HiddenRule | null {
+  if (/^[.#]?[\w-]+$/.test(sel)) return { selector: sel, reason };
+  const parts = sel.replace(/\s*([>+~])\s*/g, " $1 ").split(/\s+/).filter((p) => p && !/^[>+~]$/.test(p));
+  const last = parts.pop() ?? "";
+  if (/::|:(before|after|first-line|first-letter|placeholder|marker|selection|backdrop|file-selector-button)\b/i.test(last)) return null;
+  if (last.includes("\\")) return null; // an escaped name (`.lg\:hidden`): a variant class, read from the class list instead
+  const nots = [...last.matchAll(/:not\(\.([\w-]+)\)/g)].map((m) => m[1]);
+  const bare = last.replace(/:not\(\.[\w-]+\)/g, "");
+  if (/[:\[()*]/.test(bare)) return null; // any other pseudo-class or attribute test: a state
+  if (parts.some((a) => /[:\[\\]/.test(a) || CONDITIONAL_ANCESTOR.test(a))) return null;
+  const classes = (bare.match(/\.[\w-]+/g) ?? []).map((c) => c.slice(1));
+  const id = bare.match(/#([\w-]+)/)?.[1];
+  const tag = bare.match(/^[a-z][\w-]*/i)?.[0]?.toLowerCase();
+  if (id) return { selector: `#${id}`, reason, all: classes, not: nots, tag };
+  if (classes.length) return { selector: `.${classes[classes.length - 1]}`, reason, all: classes.slice(0, -1), not: nots, tag };
+  if (tag && parts.length) return null; // `nav ul`: a tag under an ancestor over-matches every such tag on the page
+  return tag ? { selector: tag, reason, not: nots } : null;
+}
+
+export function rulesFromCss(cssIn: string, extraVars?: CssVars): HiddenRule[] {
   const rules: HiddenRule[] = [];
-  // flatten @media / @supports wrappers: "@media x { a{..} }" -> "a{..}"; drop keyframes and comments
-  const css = cssIn
-    .replace(/\/\*[\s\S]*?\*\//g, "")
+  // media blocks that do not describe a desktop screen are dropped; the rest of the @-wrappers are flattened:
+  // "@media x { a{..} }" -> "a{..}". Keyframes and comments are dropped.
+  const css = dropAlternateMedia(cssIn.replace(/\/\*[\s\S]*?\*\//g, ""))
     .replace(/@keyframes[^{]*\{(?:[^{}]*\{[^{}]*\})*[^{}]*\}/g, "")
     .replace(/@(media|supports|layer|container)[^{]*\{/g, "");
+  // custom properties defined anywhere in this stylesheet, so var() references can be resolved before judging
+  const vars = collectCssVars(css, new Map(extraVars ?? []));
   const re = /([^{}]+)\{([^{}]*)\}/g;
   let m: RegExpExecArray | null;
   let count = 0;
   while ((m = re.exec(css)) && count++ < 20000) {
-    const reason = classifyStyle(m[2]);
+    const reason = classifyStyle(m[2], vars);
     if (!reason) continue;
-    for (const sel of m[1].split(",")) {
-      const t = sel.trim();
-      if (/^[.#]?[\w-]+$/.test(t)) { rules.push({ selector: t, reason }); continue; }
-      // compound/descendant selectors: key on the last simple class or id; over-matching only raises suspicion
-      const last = t.split(/[\s>+~]+/).pop() ?? "";
-      const simple = last.match(/[.#][\w-]+/g);
-      if (simple) rules.push({ selector: simple[simple.length - 1], reason });
+    for (const sel of splitSelectors(m[1])) {
+      const r = ruleFromSelector(sel, reason);
+      if (r) rules.push(r);
     }
   }
   return rules;
@@ -94,12 +252,26 @@ export interface ColorRule {
   fill?: RGBA | null;
 }
 
-/** Remove @media blocks that do not describe the default screen rendering (dark mode, print), brace-matched. */
+/** widths below this are phones and small tablets: `@media (max-width: 767px)` does not describe a desktop screen */
+const DESKTOP_MIN_PX = 1024;
+function isAlternateMedia(query: string): boolean {
+  const q = query.toLowerCase();
+  if (/prefers-color-scheme\s*:\s*dark|\bprint\b|forced-colors|prefers-contrast|prefers-reduced-(motion|transparency)|\(\s*hover\s*:\s*none\s*\)|\(\s*pointer\s*:\s*coarse\s*\)|orientation\s*:\s*portrait/.test(q)) return true;
+  // a width cap below desktop: `max-width: 767px`, `width <= 40rem`, `width < 640px`
+  for (const m of q.matchAll(/(?:max-width\s*:|width\s*<=?)\s*(\d*\.?\d+)(px|em|rem)/g)) {
+    const px = Number(m[1]) * (m[2] === "px" ? 1 : 16);
+    if (px < DESKTOP_MIN_PX) return true;
+  }
+  return false;
+}
+
+/** Remove @media blocks that do not describe the default desktop screen (dark mode, print, phone widths), brace-matched. */
 function dropAlternateMedia(css: string): string {
   let out = "", i = 0;
-  const re = /@media[^{]*(prefers-color-scheme\s*:\s*dark|print|forced-colors|prefers-contrast)[^{]*\{/gi;
+  const re = /@media([^{]*)\{/gi;
   let m: RegExpExecArray | null;
   while ((m = re.exec(css))) {
+    if (!isAlternateMedia(m[1])) continue;
     out += css.slice(i, m.index);
     let depth = 1, j = m.index + m[0].length;
     while (j < css.length && depth > 0) { if (css[j] === "{") depth++; else if (css[j] === "}") depth--; j++; }
@@ -139,10 +311,11 @@ function attr(el: Element, name: string): string | undefined {
 }
 
 function matchesRule(el: Element, rule: HiddenRule): boolean {
-  if (rule.selector.startsWith(".")) {
-    const cls = attr(el, "class") ?? "";
-    return cls.split(/\s+/).includes(rule.selector.slice(1));
-  }
+  const classes = (attr(el, "class") ?? "").split(/\s+/);
+  if (rule.tag && rule.selector !== rule.tag && el.tagName !== rule.tag) return false;
+  if (rule.all?.some((c) => !classes.includes(c))) return false;
+  if (rule.not?.some((c) => classes.includes(c))) return false;
+  if (rule.selector.startsWith(".")) return classes.includes(rule.selector.slice(1));
   if (rule.selector.startsWith("#")) return attr(el, "id") === rule.selector.slice(1);
   return el.tagName === rule.selector;
 }
@@ -196,6 +369,9 @@ export function analyzeHtml(html: string, externalRules: HiddenRule[] = [], exte
   const lowContrast = new Map<TextSegment, number>();
   const lowContrastRatio = new Map<string, number>();
   let maxDepth = 0;
+  /** custom properties defined in the page's own <style> blocks and style attributes */
+  const cssVars: CssVars = new Map();
+  const styleBlocks: string[] = [];
 
   // pass 1: <style> rules and stylesheet links (iterative)
   {
@@ -205,13 +381,19 @@ export function analyzeHtml(html: string, externalRules: HiddenRule[] = [], exte
       if (defaultTreeAdapter.isElementNode(n)) {
         if (n.tagName === "style") {
           const css = n.childNodes.map((c) => (defaultTreeAdapter.isTextNode(c) ? c.value : "")).join("");
-          styleRules.push(...rulesFromCss(css));
+          styleBlocks.push(css);
+          collectCssVars(css, cssVars);
           colorRules.push(...colorRulesFromCss(css));
         }
+        // a custom property set in a style attribute can drive a rule elsewhere (style="--o:0" with opacity:var(--o))
+        const inline = attr(n, "style");
+        if (inline && inline.includes("--")) collectCssVars(inline, cssVars);
         if (n.tagName === "link" && /\bstylesheet\b/.test((attr(n, "rel") ?? "").toLowerCase()) && attr(n, "href")) stylesheetLinks.push(attr(n, "href")!);
       }
       for (const c of children(n)) stack.push(c);
     }
+    // rules are classified once every variable the page defines is known, wherever it was defined
+    for (const css of styleBlocks) styleRules.push(...rulesFromCss(css, cssVars));
   }
 
   // pass 2: segments and scripts (iterative, document order)
@@ -332,11 +514,9 @@ export function analyzeHtml(html: string, externalRules: HiddenRule[] = [], exte
       if (tag === "details" && attr(el, "open") === undefined) vis = "css_hidden"; // summary re-opened below
       if (tag === "input" && /^(hidden)$/i.test(attr(el, "type") ?? "")) vis = "css_hidden";
       const style = attr(el, "style");
-      if (style) vis = classifyStyle(style) ?? vis;
+      if (style) vis = classifyStyle(style, cssVars) ?? vis;
       if (vis === "visible") for (const r of styleRules) if (matchesRule(el, r)) { vis = r.reason; break; }
-      const cls = attr(el, "class") ?? "";
-      if (vis === "visible" && A11Y_CLASS_HINTS.test(cls)) { vis = "css_hidden"; a11y = true; }
-      if (vis === "visible" && HIDDEN_CLASS_HINTS.test(cls)) vis = "css_hidden";
+      if (vis === "visible") { const h = classHides(attr(el, "class") ?? ""); if (h) { vis = h.vis; a11y = a11y || h.a11y; } }
     }
 
     const kids = el.childNodes;
@@ -355,6 +535,7 @@ export function analyzeHtml(html: string, externalRules: HiddenRule[] = [], exte
     attribute: "visibility.attribute_only",
     comment: "visibility.html_comment",
     tiny_or_transparent: "visibility.tiny_or_transparent",
+    concealed: "visibility.css_hidden", // not produced by the HTML pass; here so the map is total
   };
   for (const s of segments) {
     if (s.visibility === "visible") continue;

@@ -6,9 +6,13 @@
  */
 
 import type { ContentKind, Finding, TextSegment } from "./types.js";
+import { adaptTerminal } from "./terminal.js";
 
 export function detectKind(contentType: string, body: string, urlHint = ""): ContentKind {
   const ct = contentType.toLowerCase();
+  if (/x-log|x-terminal|x-ansi/.test(ct) || /\.log(\?|#|$)/i.test(urlHint)) return "log";
+  // terminal control sequences anywhere in the first part: replay it as a terminal would, whatever it claims to be
+  if (/\x1b[\[\]]/.test(body.slice(0, 65_536)) && !/html|xhtml/.test(ct)) return "log";
   if (/html|xhtml/.test(ct)) return "html";
   if (/markdown/.test(ct) || /\.(md|markdown)(\?|#|$)/i.test(urlHint)) return "markdown";
   if (/json/.test(ct)) return "json";
@@ -125,6 +129,22 @@ export function adaptJson(raw: string): AdapterResult {
 
 export function adaptText(raw: string): AdapterResult {
   return { segments: [{ text: raw, visibility: "visible", path: "text" }], findings: [] };
+}
+
+/**
+ * One adapter per content kind. HTML is not here: it goes through visibility.ts, which needs the stylesheet
+ * rules the engine fetched. A kind without an adapter yet is read as plain text, so nothing is skipped.
+ */
+const ADAPTERS: Partial<Record<ContentKind, (raw: string) => AdapterResult>> = {
+  markdown: adaptMarkdown,
+  json: adaptJson,
+  javascript: adaptJavascript,
+  text: adaptText,
+  log: adaptTerminal,
+};
+
+export function adaptByKind(kind: ContentKind, raw: string): AdapterResult {
+  return (ADAPTERS[kind] ?? adaptText)(raw);
 }
 
 /** Plain JavaScript fetched directly (a module, a bundle): the whole thing is a script; any string literals are visible text. */

@@ -16,6 +16,11 @@
  * (a native dialog on macOS). Their results are gated like any outside content, alone and
  * combined with the run's recent inputs. There is no tool that lets the model approve.
  *
+ * Their tool definitions are outside content too: each is gated before the model sees it, and its
+ * fingerprint is recorded. A definition that is not clean, or that changed after it was recorded, is
+ * held: the model sees a notice in its place and calls are refused until a person runs
+ * `ingress tools confirm <server>` in a terminal.
+ *
  * Environment:
  *   INGRESS_SIGNING_PRIVATE_KEY_FILE  ECDSA P-256 key for publicly verifiable receipts (preferred; or INGRESS_SIGNING_PRIVATE_KEY as PEM)
  *   INGRESS_SIGNING_KEY       HMAC key for receipts (fallback: whoever can verify can also forge)
@@ -39,8 +44,8 @@ import { z } from "zod";
 import { appendFileSync, readFileSync } from "node:fs";
 import { randomBytes } from "node:crypto";
 import {
-  IngressEngine, ActionBroker, DEFAULT_BROKER_POLICY, auditEnvironment, formatAudit, ASSEMBLED_LIMITS, loadInstructionFiles, macosDialogApprover, denyAllApprover, loadPolicyFile, cloakingConfigFromEnv, HONEST_USER_AGENT, ENGINE_VERSION,
-  type IngressConfig, type IngressResult, type TaintReceipt, type BrokerPolicy, type Approver,
+  IngressEngine, ActionBroker, DEFAULT_BROKER_POLICY, auditEnvironment, formatAudit, trackAudit, formatAuditChanges, reviewToolDefinitions, heldDescription, stopReason, canaryNotice, parseScanHints, CONTENT_KINDS, ASSEMBLED_LIMITS, loadInstructionFiles, macosDialogApprover, denyAllApprover, loadPolicyFile, cloakingConfigFromEnv, HONEST_USER_AGENT, ENGINE_VERSION,
+  type IngressConfig, type IngressResult, type TaintReceipt, type BrokerPolicy, type Approver, type ToolHold,
 } from "@acepaste/ingress";
 
 const env = process.env;
@@ -72,10 +77,13 @@ for (const d of proxyCfg.downstream ?? []) if (!/^[a-z0-9_-]{1,32}$/i.test(d.nam
 
 const approver: Approver = (env.INGRESS_APPROVER ?? (process.platform === "darwin" ? "macos-dialog" : "deny")) === "macos-dialog" ? macosDialogApprover() : denyAllApprover;
 // the gate's own read tools are always read-only; the config adds the downstream tools it knows only read
-const broker = new ActionBroker({ ...(proxyCfg.policy ?? {}), readOnlyTools: [...DEFAULT_BROKER_POLICY.readOnlyTools, ...(proxyCfg.policy?.readOnlyTools ?? [])] }, { approver, log: (e) => log(e as unknown as Record<string, unknown>) });
+// the stop switch: a file a person creates (`ingress stop`) that refuses every action until they remove it (`ingress resume`)
+const broker = new ActionBroker({ ...(proxyCfg.policy ?? {}), readOnlyTools: [...DEFAULT_BROKER_POLICY.readOnlyTools, ...(proxyCfg.policy?.readOnlyTools ?? [])] }, { approver, log: (e) => log(e as unknown as Record<string, unknown>), stopCheck: () => stopReason() });
 for (const q of proxyCfg.quarantine ?? []) broker.quarantine(q);
 // one run per server session: taint cannot be cleared by the model, only by starting a new session
 const runId = `run_${randomBytes(6).toString("hex")}`;
+// this run's marker: handed to the model with delivered content, refused in any outbound argument (never logged)
+const runMarker = canaryNotice(broker.plantCanary(runId));
 
 // recent text the model has been handed, for the combined check
 const recent: { sourceId: string; text: string }[] = [];
@@ -114,10 +122,12 @@ function admit(r: IngressResult, sourceId: string): Promise<{ result: IngressRes
 
 function present(r: IngressResult, composed?: string) {
   if (composed) return { content: [{ type: "text" as const, text: composed }], isError: true, structuredContent: { tier: "suspect", composed: true, receipt: r.receipt, run: broker.state(runId) } };
+  const delivered = r.tier === "clean" || r.overridden;
   return {
-    content: [{ type: "text" as const, text: r.envelope }],
+    // the marker rides with delivered content: that is the moment the run starts holding something worth sending out
+    content: [{ type: "text" as const, text: r.envelope }, ...(delivered ? [{ type: "text" as const, text: runMarker }] : [])],
     structuredContent: { tier: r.tier, score: r.score, contentKind: r.contentKind, overridden: r.overridden, receipt: r.receipt, findings: r.findings, run: broker.state(runId), timings: r.timings },
-    isError: r.tier !== "clean" && !r.overridden,
+    isError: !delivered,
   };
 }
 
@@ -137,7 +147,7 @@ const OWN_TOOLS = [
     name: "ingress_scan",
     title: "Scan content through AcePaste Ingress",
     description: "Gate content already in hand (a tool result, a pasted document, a file): HTML, markdown, JSON or plain text. Same verdict policy as ingress_fetch.",
-    inputSchema: { type: "object", properties: { content: { type: "string" }, source: { type: "string", description: "where the content came from, for the receipt" }, contentType: { type: "string" }, isHtml: { type: "boolean" }, override: { type: "boolean" } }, required: ["content"] },
+    inputSchema: { type: "object", properties: { content: { type: "string" }, source: { type: "string", description: "where the content came from, for the receipt" }, contentType: { type: "string" }, isHtml: { type: "boolean" }, override: { type: "boolean" }, kind: { type: "string", enum: [...CONTENT_KINDS], description: "the channel, when you know it: log (logs and terminal output), email, message, notification, calendar, nearby, automation, captions" }, trust: { type: "integer", minimum: 1, maximum: 6, description: "who could have written it: 1 the person, 2 known contacts, 3 an agent earlier, 4 strangers, 5 open channels and logs, 6 broadcasts" }, channel: { type: "string" }, sender: { type: "string" } }, required: ["content"] },
   },
   {
     name: "ingress_status",
@@ -166,7 +176,7 @@ const OWN_TOOLS = [
 ];
 
 const fetchArgs = z.object({ url: z.string().url(), override: z.boolean().optional() });
-const scanArgs = z.object({ content: z.string().max(5_000_000), source: z.string().optional(), contentType: z.string().optional(), isHtml: z.boolean().optional(), override: z.boolean().optional() });
+const scanArgs = z.object({ content: z.string().max(5_000_000), source: z.string().optional(), contentType: z.string().optional(), isHtml: z.boolean().optional(), override: z.boolean().optional(), kind: z.string().optional(), trust: z.number().optional(), channel: z.string().optional(), sender: z.string().optional() });
 const verifyArgs = z.object({ receipt: z.record(z.string(), z.any()) });
 
 async function callOwn(name: string, raw: unknown) {
@@ -185,13 +195,15 @@ async function callOwn(name: string, raw: unknown) {
   }
   if (name === "ingress_scan") {
     const a = scanArgs.parse(raw);
-    const r = await engine.scan(a.content, { url: a.source, contentType: a.contentType, isHtml: a.isHtml, override: a.override });
+    const r = await engine.scan(a.content, { url: a.source, contentType: a.contentType, isHtml: a.isHtml, override: a.override, ...parseScanHints(a) });
     const { result, composed } = await admit(r, a.source ?? "inline:scan");
     return present(result, composed);
   }
   if (name === "ingress_status") {
     const s = broker.state(runId);
-    return { content: [{ type: "text" as const, text: JSON.stringify({ runId, ...s, sideEffectsNeedApproval: s.tainted, approver: approver.name }) }], structuredContent: { runId, ...s, approver: approver.name } };
+    const heldTools = [...proxied.entries()].filter(([, p]) => p.hold.held).map(([exposed, p]) => ({ tool: exposed, why: p.hold.held ? p.hold.why : "" }));
+    const stopped = stopReason();
+    return { content: [{ type: "text" as const, text: JSON.stringify({ runId, ...s, sideEffectsNeedApproval: s.tainted, approver: approver.name, downstream: serverStates, heldTools, stopped: stopped ?? false }) }], structuredContent: { runId, ...s, approver: approver.name, downstream: serverStates, heldTools, stopped: stopped ?? false } };
   }
   if (name === "ingress_instructions") {
     const { root } = z.object({ root: z.string().min(1) }).parse(raw);
@@ -210,7 +222,11 @@ async function callOwn(name: string, raw: unknown) {
   if (name === "ingress_environment_audit") {
     const { network } = z.object({ network: z.boolean().optional() }).parse(raw);
     const r = await auditEnvironment({ network: !!network, gate: (t, src) => engine.scan(t, { url: src, contentType: "text/markdown" }) });
-    return { content: [{ type: "text" as const, text: formatAudit(r) }], structuredContent: r as unknown as Record<string, unknown> };
+    // what changed since the last audit, and what a person has not confirmed (confirming is a terminal command, never a tool)
+    let changes: ReturnType<typeof trackAudit> | undefined;
+    try { changes = trackAudit(r); } catch (e) { log({ event: "audit.track_failed", error: (e as Error).message }); }
+    const text = changes ? `${formatAuditChanges(changes)}\n\n${formatAudit(r)}` : formatAudit(r);
+    return { content: [{ type: "text" as const, text }], structuredContent: { ...(r as unknown as Record<string, unknown>), changes } };
   }
   if (name === "ingress_verify_receipt") {
     const { receipt } = verifyArgs.parse(raw);
@@ -221,8 +237,10 @@ async function callOwn(name: string, raw: unknown) {
 }
 
 // ---------- downstream servers ----------
-interface Proxied { server: Downstream; client: Client; tool: { name: string; description?: string; inputSchema: unknown; title?: string } }
+interface Proxied { server: Downstream; client: Client; tool: { name: string; description?: string; inputSchema: unknown; title?: string }; hold: ToolHold }
 const proxied = new Map<string, Proxied>();
+/** per downstream server: recorded, confirmed or changed, and which tools are held */
+const serverStates: Record<string, { state: string; held: string[]; removed: string[] }> = {};
 
 async function connectDownstream() {
   for (const d of proxyCfg.downstream ?? []) {
@@ -230,11 +248,24 @@ async function connectDownstream() {
       const client = new Client({ name: "acepaste-ingress-proxy", version: ENGINE_VERSION });
       await client.connect(new StdioClientTransport({ command: d.command, args: d.args ?? [], env: { ...getDefaultEnvironment(), ...(d.env ?? {}) }, cwd: d.cwd, stderr: "ignore" }));
       const { tools } = await client.listTools();
-      for (const t of tools) {
-        const exposed = `${d.name}__${t.name}`;
-        proxied.set(exposed, { server: d, client, tool: { name: t.name, description: t.description, inputSchema: t.inputSchema, title: t.title } });
+      // definitions are outside content: gate each, and compare the set with what was recorded for this server
+      const defs = tools.map((t) => ({ name: t.name, title: t.title, description: t.description, inputSchema: t.inputSchema }));
+      let review: Awaited<ReturnType<typeof reviewToolDefinitions>> | undefined;
+      try {
+        review = await reviewToolDefinitions(d.name, defs, (text, source) => engine.scan(text, { url: source, isHtml: false }));
+      } catch (e) {
+        // the review could not run (state folder unwritable, say): hold every tool rather than offer unchecked definitions
+        log({ event: "proxy.definition_review_failed", server: d.name, error: (e as Error).message });
       }
-      log({ event: "proxy.connected", server: d.name, tools: tools.length });
+      for (let i = 0; i < tools.length; i++) {
+        const t = tools[i];
+        const exposed = `${d.name}__${t.name}`;
+        const hold: ToolHold = review ? review.tools[i].hold : { held: true, why: "not-clean", tier: "unreviewed", kinds: ["definition review could not run"] };
+        proxied.set(exposed, { server: d, client, tool: { name: t.name, description: t.description, inputSchema: t.inputSchema, title: t.title }, hold });
+        if (hold.held) log({ event: "proxy.tool_held", server: d.name, tool: t.name, why: hold.why });
+      }
+      serverStates[d.name] = { state: review?.state ?? "unreviewed", held: review ? review.tools.filter((t) => t.hold.held).map((t) => t.tool.name) : tools.map((t) => t.name), removed: review?.removed ?? [] };
+      log({ event: "proxy.connected", server: d.name, tools: tools.length, state: serverStates[d.name].state, held: serverStates[d.name].held.length });
     } catch (e) {
       log({ event: "proxy.connect_failed", server: d.name, error: (e as Error).message });
     }
@@ -243,6 +274,7 @@ async function connectDownstream() {
 
 async function callProxied(name: string, raw: unknown) {
   const p = proxied.get(name)!;
+  if (p.hold.held) return refusedByBroker(name, [heldDescription(p.server.name, p.hold)], "held");
   const v = await broker.authorize({ runId, tool: name, args: raw ?? {} });
   if (!v.permitted) return refusedByBroker(name, v.reasons, v.approval?.outcome);
   // run exactly the arguments the broker decided on (and the person saw, when asked)
@@ -274,12 +306,16 @@ const server = new Server({ name: "acepaste-ingress", version: ENGINE_VERSION },
 server.setRequestHandler(ListToolsRequestSchema, async () => ({
   tools: [
     ...OWN_TOOLS,
-    ...[...proxied.entries()].map(([exposed, p]) => ({
-      name: exposed,
-      title: p.tool.title,
-      description: `[via AcePaste Ingress from ${p.server.name}; side effects may need your human's approval] ${p.tool.description ?? ""}`.trim(),
-      inputSchema: p.tool.inputSchema as { type: "object"; properties?: Record<string, unknown> },
-    })),
+    ...[...proxied.entries()].map(([exposed, p]) => (p.hold.held
+      // a held tool is still listed, so the model can tell the person why it is unavailable; its own
+      // title, description and schema never reach the model
+      ? { name: exposed, description: heldDescription(p.server.name, p.hold), inputSchema: { type: "object" as const, properties: {} } }
+      : {
+        name: exposed,
+        title: p.tool.title,
+        description: `[via AcePaste Ingress from ${p.server.name}; side effects may need your human's approval] ${p.tool.description ?? ""}`.trim(),
+        inputSchema: p.tool.inputSchema as { type: "object"; properties?: Record<string, unknown> },
+      })),
   ],
 }));
 

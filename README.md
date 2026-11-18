@@ -217,6 +217,10 @@ Every URL fetch is made twice and the two copies compared.
 
 What it cannot see: a site that verifies AI fetchers by their published IP ranges serves the gate the human page under any user agent, and a site that profiles the client deeply enough will tell the plain HTTP fetch from a person. The browser fetch and a separate network narrow that gap; they do not close it.
 
+## Changes
+
+Releases from 0.9.7 on are in [CHANGELOG.md](CHANGELOG.md). What is planned is in [docs/ROADMAP.md](docs/ROADMAP.md), tracked in [docs/ROADMAP-LOG.md](docs/ROADMAP-LOG.md).
+
 ## Changes in 0.9.6 (2026-11-18, ruleset 2026.11.18-3, unchanged)
 
 - Regression tests for the three 0.9.1 false positives (a traced SVG path read as thousands of attributes, "You are now logged in" read as role reassignment, the "Ψfiles" brand read as a look-alike spoof). The fixes were already on `main`; the tests that guard them had stayed on a local branch. No detector changed.

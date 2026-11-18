@@ -14,11 +14,20 @@
  *     outside an allowlist) need approval while tainted, even on "read" tools
  *   - a run that touched a quarantined source is denied side effects outright
  *
+ * And whatever the run has read (safeguards.ts):
+ *   - an action that creates something which acts later (a scheduled job, an automation, a mail rule,
+ *     a hook, an edit to an agent's own instructions or memory) always needs a person
+ *   - an action that carries the run's marker (a canary placed in its context) is refused: the context
+ *     itself is leaving
+ *   - a burst of actions, or the same action over and over, is held for a person
+ *   - a stop switch a person can set refuses everything until they clear it
+ *
  * Limit, stated plainly: the broker enforces only on calls routed through it. A tool the
  * agent can reach directly is outside its control.
  */
 
 import { createHash, randomBytes } from "node:crypto";
+import { BurstCounter, DEFAULT_BURST, actionKey, carriesCanary, newCanary, persistenceShapes, type BurstPolicy } from "./safeguards.js";
 
 export type ActionDecision = "allow" | "require_approval" | "deny";
 
@@ -55,6 +64,13 @@ export interface BrokerPolicy {
   maxShownArgChars: number;
   /** what to do when approval is needed but no approver is configured or it fails */
   onApproverUnavailable: "deny";
+  /**
+   * Actions that create something which acts later. "always": they need a person even in a run that has
+   * read nothing from outside. "tainted": only once the run has. "off": not checked.
+   */
+  persistenceGuard: "always" | "tainted" | "off";
+  /** limits on how fast and how repetitively a run may act before a person is asked */
+  burst: BurstPolicy;
 }
 
 export const DEFAULT_BROKER_POLICY: BrokerPolicy = {
@@ -68,6 +84,8 @@ export const DEFAULT_BROKER_POLICY: BrokerPolicy = {
   approvalTtlMs: 120_000,
   maxShownArgChars: 4000,
   onApproverUnavailable: "deny",
+  persistenceGuard: "always",
+  burst: DEFAULT_BURST,
 };
 
 export interface ProposedAction {
@@ -124,7 +142,7 @@ export interface BrokerEvent {
   policy: { name: string; version: number };
 }
 
-interface RunState { sources: Set<string>; receipts: Set<string>; hosts: Set<string>; quarantined: Set<string> }
+interface RunState { sources: Set<string>; receipts: Set<string>; hosts: Set<string>; quarantined: Set<string>; canaries: string[]; burst: BurstCounter }
 
 /** deterministic JSON: object keys sorted at every depth, so one call has one digest */
 export function canonicalJson(v: unknown): string {
@@ -245,14 +263,25 @@ export class ActionBroker {
   private globalQuarantine = new Set<string>();
   private used = new Set<string>();
 
-  constructor(policy: Partial<BrokerPolicy> = {}, private deps: { approver?: Approver; log?: (e: BrokerEvent) => void; now?: () => number } = {}) {
-    this.policy = { ...DEFAULT_BROKER_POLICY, ...policy, readOnlyTools: policy.readOnlyTools ?? DEFAULT_BROKER_POLICY.readOnlyTools };
+  constructor(policy: Partial<BrokerPolicy> = {}, private deps: { approver?: Approver; log?: (e: BrokerEvent) => void; now?: () => number; /** why everything is stopped, or undefined (see safeguards.stopReason) */ stopCheck?: () => string | undefined } = {}) {
+    this.policy = { ...DEFAULT_BROKER_POLICY, ...policy, readOnlyTools: policy.readOnlyTools ?? DEFAULT_BROKER_POLICY.readOnlyTools, burst: { ...DEFAULT_BROKER_POLICY.burst, ...(policy.burst ?? {}) } };
   }
 
   private run(runId: string): RunState {
     let r = this.runs.get(runId);
-    if (!r) { r = { sources: new Set(), receipts: new Set(), hosts: new Set(), quarantined: new Set() }; this.runs.set(runId, r); }
+    if (!r) { r = { sources: new Set(), receipts: new Set(), hosts: new Set(), quarantined: new Set(), canaries: [], burst: new BurstCounter() }; this.runs.set(runId, r); }
     return r;
+  }
+
+  /**
+   * A marker for this run's context. Put the returned text where the model will read it (see
+   * safeguards.canaryNotice). Any later action whose arguments carry it is refused: nothing the
+   * person asked for needs the marker to leave, so its leaving means the context is being sent out.
+   */
+  plantCanary(runId: string): string {
+    const c = newCanary();
+    this.run(runId).canaries.push(c);
+    return c;
   }
 
   private quarantineHit(ref: string | undefined, host: string | undefined): string | undefined {
@@ -339,6 +368,27 @@ export class ActionBroker {
       decision = "deny";
       reasons.push(`run touched a quarantined source: ${[...r.quarantined].join(", ")}`);
     }
+
+    // ---- safeguards that apply whatever the run has read ----
+    const walked = walkStrings(action.args);
+    // something that acts later always goes to a person: one steered moment must not become a standing one
+    if (this.policy.persistenceGuard !== "off" && (tainted || this.policy.persistenceGuard === "always") && !readOnly) {
+      const p = persistenceShapes(action.tool, walked.strings);
+      if (p.length) { decision = strongest(decision, "require_approval"); reasons.push(...p.map((h) => `creates something that acts later: ${h.why}`)); }
+    }
+    // a burst, or the same action again and again
+    if (!readOnly) {
+      const b = r.burst.check(actionKey(action.tool, canonicalArgs), this.deps.now?.() ?? Date.now(), this.policy.burst);
+      if (b.length) { decision = strongest(decision, "require_approval"); reasons.push(...b); }
+    }
+    // the run's marker in an outbound argument: the context itself is leaving. Not a question for approval.
+    if (carriesCanary(walked.strings, r.canaries)) {
+      decision = "deny";
+      reasons.push("the arguments carry this run's marker, which has no reason to leave the conversation: something is sending the conversation itself out");
+    }
+    // the stop switch outranks everything, read-only tools included
+    const stopped = this.deps.stopCheck?.();
+    if (stopped) { decision = "deny"; reasons.push(`a person has stopped all agent actions: ${stopped}`); }
     return { decision, reasons, digest, canonicalArgs, destinations: dest.hosts, fields };
   }
 
@@ -374,6 +424,8 @@ export class ActionBroker {
       if (!permitted) c.reasons.push(outcome === "unavailable" ? "approval needed but no approver is set up or reachable, so it was refused (fails closed)" : outcome === "denied" ? "the person declined" : "the person did not answer in time");
       verdict = { decision: "require_approval", permitted, reasons: c.reasons, digest: c.digest, approval: { id: req.id, outcome }, policy: policyRef };
     }
+    // count what actually ran, so the burst guard sees it (read-only tools never count)
+    if (verdict.permitted && !this.policy.readOnlyTools.some((g) => globMatch(g, action.tool))) this.run(action.runId).burst.record(actionKey(action.tool, c.canonicalArgs), now);
     this.deps.log?.({ event: "broker.decision", at: new Date(now).toISOString(), runId: action.runId, tool: action.tool, digest: c.digest, decision: verdict.decision, permitted: verdict.permitted, reasons: verdict.reasons, approval: verdict.approval, sources: this.state(action.runId).sources, policy: policyRef });
     return { ...verdict, args: deepFreeze(JSON.parse(c.canonicalArgs)) };
   }
