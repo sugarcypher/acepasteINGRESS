@@ -33,6 +33,8 @@ export { IngressEngine as GateEngine } from "./engine.js";
 export { ActionBroker, isSideEffectName, DEFAULT_BROKER_POLICY, canonicalJson, actionDigest, destinationsIn, exfilShapes, describeApproval } from "./broker.js";
 export type { ActionDecision, ActionRule, BrokerPolicy, ProposedAction, ApprovalRequest, Approver, BrokerVerdict, BrokerEvent } from "./broker.js";
 export { macosDialogApprover, callbackApprover, denyAllApprover } from "./approvers.js";
+export { persistenceShapes, newCanary, canaryNotice, carriesCanary, BurstCounter, DEFAULT_BURST, actionKey, stopReason, engageStop, clearStop } from "./safeguards.js";
+export type { PersistenceHit, BurstPolicy } from "./safeguards.js";
 export { scanMultilingual, MULTILINGUAL_RULES, MULTILINGUAL_RULESET } from "./multilingual.js";
 export { scanCode, extractCodeUnits, guessLang, lex } from "./codepass.js";
 export type { CodeUnit, CodeLang, CodeCoverage } from "./codepass.js";

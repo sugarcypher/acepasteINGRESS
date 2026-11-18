@@ -4,6 +4,27 @@ Every change bumps the patch version of all three packages. The ruleset id chang
 behavior changes; receipts carry it so verdicts are reproducible. Releases up to 0.9.6 are in the
 [README](README.md#changes-in-096-2026-11-18-ruleset-20261118-3-unchanged).
 
+## 0.9.10 (2026-11-18, ruleset unchanged)
+
+Broker safeguards that apply whatever the run has read (`safeguards.ts`; Phases 9d and 12).
+
+- **Persistence guard.** An action that creates something which acts later always needs a person, even in a
+  run that has read nothing from outside: scheduled jobs (cron, launchd, systemd), startup items and shell
+  startup files, automations and shortcuts, mail rules and forwarding addresses, webhooks, hooks (git,
+  agent settings), edits to an agent's own instruction or memory files and its list of tool servers, and
+  login access (`authorized_keys`, sudoers). Recognised by tool name (writes only), field names, paths and
+  shell commands. Policy: `persistenceGuard: "always" | "tainted" | "off"` (default `always`).
+- **Canary tripwire.** `broker.plantCanary(runId)` returns a marker for the run's context; the MCP server
+  hands it over with every delivered envelope. An action whose arguments carry it (plain, base64 at any
+  alignment, hex, URL-encoded, reversed, or without its fixed prefix) is denied, not sent for approval:
+  nothing a person asked for needs the marker to leave, so the conversation itself is being sent out.
+- **Burst guard.** More than 20 actions a minute, or the same action more than 3 times in ten minutes, waits
+  for a person (`burst` in the policy). Read-only tools never count.
+- **Stop switch.** `ingress stop [reason]` makes every broker on the machine refuse every action, read-only
+  tools included, until `ingress resume`. Anyone may stop, an agent included; resuming needs an interactive
+  terminal. `ingress_status` reports it.
+- Proxy end-to-end tests for the marker and the stop switch.
+
 ## 0.9.9 (2026-11-18, ruleset unchanged)
 
 Change tracking, from Kith & Revere (`Baselines.swift`, `Changes.swift`), and tool definitions as outside content.

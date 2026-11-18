@@ -20,6 +20,7 @@ import { auditEnvironment, formatAudit } from "./audit.js";
 import { trackAudit, confirmAuditArea, formatAuditChanges, AUDIT_NEEDS_CONFIRMATION } from "./audit-changes.js";
 import { confirmServerTools, describeServerTools } from "./tooldefs.js";
 import { BaselineStore } from "./changes.js";
+import { engageStop, clearStop, stopReason } from "./safeguards.js";
 import type { AuditArea } from "./audit-parsers.js";
 import { createInterface } from "node:readline/promises";
 import { userInfo } from "node:os";
@@ -34,6 +35,26 @@ async function main() {
   const chunksIn = async () => { const c: Buffer[] = []; for await (const x of process.stdin) c.push(x as Buffer); return Buffer.concat(c).toString("utf8"); };
   if (args[0] === "instructions") return instructionsCommand(args.slice(1));
   if (args[0] === "tools") return toolsCommand(args.slice(1));
+  // ingress stop [reason]: every broker on this machine refuses every agent action until `ingress resume`.
+  // Anyone may stop, an agent included. Only a person at a terminal may resume.
+  if (args[0] === "stop") {
+    const p = engageStop(args.slice(1).join(" "));
+    console.log(`stopped: agent actions routed through AcePaste Ingress are refused until you run: ingress resume\n(${p})`);
+    return;
+  }
+  if (args[0] === "resume") {
+    const why = stopReason();
+    if (!why) { console.log("not stopped"); return; }
+    if (!process.stdin.isTTY || !process.stdout.isTTY) { console.error("refused: resuming needs an interactive terminal, typed by a person"); process.exit(3); }
+    console.log(`stopped: ${why}`);
+    const rl = createInterface({ input: process.stdin, output: process.stdout });
+    const typed = (await rl.question('Type "resume" to let agents act again: ')).trim();
+    rl.close();
+    if (typed !== "resume") { console.log("still stopped"); process.exit(1); }
+    clearStop();
+    console.log("resumed");
+    return;
+  }
   if (args[0] === "audit") {
     // read-only: what on this machine could change what agents receive (hosts, DNS, proxies, browsers, certificates, agent configs)
     const gateEngine = new IngressEngine({ cloakingCheck: false, sandbox: "off" }, { log: () => {} });

@@ -44,7 +44,7 @@ import { z } from "zod";
 import { appendFileSync, readFileSync } from "node:fs";
 import { randomBytes } from "node:crypto";
 import {
-  IngressEngine, ActionBroker, DEFAULT_BROKER_POLICY, auditEnvironment, formatAudit, trackAudit, formatAuditChanges, reviewToolDefinitions, heldDescription, ASSEMBLED_LIMITS, loadInstructionFiles, macosDialogApprover, denyAllApprover, loadPolicyFile, cloakingConfigFromEnv, HONEST_USER_AGENT, ENGINE_VERSION,
+  IngressEngine, ActionBroker, DEFAULT_BROKER_POLICY, auditEnvironment, formatAudit, trackAudit, formatAuditChanges, reviewToolDefinitions, heldDescription, stopReason, canaryNotice, ASSEMBLED_LIMITS, loadInstructionFiles, macosDialogApprover, denyAllApprover, loadPolicyFile, cloakingConfigFromEnv, HONEST_USER_AGENT, ENGINE_VERSION,
   type IngressConfig, type IngressResult, type TaintReceipt, type BrokerPolicy, type Approver, type ToolHold,
 } from "@acepaste/ingress";
 
@@ -77,10 +77,13 @@ for (const d of proxyCfg.downstream ?? []) if (!/^[a-z0-9_-]{1,32}$/i.test(d.nam
 
 const approver: Approver = (env.INGRESS_APPROVER ?? (process.platform === "darwin" ? "macos-dialog" : "deny")) === "macos-dialog" ? macosDialogApprover() : denyAllApprover;
 // the gate's own read tools are always read-only; the config adds the downstream tools it knows only read
-const broker = new ActionBroker({ ...(proxyCfg.policy ?? {}), readOnlyTools: [...DEFAULT_BROKER_POLICY.readOnlyTools, ...(proxyCfg.policy?.readOnlyTools ?? [])] }, { approver, log: (e) => log(e as unknown as Record<string, unknown>) });
+// the stop switch: a file a person creates (`ingress stop`) that refuses every action until they remove it (`ingress resume`)
+const broker = new ActionBroker({ ...(proxyCfg.policy ?? {}), readOnlyTools: [...DEFAULT_BROKER_POLICY.readOnlyTools, ...(proxyCfg.policy?.readOnlyTools ?? [])] }, { approver, log: (e) => log(e as unknown as Record<string, unknown>), stopCheck: () => stopReason() });
 for (const q of proxyCfg.quarantine ?? []) broker.quarantine(q);
 // one run per server session: taint cannot be cleared by the model, only by starting a new session
 const runId = `run_${randomBytes(6).toString("hex")}`;
+// this run's marker: handed to the model with delivered content, refused in any outbound argument (never logged)
+const runMarker = canaryNotice(broker.plantCanary(runId));
 
 // recent text the model has been handed, for the combined check
 const recent: { sourceId: string; text: string }[] = [];
@@ -119,10 +122,12 @@ function admit(r: IngressResult, sourceId: string): Promise<{ result: IngressRes
 
 function present(r: IngressResult, composed?: string) {
   if (composed) return { content: [{ type: "text" as const, text: composed }], isError: true, structuredContent: { tier: "suspect", composed: true, receipt: r.receipt, run: broker.state(runId) } };
+  const delivered = r.tier === "clean" || r.overridden;
   return {
-    content: [{ type: "text" as const, text: r.envelope }],
+    // the marker rides with delivered content: that is the moment the run starts holding something worth sending out
+    content: [{ type: "text" as const, text: r.envelope }, ...(delivered ? [{ type: "text" as const, text: runMarker }] : [])],
     structuredContent: { tier: r.tier, score: r.score, contentKind: r.contentKind, overridden: r.overridden, receipt: r.receipt, findings: r.findings, run: broker.state(runId), timings: r.timings },
-    isError: r.tier !== "clean" && !r.overridden,
+    isError: !delivered,
   };
 }
 
@@ -197,7 +202,8 @@ async function callOwn(name: string, raw: unknown) {
   if (name === "ingress_status") {
     const s = broker.state(runId);
     const heldTools = [...proxied.entries()].filter(([, p]) => p.hold.held).map(([exposed, p]) => ({ tool: exposed, why: p.hold.held ? p.hold.why : "" }));
-    return { content: [{ type: "text" as const, text: JSON.stringify({ runId, ...s, sideEffectsNeedApproval: s.tainted, approver: approver.name, downstream: serverStates, heldTools }) }], structuredContent: { runId, ...s, approver: approver.name, downstream: serverStates, heldTools } };
+    const stopped = stopReason();
+    return { content: [{ type: "text" as const, text: JSON.stringify({ runId, ...s, sideEffectsNeedApproval: s.tainted, approver: approver.name, downstream: serverStates, heldTools, stopped: stopped ?? false }) }], structuredContent: { runId, ...s, approver: approver.name, downstream: serverStates, heldTools, stopped: stopped ?? false } };
   }
   if (name === "ingress_instructions") {
     const { root } = z.object({ root: z.string().min(1) }).parse(raw);

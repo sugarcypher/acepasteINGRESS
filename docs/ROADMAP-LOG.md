@@ -8,6 +8,7 @@ be tested without the listed need), **not built** (with the reason).
 | 0.9.7 | - | Roadmap, this log, CHANGELOG.md, version bump tool | done | Releases from 0.9.7 are in CHANGELOG.md; older ones stay in the README |
 | 0.9.8 | 11 | HTTP service Host and Origin checks; every spelling of a loopback or private address refused | done | Live-tested: rebinding and cross-site requests get 403. The Claude Code hook's loopback skip was fixed on the author's machine the same day (not a repo file then; shipped in the repo in a later version) |
 | 0.9.9 | K&R | Change tracking (snapshots, confirmed baselines) for the environment audit; MCP tool definitions gated and fingerprinted | done | Found while building: downstream tool descriptions reached the model unscanned. Poisoned definitions are withheld; changed ones are held until `ingress tools confirm <server>`. First-seen sets are recorded, not confirmed |
+| 0.9.10 | 9d, 12 | Broker safeguards: persistence guard (automation write guard), canary tripwire, burst guard, stop switch | done | Persistence needs a person even in a clean run. A canary hit is a denial, not an approval question. Stop: anyone may stop, only a person at a terminal may resume |
 
 ## Needs from a person
 
