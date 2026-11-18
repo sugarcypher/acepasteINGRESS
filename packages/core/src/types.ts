@@ -7,9 +7,9 @@
 
 import type { NetPolicy } from "./netpolicy.js";
 
-export const ENGINE_VERSION = "0.9.14";
+export const ENGINE_VERSION = "0.9.15";
 /** bump whenever a detector's behavior changes; receipts carry it so verdicts are reproducible */
-export const RULESET_VERSION = "2026.11.18-5";
+export const RULESET_VERSION = "2026.11.18-6";
 
 /**
  * clean: delivered. suspect: refused, overridable. hostile: refused, not overridable.
@@ -103,6 +103,15 @@ export type FindingKind =
   | "visibility.markdown_hidden"
   | "visibility.terminal_hidden"
   | "visibility.terminal_control"
+  // channel structure: email
+  | "email.part_divergence"
+  | "email.sender_mismatch"
+  | "email.authentication_failed"
+  | "email.remote_content"
+  | "email.uninspected_part"
+  // channel structure: calendar
+  | "calendar.alarm_action"
+  | "calendar.description_divergence"
   // script pass
   | "script.obfuscation"
   | "script.runtime_codegen"

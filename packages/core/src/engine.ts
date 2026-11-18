@@ -22,7 +22,8 @@ import { scanSupplyChain } from "./supplychain.js";
 import { scanCode } from "./codepass.js";
 import { scanSecrets, redactSecrets, collectSecrets, scrubExcerpt } from "./secrets.js";
 import { attachEvidence } from "./evidence.js";
-import { adaptByKind, decodeEntities, detectKind } from "./adapters.js";
+import { adaptByKind, decodeEntities, detectKind, KINDS_WITH_MARKUP } from "./adapters.js";
+import { servedWords, compareServed } from "./served.js";
 import { runSandbox } from "./sandbox.js";
 import {
   DEFAULT_CONFIG,
@@ -280,7 +281,7 @@ export class IngressEngine {
 
   /** Cheap structural pre-check: pathological nesting makes the HTML parser super-linear. Refuse before parsing. */
   private structuralAbuse(raw: string, kind: ContentKind): string | null {
-    if (kind !== "html") return null;
+    if (!KINDS_WITH_MARKUP.has(kind)) return null;
     // Depth is what the parser would build, not a count of open tags: <li>, <p>, <dd>, <tr> and friends close
     // implicitly, a closing tag closes everything still open inside it, and script, style and comment bodies are
     // text. Counting every unclosed <li> as one level deeper refused nodejs.org/api/fs.html as hostile (2026-11-18).
@@ -345,9 +346,10 @@ export class IngressEngine {
     const abuse = this.structuralAbuse(a.raw, a.kind);
     if (abuse) return this.refuse(a.url, [{ pass: "policy", kind: "policy.denied_source", confidence: 0.8, severity: 0.7, message: `structural abuse: ${abuse}`, action: "none" }], timings, a.t0, a.kind);
 
-    // entity decoding for non-HTML kinds (parse5 decodes for HTML)
+    // entity decoding for kinds without markup of their own (parse5 decodes for HTML, and for the HTML inside
+    // an email or an event: decoding first would turn text a message quotes, "&lt;div hidden&gt;", into a tag)
     let raw = a.raw;
-    if (a.kind !== "html") {
+    if (!KINDS_WITH_MARKUP.has(a.kind)) {
       const dec = decodeEntities(raw);
       if (dec.suspicious > 0) {
         findings.push({ pass: "character", kind: "unicode.entity_smuggling", confidence: Math.min(0.95, 0.6 + dec.suspicious * 0.05), severity: 0.7, message: `${dec.suspicious} HTML entities decoding to invisible or format characters`, excerpt: dec.sample, action: "neutralized" });
@@ -462,7 +464,7 @@ export class IngressEngine {
 
     // meaning pass over cleaned segments and decoded payloads
     const tm = performance.now();
-    findings.push(...scanMeaning({ segments: cleanedSegments, decodedPayloads: charAll.decodedPayloads }));
+    findings.push(...scanMeaning({ kind: a.kind, segments: cleanedSegments, decodedPayloads: charAll.decodedPayloads }));
     timings.meaning = performance.now() - tm;
     passesRun.push("meaning");
 
@@ -769,27 +771,7 @@ export function aggregate(findings: Finding[], ctx: { cloakingCompared?: boolean
   return +score.toFixed(4);
 }
 
-/** words of served text with markup, link targets and bare URLs removed, so Markdown and HTML of the same page compare equal */
-export function servedWords(text: string): string[] {
-  const t = text
-    .replace(/!?\[([^\]]*)\]\([^)]*\)/g, " $1 ")          // [label](target) and ![alt](src) -> label
-    .replace(/<\/?[a-z][^>]*>/gi, " ")                         // stray tags
-    .replace(/\b(?:https?:\/\/|www\.)\S+/gi, " ")            // bare URLs
-    .replace(/[#>*_`~|\-]{1,}/g, " ");                         // markdown syntax
-  return t.toLowerCase().split(/[^\p{L}\p{N}']+/u).filter((w) => w.length > 2);
-}
-
-/** how much of what the agent received is absent from what the browser received (word occurrences, not distinct words) */
-export function compareServed(agentText: string, humanText: string): { agentWords: number; agentOnlyWords: number; agentOnlyShare: number; longestAgentOnlyRun: number; sample: string } {
-  const A = servedWords(agentText);
-  const H = new Set(servedWords(humanText));
-  const only = A.filter((w) => !H.has(w));
-  let run = 0, longestAgentOnlyRun = 0;
-  for (const w of A) { run = H.has(w) ? 0 : run + 1; if (run > longestAgentOnlyRun) longestAgentOnlyRun = run; }
-  const sampleSeen = new Set<string>();
-  const sample = only.filter((w) => (sampleSeen.has(w) ? false : (sampleSeen.add(w), true))).slice(0, 30).join(" ");
-  return { agentWords: A.length, agentOnlyWords: only.length, agentOnlyShare: A.length ? only.length / A.length : 0, longestAgentOnlyRun, sample };
-}
+export { servedWords, compareServed };
 
 /**
  * Spotlighting-style envelope. Random boundary so content cannot forge the

@@ -22,6 +22,8 @@ import type { Finding, TextSegment } from "./types.js";
 import { variants } from "./normalize.js";
 
 export interface MeaningInput {
+  /** the content kind, when the caller knows it: some checks only make sense for some channels */
+  kind?: string;
   /** segments from the visibility pass (or a single visible segment for plain text) */
   segments: TextSegment[];
   /** payloads decoded by the character pass */
@@ -391,10 +393,13 @@ function scoreText(text: string, hidden: boolean, where: string, findings: Findi
     });
   }
 
+  // A message, a log or an event ends in a signature, a legal notice, a tracking id or a quoted header: its last
+  // tokens are symbol-laced as a matter of course, and four ordinary emails in three thousand were refused for it.
+  // In those channels a visible suffix is weak evidence: it counts beside something else, never alone.
   if (!inCode) {
     const sfx = adversarialSuffix(text);
     if (sfx) findings.push({
-      pass: "meaning", kind: "meaning.adversarial_suffix", confidence: hidden ? 0.7 : 0.55, severity: 0.6,
+      pass: "meaning", kind: "meaning.adversarial_suffix", confidence: hidden ? 0.7 : SUFFIX_WEAK.has(channelKind) ? 0.3 : 0.55, severity: 0.6,
       message: `optimizer-style adversarial suffix: ${sfx.weird} of the last ${sfx.tokens} tokens are symbol-laced fragments after ordinary prose (GCG-style jailbreak)`,
       excerpt: sfx.tail.slice(-120), location: where, inHidden: hidden, action: "neutralized",
     });
@@ -471,7 +476,17 @@ function adversarialSuffix(text: string): { tail: string; tokens: number; weird:
   return { tail, tokens: tokens.length, weird };
 }
 
+/** channels whose visible text routinely ends in non-prose */
+const SUFFIX_WEAK = new Set(["email", "log", "calendar", "message", "notification"]);
+/** the kind of the content being scanned; set for the duration of one scanMeaning call (the pass is synchronous) */
+let channelKind = "";
+
 export function scanMeaning(input: MeaningInput): Finding[] {
+  channelKind = input.kind ?? "";
+  try { return scanMeaningInner(input); } finally { channelKind = ""; }
+}
+
+function scanMeaningInner(input: MeaningInput): Finding[] {
   const findings: Finding[] = [];
   // score what the model would actually receive as one unit: visible text plus delivered alt text, so a payload split across them recombines here
   const delivered = input.segments.filter((s) => s.visibility === "visible" || (s.visibility === "attribute" && s.path.endsWith("@alt")));

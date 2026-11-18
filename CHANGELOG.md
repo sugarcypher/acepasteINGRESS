@@ -4,6 +4,37 @@ Every change bumps the patch version of all three packages. The ruleset id chang
 behavior changes; receipts carry it so verdicts are reproducible. Releases up to 0.9.6 are in the
 [README](README.md#changes-in-096-2026-11-18-ruleset-20261118-3-unchanged).
 
+## 0.9.15 (2026-11-18, ruleset 2026.11.18-6)
+
+Email and calendars as content types (Phases 1, 2, 9a, 9b; `email.ts`, `calendar.ts`, `served.ts`).
+
+- **Email adapter.** Raw messages (MIME: nested multiparts, base64, quoted-printable, encoded headers) and
+  the JSON that Gmail, Microsoft Graph and simple mail tools return, singly or as a list. Each piece becomes
+  a segment with the visibility a person had of it: shown headers and the HTML part's visible text are
+  visible; text the HTML hides, headers no client shows, and text only the plain part has are not.
+  - *Plain part vs. HTML part:* a passage only the plain part has is read as hidden text
+    (`email.part_divergence`).
+  - *The sender:* Reply-To at another site (unless the message declares itself a mailing list), a display
+    name that is another address, an authority name on a free mail address, failed authentication
+    (`email.sender_mismatch`, `email.authentication_failed`).
+  - *What it would fetch:* remote images and stylesheets are listed and never loaded
+    (`email.remote_content`); an address with a placeholder to fill with data is flagged.
+  - *Attachments:* text, HTML, invitations and nested messages are read; the rest are listed as not
+    inspected (`email.uninspected_part`).
+  - Marketing furniture (a hidden preheader, tracking pixels, a longer plain-text footer) is not a refusal.
+- **Calendar adapter.** iCalendar text (events, to-dos, alarms) and Google Calendar and Graph event JSON.
+  Titles, places, descriptions and attendee names are visible; alarm text, extension properties, links and
+  inline attachments are not. A plain description that says what the formatted one does not is a divergence;
+  an alarm that runs a program or sends email is reported (`calendar.alarm_action`).
+- Mail and calendar JSON is recognised by its shape, raw messages by their headers, `.eml` and `.ics` by name.
+- **MCP proxy:** a downstream server can be given `content: { kind, trust, channel }` (and `toolContent` per
+  tool), so a mail server's results are read as email at the trust level the operator sets.
+- The jailbreak-suffix check counts only beside other evidence in messages, logs and events, whose last lines
+  are signatures and disclaimers.
+- **Measured** (`tools/email-eval/`, `npm run email-eval`): on a hold-out sample scored once, 32.1% of 3,798
+  LLMail-Inject attack emails caught and 99.6% of 4,550 legitimate emails (Enron, SpamAssassin ham) passed:
+  65.8% balanced accuracy, rules only. Development sample: 36.0%, 99.8%, 67.9%. No attack message was read.
+
 ## 0.9.14 (2026-11-18, ruleset unchanged)
 
 Hooks for coding agents: `ingress hook <event>` (Phases 10a and 12; `agent-hooks.ts`, `shell-commands.ts`,

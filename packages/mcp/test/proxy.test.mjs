@@ -16,9 +16,9 @@ const FAKE = join(here, "fake-downstream.mjs");
 const CLI = join(here, "..", "..", "core", "dist", "src", "cli.js");
 
 /** start the proxy in front of the fake server in the given mode; returns a connected client */
-async function proxy(stateDir, mode) {
+async function proxy(stateDir, mode, downstream = {}, env = {}) {
   const cfgPath = join(stateDir, `proxy-${mode}.json`);
-  writeFileSync(cfgPath, JSON.stringify({ downstream: [{ name: "fake", command: process.execPath, args: [FAKE], env: { FAKE_MODE: mode } }] }));
+  writeFileSync(cfgPath, JSON.stringify({ downstream: [{ name: "fake", command: process.execPath, args: [FAKE], env: { FAKE_MODE: mode, ...env }, ...downstream }] }));
   const client = new Client({ name: "proxy-test", version: "0" });
   await client.connect(new StdioClientTransport({
     command: process.execPath, args: [SERVER],
@@ -57,6 +57,28 @@ test("a poisoned tool description never reaches the model, and the tool cannot b
     assert.match(textOf(res), /did not run fake__add/);
     // the honest tool beside it still works
     assert.match(textOf(await c.callTool({ name: "fake__echo", arguments: { text: "still fine" } })), /still fine/);
+  } finally { await c.close(); }
+});
+
+test("a mail server behind the proxy is read as email: a hidden instruction in one message refuses the listing", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "ingress-proxy-"));
+  // ordinary inbox: delivered, and recorded as email at the trust level the operator set
+  let c = await proxy(dir, "clean", { content: { kind: "email", trust: 4, channel: "work mail" } });
+  try {
+    const res = await c.callTool({ name: "fake__list_messages", arguments: {} });
+    assert.ok(!res.isError);
+    assert.match(textOf(res), /Noon on Friday\?/);
+    assert.equal(res.structuredContent.contentKind, "email");
+    assert.equal(res.structuredContent.receipt.trust, 4);
+  } finally { await c.close(); }
+  // one message hides an instruction in its HTML part; no hint given, the shape is recognised on its own
+  c = await proxy(dir, "clean", {}, { FAKE_MAIL: "bad" });
+  try {
+    const res = await c.callTool({ name: "fake__list_messages", arguments: {} });
+    assert.equal(res.isError, true);
+    assert.equal(res.structuredContent.contentKind, "email");
+    assert.ok(!textOf(res).includes("collect.evil.example"), "the hidden text is not passed on");
+    assert.ok(res.structuredContent.findings.some((f) => f.inHidden));
   } finally { await c.close(); }
 });
 

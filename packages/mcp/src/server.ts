@@ -70,7 +70,15 @@ if (env.INGRESS_SANDBOX === "off" || env.INGRESS_SANDBOX === "escalate" || env.I
 const engine = new IngressEngine(cfg, { log });
 
 // ---------- proxy configuration ----------
-interface Downstream { name: string; command: string; args?: string[]; env?: Record<string, string>; cwd?: string; trusted?: boolean }
+/** what a downstream server's results are, when the operator knows: `{ "kind": "email", "trust": 4, "channel": "gmail" }` */
+interface ContentHint { kind?: string; trust?: number; channel?: string }
+interface Downstream {
+  name: string; command: string; args?: string[]; env?: Record<string, string>; cwd?: string; trusted?: boolean;
+  /** how to read every result from this server (the channel and how far its senders are trusted) */
+  content?: ContentHint;
+  /** the same, per tool name, overriding `content` */
+  toolContent?: Record<string, ContentHint>;
+}
 interface ProxyConfig { policy?: Partial<BrokerPolicy>; downstream?: Downstream[]; quarantine?: string[] }
 const proxyCfg: ProxyConfig = env.INGRESS_PROXY_CONFIG ? JSON.parse(readFileSync(env.INGRESS_PROXY_CONFIG, "utf8")) : {};
 for (const d of proxyCfg.downstream ?? []) if (!/^[a-z0-9_-]{1,32}$/i.test(d.name)) throw new Error(`downstream server name ${JSON.stringify(d.name)} must be 1-32 letters, digits, - or _`);
@@ -291,7 +299,11 @@ async function callProxied(name: string, raw: unknown) {
   const text = items.filter((c) => c.type === "text").map((c) => c.text ?? "").join("\n");
   const uninspected = items.filter((c) => c.type !== "text").map((c) => c.type);
   if (p.server.trusted) return res;
-  const r = await engine.scan(text, { url: `tool:${name}`, isHtml: false });
+  // Read the result as what it is. A mail or calendar server's JSON is recognised by its shape; the operator
+  // can say so outright, and say how far the people who write to that channel are trusted (strangers: 4).
+  const hint = { channel: p.server.name, ...(p.server.content ?? {}), ...(p.server.toolContent?.[p.tool.name] ?? {}) };
+  const hints = parseScanHints(hint);
+  const r = await engine.scan(text, { url: `tool:${name}`, ...(hints.kind ? {} : { contentType: "" }), ...hints });
   const { result, composed } = await admit(r, `tool:${name}`);
   const out = present(result, composed);
   // non-text parts (images, audio, resources) are not inspected: say so rather than pass them silently
