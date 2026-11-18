@@ -39,6 +39,37 @@ Against the bundled corpus (`npm run eval`): **85/85 attacks refused** (63 outri
 
 The corpus covers: Unicode tag characters, zero-width binary channels, bidi overrides, variation-selector and entity smuggling, full-width/mathematical/homoglyph look-alikes across seven scripts, base64 (short, split, chunked), base32, hex, octal, quoted-printable, percent-encoding; CSS hiding by `display`/`visibility`/`opacity`/`clip-path`/`transform`/`scale`/`translate`/`inset`/`font` shorthand/custom-property indirection/off-screen offsets; collapsed `details`, `noscript`, `iframe srcdoc`, SVG text, `title`/`alt`/`meta` carriers; role tokens for six model families, tool-call shapes, EchoLeak images, webhook exfiltration; paraphrased, spaced, dotted, leet, reversed, and rot13 instructions; agent-targeted cloaking and webdriver-keyed render divergence; credential-stealing install scripts, pipe-to-shell commands hidden or base64-encoded, npx-from-URL in markdown comments, environment variables piped to a remote host. Benign cases include multilingual text (Persian, Arabic, Hebrew, Hindi, CJK, Coptic), emoji ZWJ sequences, legitimate accessibility markup, analytics snippets, minified bundles, security articles, fiction, runbooks, support macros, API JSON, ordinary package manifests, native-module install scripts, and the rustup and Homebrew install lines.
 
+## Beyond web pages (0.9.7 to 0.9.21)
+
+The same question, asked of every channel an agent reads: what does the machine get that a person was not
+shown? Each row has its own measurements and its own stated limits; the full record, release by release, is
+in [`CHANGELOG.md`](CHANGELOG.md), and what was planned against what was built is in
+[`docs/ROADMAP-LOG.md`](docs/ROADMAP-LOG.md).
+
+| channel | what is checked | where |
+|---|---|---|
+| Email | plain part against the part a mail client shows, hidden HTML, sender and authentication, remote content listed and never loaded | `email.ts`, `tools/email-eval` |
+| Calendars | every event field with its sender; alarm actions | `calendar.ts` |
+| Chat and text messages | what an app shows against what an API returns, display names, scam shape, verification codes | `messages.ts`, `tools/message-eval` |
+| Notifications | payload fields a banner does not show; an alarm in the system's voice sent by a website | `messages.ts` |
+| Images and QR codes | text that appears only after resizing, too faint to see, under transparency, in later frames, in metadata; what following a code would do | `image.ts`, [`docs/IMAGES.md`](docs/IMAGES.md) |
+| Captions, transcripts, audio | cues nobody can read, captions nobody said, speaking to the notetaker, speech too quiet to hear | `captions.ts`, `audio.ts`, [`docs/AUDIO-CAPTIONS.md`](docs/AUDIO-CAPTIONS.md) |
+| Terminal output and logs | control codes that hide text or act on the machine; streaming with cut and retract | `terminal.ts`, `stream.ts` |
+| Nearby devices | Bonjour, Bluetooth and printer names as lowest-trust content; lookalikes of devices you know | `nearby.ts`, `ingress nearby` |
+| Shortcuts | reads private data + takes outside input + can send out; code it runs | `shortcuts.ts`, `ingress shortcut <file>` |
+| What goes out | blocklisted hosts, verification codes, credentials, uploads, printers and removable drives, tunnels behind localhost, a session marker that must never leave | `egress.ts`, `broker.ts` |
+| The agent's own files | provenance marks on what an agent wrote after reading outside content; downloaded files gated on read; MCP tool definitions fingerprinted | `provenance.ts`, `tooldefs.ts` |
+| A coding agent's session | six hooks: before a tool runs, after it returns, on a pasted prompt, around compaction, at session start | [`integrations/claude-code`](integrations/claude-code/README.md) |
+| Approvals | a dialog showing the exact action; optionally Touch ID or the login password, confirmed by macOS | `approvers.ts`, `INGRESS_APPROVER=macos-presence` |
+
+A learned classifier runs beside the rules (`classifier.ts`, trained by `tools/classifier`). Alone it makes
+content suspect, never hostile, and on the visible text of pages it decides nothing.
+
+Honest numbers, each from a set scored once after the rules were fixed: 89.4% of attack emails caught with
+99.5% of legitimate mail passed; 99.9% of ordinary text messages passed; 87 of 89 ordinary images passed. And
+what is not measured is said where it applies: recall on real image attacks, adversarial audio, an official
+PINT score, AgentDojo.
+
 ## Hardening
 
 - **Not a request-forgery primitive.** Every fetch hop resolves DNS and is checked against blocked ranges (loopback, RFC-1918, link-local incl. 169.254.169.254, carrier-grade NAT, IPv4-mapped IPv6, unique-local, multicast); the connection is pinned to the checked addresses (no DNS rebinding); redirects are followed hop by hop, each re-checked; ports limited to 80/443 plus an allowlist.

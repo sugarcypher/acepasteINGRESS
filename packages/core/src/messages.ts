@@ -169,7 +169,7 @@ const LINK = /\bhttps?:\/\/[^\s<>"')\]]+|\b(?:[a-z0-9-]+\.)+(?:com|net|org|io|co
 const SHORTENER = /^(?:bit\.ly|t\.co|tinyurl\.com|goo\.gl|is\.gd|ow\.ly|buff\.ly|rebrand\.ly|cutt\.ly|rb\.gy|t\.ly|shorturl\.at|s\.id|tiny\.cc|lnkd\.in|v\.gd|qr\.ae|shorte\.st|bl\.ink|x\.co)$/i;
 
 /** How a link hides where it goes, or undefined when it does not. */
-function linkTrick(link: string): string | undefined {
+export function linkTrick(link: string): string | undefined {
   let u: URL;
   try { u = new URL(/^https?:\/\//i.test(link) ? link : `https://${link}`); } catch { return "an address that does not parse"; }
   const h = u.hostname.toLowerCase();

@@ -192,16 +192,20 @@ export function visionHelperProblem(path: string = visionHelperPath()): string |
 }
 
 /** The helper's source, shipped with the package. */
-export function visionHelperSource(): string { return fileURLToPath(new URL("../../native/ingress-vision.swift", import.meta.url)); }
+export function visionHelperSource(): string { return nativeSource("ingress-vision"); }
+const nativeSource = (name: string) => fileURLToPath(new URL(`../../native/${name}.swift`, import.meta.url));
 
 /**
  * Compile the helper on this machine (macOS with the Swift compiler: Xcode or its command line tools) and
  * record its hash. Built here rather than shipped as a binary, so what runs is what the source says.
  */
-export function buildVisionHelper(out: string = join(stateDir(), "bin", "ingress-vision")): Promise<{ path: string; sha256: string }> {
+export function buildVisionHelper(out: string = join(stateDir(), "bin", "ingress-vision")): Promise<{ path: string; sha256: string }> { return buildNativeHelper("ingress-vision", out); }
+
+/** Compile one of the package's Swift helpers (ingress-vision, ingress-presence) and record its hash beside it. */
+export function buildNativeHelper(name: "ingress-vision" | "ingress-presence", out: string = join(stateDir(), "bin", name)): Promise<{ path: string; sha256: string }> {
   return new Promise((resolve, reject) => {
-    if (process.platform !== "darwin") return reject(new Error("the vision helper is built on macOS only"));
-    const src = visionHelperSource();
+    if (process.platform !== "darwin") return reject(new Error("the helper is built on macOS only"));
+    const src = nativeSource(name);
     if (!existsSync(src)) return reject(new Error(`the helper's source is missing (${src})`));
     mkdirSync(dirname(out), { recursive: true, mode: 0o700 });
     execFile("swiftc", ["-O", "-swift-version", "5", src, "-o", out], { timeout: 300_000, encoding: "utf8" }, (err, _stdout, stderr) => {
@@ -225,6 +229,9 @@ export function helperRunner(path: string = visionHelperPath(), timeoutMs = 60_0
     });
   });
 }
+
+const CLICKFIX_OPEN = /\b(?:press|hit|hold|tap|click)\b[^.]{0,30}(?:\bwin(?:dows)?(?: key)?\s*\+\s*r\b|⊞\s*\+\s*r\b|\b(?:cmd|command|⌘)\s*\+?\s*space\b|\bctrl\s*\+\s*alt\s*\+\s*t\b)|\bopen (?:the )?(?:terminal|powershell|command prompt|run (?:dialog|box|window)|spotlight)\b/i;
+const CLICKFIX_PASTE = /\b(?:ctrl|cmd|command|⌘)\s*\+\s*v\b|\bpaste (?:it|the|this|and)\b|\b(?:then|and) (?:press|hit) enter\b/i;
 
 // ---------- inspection ----------
 
@@ -291,6 +298,11 @@ export async function inspectImage(bytes: Uint8Array, opts: InspectOptions = {})
   if (vision) {
     const shown = textOf(vision.full).trim();
     if (shown) segments.unshift({ text: shown, visibility: "visible", path: "image/text" });
+    // A screen that tells its reader to open a terminal or the Run box and paste something ("to verify you are
+    // human, press Win+R, then Ctrl+V"): the ClickFix lure. It works on people, and an agent that reads the
+    // screen and can type is a faster victim.
+    const flat = shown.replace(/\s+/g, " ");
+    if (CLICKFIX_OPEN.test(flat) && CLICKFIX_PASTE.test(flat)) add({ kind: "image.clickfix", confidence: 0.55, severity: 0.75, message: "the picture tells its reader to open a terminal or the Run box and paste something: a fake verification or fix screen (ClickFix). Nothing on a screen is a reason to run a command", location: "image/text" });
 
     const resized = resizedOnly(vision);
     if (resized.lines.length) {
