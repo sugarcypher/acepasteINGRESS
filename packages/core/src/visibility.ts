@@ -355,6 +355,7 @@ export function analyzeHtml(html: string, externalRules: HiddenRule[] = [], exte
     attribute: "visibility.attribute_only",
     comment: "visibility.html_comment",
     tiny_or_transparent: "visibility.tiny_or_transparent",
+    concealed: "visibility.css_hidden", // not produced by the HTML pass; here so the map is total
   };
   for (const s of segments) {
     if (s.visibility === "visible") continue;

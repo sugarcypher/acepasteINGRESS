@@ -44,7 +44,7 @@ import { z } from "zod";
 import { appendFileSync, readFileSync } from "node:fs";
 import { randomBytes } from "node:crypto";
 import {
-  IngressEngine, ActionBroker, DEFAULT_BROKER_POLICY, auditEnvironment, formatAudit, trackAudit, formatAuditChanges, reviewToolDefinitions, heldDescription, stopReason, canaryNotice, ASSEMBLED_LIMITS, loadInstructionFiles, macosDialogApprover, denyAllApprover, loadPolicyFile, cloakingConfigFromEnv, HONEST_USER_AGENT, ENGINE_VERSION,
+  IngressEngine, ActionBroker, DEFAULT_BROKER_POLICY, auditEnvironment, formatAudit, trackAudit, formatAuditChanges, reviewToolDefinitions, heldDescription, stopReason, canaryNotice, parseScanHints, CONTENT_KINDS, ASSEMBLED_LIMITS, loadInstructionFiles, macosDialogApprover, denyAllApprover, loadPolicyFile, cloakingConfigFromEnv, HONEST_USER_AGENT, ENGINE_VERSION,
   type IngressConfig, type IngressResult, type TaintReceipt, type BrokerPolicy, type Approver, type ToolHold,
 } from "@acepaste/ingress";
 
@@ -147,7 +147,7 @@ const OWN_TOOLS = [
     name: "ingress_scan",
     title: "Scan content through AcePaste Ingress",
     description: "Gate content already in hand (a tool result, a pasted document, a file): HTML, markdown, JSON or plain text. Same verdict policy as ingress_fetch.",
-    inputSchema: { type: "object", properties: { content: { type: "string" }, source: { type: "string", description: "where the content came from, for the receipt" }, contentType: { type: "string" }, isHtml: { type: "boolean" }, override: { type: "boolean" } }, required: ["content"] },
+    inputSchema: { type: "object", properties: { content: { type: "string" }, source: { type: "string", description: "where the content came from, for the receipt" }, contentType: { type: "string" }, isHtml: { type: "boolean" }, override: { type: "boolean" }, kind: { type: "string", enum: [...CONTENT_KINDS], description: "the channel, when you know it: log (logs and terminal output), email, message, notification, calendar, nearby, automation, captions" }, trust: { type: "integer", minimum: 1, maximum: 6, description: "who could have written it: 1 the person, 2 known contacts, 3 an agent earlier, 4 strangers, 5 open channels and logs, 6 broadcasts" }, channel: { type: "string" }, sender: { type: "string" } }, required: ["content"] },
   },
   {
     name: "ingress_status",
@@ -176,7 +176,7 @@ const OWN_TOOLS = [
 ];
 
 const fetchArgs = z.object({ url: z.string().url(), override: z.boolean().optional() });
-const scanArgs = z.object({ content: z.string().max(5_000_000), source: z.string().optional(), contentType: z.string().optional(), isHtml: z.boolean().optional(), override: z.boolean().optional() });
+const scanArgs = z.object({ content: z.string().max(5_000_000), source: z.string().optional(), contentType: z.string().optional(), isHtml: z.boolean().optional(), override: z.boolean().optional(), kind: z.string().optional(), trust: z.number().optional(), channel: z.string().optional(), sender: z.string().optional() });
 const verifyArgs = z.object({ receipt: z.record(z.string(), z.any()) });
 
 async function callOwn(name: string, raw: unknown) {
@@ -195,7 +195,7 @@ async function callOwn(name: string, raw: unknown) {
   }
   if (name === "ingress_scan") {
     const a = scanArgs.parse(raw);
-    const r = await engine.scan(a.content, { url: a.source, contentType: a.contentType, isHtml: a.isHtml, override: a.override });
+    const r = await engine.scan(a.content, { url: a.source, contentType: a.contentType, isHtml: a.isHtml, override: a.override, ...parseScanHints(a) });
     const { result, composed } = await admit(r, a.source ?? "inline:scan");
     return present(result, composed);
   }

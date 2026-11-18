@@ -22,7 +22,7 @@ import { scanSupplyChain } from "./supplychain.js";
 import { scanCode } from "./codepass.js";
 import { scanSecrets, redactSecrets, collectSecrets, scrubExcerpt } from "./secrets.js";
 import { attachEvidence } from "./evidence.js";
-import { adaptJavascript, adaptJson, adaptMarkdown, adaptText, decodeEntities, detectKind } from "./adapters.js";
+import { adaptByKind, decodeEntities, detectKind } from "./adapters.js";
 import { runSandbox } from "./sandbox.js";
 import {
   DEFAULT_CONFIG,
@@ -35,6 +35,9 @@ import {
   type IngressResult,
   type PassName,
   type ScriptUnit,
+  type SourceInfo,
+  type TrustLevel,
+  TRUST_SUSPECT_FACTOR,
   type TaintReceipt,
   type TextSegment,
   type Tier,
@@ -227,7 +230,7 @@ export class IngressEngine {
   }
 
   /** Gate text or HTML already in hand (paste, tool result, file). */
-  async scan(content: string, opts: IngressOptions & { url?: string; isHtml?: boolean; contentType?: string } = {}): Promise<IngressResult> {
+  async scan(content: string, opts: IngressOptions & { url?: string; isHtml?: boolean; contentType?: string; /** the channel, when the caller knows it; otherwise it is detected */ kind?: ContentKind; /** where it came from and how far that source is trusted */ source?: SourceInfo } = {}): Promise<IngressResult> {
     const t0 = performance.now();
     const url = opts.url ?? "inline:";
     if (opts.quarantined) return this.refuse(url, [{ pass: "policy", kind: "policy.denied_source", confidence: 1, severity: 1, message: `source is quarantined by your organization: ${opts.quarantined}`, action: "none" }], {}, t0, "text", "hostile", true);
@@ -235,9 +238,9 @@ export class IngressEngine {
     if (bytes > this.config.maxBodyBytes) {
       return this.refuse(url, [{ pass: "policy", kind: "policy.denied_source", confidence: 0.5, severity: 0.5, message: `content is ${bytes} bytes, over the ${this.config.maxBodyBytes} byte limit`, action: "none" }], {}, t0, "text");
     }
-    const kind: ContentKind = opts.isHtml === true ? "html" : opts.isHtml === false ? "text" : detectKind(opts.contentType ?? "", content, opts.url ?? "");
+    const kind: ContentKind = opts.kind ?? (opts.isHtml === true ? "html" : opts.isHtml === false ? "text" : detectKind(opts.contentType ?? "", content, opts.url ?? ""));
     const rule = url.startsWith("inline:") ? undefined : this.domainRule(url);
-    return this.guarded(url, kind, t0, () => this.analyze({ url, finalUrl: url, redirectChain: [], raw: content, kind, externalRules: [], timings: {}, t0, override: !!opts.override, extraFindings: [], rule }));
+    return this.guarded(url, kind, t0, () => this.analyze({ url, finalUrl: url, redirectChain: [], raw: content, kind, externalRules: [], timings: {}, t0, override: !!opts.override, extraFindings: [], rule, source: opts.source }));
   }
 
   /**
@@ -333,6 +336,7 @@ export class IngressEngine {
     url: string; finalUrl: string; redirectChain: string[]; raw: string; kind: ContentKind; humanRaw?: string; humanContentType?: string;
     externalRules: HiddenRule[]; externalColorRules?: ColorRule[]; timings: IngressResult["timings"]; t0: number; override: boolean; extraFindings: Finding[];
     rule: ReturnType<IngressEngine["domainRule"]>;
+    source?: SourceInfo;
   }): Promise<IngressResult> {
     const findings: Finding[] = [...a.extraFindings];
     const passesRun: PassName[] = [];
@@ -361,7 +365,7 @@ export class IngressEngine {
       segments = v.segments; scripts = v.scripts; visibleText = v.visibleText;
       findings.push(...v.findings);
     } else {
-      const r = a.kind === "markdown" ? adaptMarkdown(raw) : a.kind === "json" ? adaptJson(raw) : a.kind === "javascript" ? adaptJavascript(raw) : adaptText(raw);
+      const r = adaptByKind(a.kind, raw);
       segments = r.segments; findings.push(...r.findings);
       if (a.kind === "javascript") scripts = [{ index: 0, source: raw, inline: true }];
       visibleText = segments.filter((s) => s.visibility === "visible").map((s) => s.text).join(" ").replace(/\s+/g, " ").trim();
@@ -493,7 +497,9 @@ export class IngressEngine {
     // score and tier (per-domain thresholds override)
     const score = aggregate(findings, { cloakingCompared: passesRun.includes("cloaking") });
     const hostileAt = a.rule?.hostileThreshold ?? this.config.hostileThreshold;
-    const suspectAt = a.rule?.suspectThreshold ?? this.config.suspectThreshold;
+    // content from strangers, open channels and broadcasts needs less evidence to be refused; trust never loosens the default
+    const trust = a.source?.trust;
+    const suspectAt = (a.rule?.suspectThreshold ?? this.config.suspectThreshold) * (trust ? TRUST_SUSPECT_FACTOR[trust] ?? 1 : 1);
     const tier: Tier = score >= hostileAt ? "hostile" : score >= suspectAt ? "suspect" : "clean";
 
     // delivered text: clean passes; suspect passes only under human override; hostile never
@@ -507,7 +513,7 @@ export class IngressEngine {
       delivered = scrubExcerpt(delivered, knownSecrets);
     }
 
-    const receipt = this.receipt({ url: a.url, finalUrl: a.finalUrl, redirectChain: a.redirectChain, kind: a.kind, raw: a.raw, delivered, tier, score, findings, overridden, passesRun, acepasteInvisibleCount: countHostileInvisibles(a.raw) });
+    const receipt = this.receipt({ url: a.url, finalUrl: a.finalUrl, redirectChain: a.redirectChain, kind: a.kind, raw: a.raw, delivered, tier, score, findings, overridden, passesRun, acepasteInvisibleCount: countHostileInvisibles(a.raw), trust });
     const envelope = buildEnvelope(a.finalUrl, tier, delivered, findings, receipt, overridden);
     timings.total = performance.now() - a.t0;
 
@@ -572,7 +578,7 @@ export class IngressEngine {
     return list[Math.min(list.length - 1, Math.floor(this.deps.random() * list.length))];
   }
 
-  private receipt(r: { url: string; finalUrl: string; redirectChain: string[]; kind: ContentKind; raw: string; delivered: string; tier: Tier; score: number; findings: Finding[]; overridden: boolean; passesRun: PassName[]; acepasteInvisibleCount: number }): TaintReceipt {
+  private receipt(r: { url: string; finalUrl: string; redirectChain: string[]; kind: ContentKind; raw: string; delivered: string; tier: Tier; score: number; findings: Finding[]; overridden: boolean; passesRun: PassName[]; acepasteInvisibleCount: number; trust?: TrustLevel }): TaintReceipt {
     const ecdsa = this.signer();
     const body: Omit<TaintReceipt, "digest" | "signature"> = {
       version: "3",
@@ -587,6 +593,7 @@ export class IngressEngine {
       tier: r.tier, score: +r.score.toFixed(4),
       overridden: r.overridden,
       passesRun: r.passesRun,
+      trust: r.trust, // omitted from the canonical body when the caller gave none, so older receipts verify unchanged
       findings: r.findings.map(({ pass, kind, confidence, severity, action, evidenceClass, band, artifactDigest }) => ({ pass, kind, confidence: +confidence.toFixed(3), severity, action, evidenceClass, band, artifactDigest })),
       previous: this.config.chainReceipts ? this.lastReceiptDigest : undefined,
       signatureAlg: ecdsa ? "ecdsa-p256-sha256" : this.config.signingKey ? "hmac-sha256" : undefined,

@@ -3,7 +3,8 @@
  * AcePaste Ingress — HTTP service. This is the metered product.
  *
  *   POST /v1/fetch   { url, override? }                          -> IngressResult
- *   POST /v1/scan    { content, source?, contentType?, override?}-> IngressResult
+ *   POST /v1/scan    { content, source?, contentType?, override?,
+ *                      kind?, trust?, channel?, sender? }         -> IngressResult   (kind: the channel, e.g. "log"; trust: 1-6)
  *   POST /v1/verify  { receipt }                                 -> { digestOk, signatureOk, signatureAlg, keyId }
  *   GET  /v1/feed                 recent non-clean verdicts, anonymized (public)
  *   GET  /v1/receipts             the caller's own receipts, searchable (audit plane)
@@ -35,7 +36,7 @@ import { createHash } from "node:crypto";
 import { appendFileSync, readFileSync, writeFileSync, existsSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join, normalize } from "node:path";
-import { IngressEngine, loadPolicyFile, cloakingConfigFromEnv, HONEST_USER_AGENT, checkLocalRequest, isLoopbackBind, type IngressConfig, type IngressResult, type TaintReceipt } from "@acepaste/ingress";
+import { IngressEngine, loadPolicyFile, cloakingConfigFromEnv, HONEST_USER_AGENT, checkLocalRequest, isLoopbackBind, parseScanHints, type IngressConfig, type IngressResult, type TaintReceipt } from "@acepaste/ingress";
 import { JsonlReceiptStore, toStored, type ReceiptStore } from "./store.js";
 
 const env = process.env;
@@ -314,7 +315,9 @@ const server = createServer(async (req, res) => {
     }
     if (path === "/v1/scan") {
       if (typeof body.content !== "string") return send(res, 400, { error: "content required" });
-      const r = await engine.scan(body.content, { url: body.source, contentType: body.contentType, isHtml: body.isHtml, override: body.override === true, quarantined: quarantinedFor(a.info.name, typeof body.source === "string" ? body.source : undefined) });
+      // optional hints: kind (the channel: "log", "email", ...), trust (1-6), channel, sender
+      const hints = parseScanHints(body);
+      const r = await engine.scan(body.content, { url: body.source, contentType: body.contentType, isHtml: body.isHtml, override: body.override === true, quarantined: quarantinedFor(a.info.name, typeof body.source === "string" ? body.source : undefined), ...hints });
       record(a.info.name, r);
       log({ event: "ingress.usage", key: a.info.name, op: "scan", tier: r.tier, ms: Date.now() - started, usage: meter.usage(a.key) });
       return send(res, r.tier === "clean" || r.overridden ? 200 : r.tier === "unreachable" ? 502 : 422, r);
