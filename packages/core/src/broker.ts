@@ -28,6 +28,7 @@
 
 import { createHash, randomBytes } from "node:crypto";
 import { BurstCounter, DEFAULT_BURST, actionKey, carriesCanary, newCanary, persistenceShapes, type BurstPolicy } from "./safeguards.js";
+import { HomeCalls, carriesCode, credentialsLeaving, hostsMentioned, isForwarder, loopbackPorts, oneTimeCodes, peripheralEgress, type Blocklist } from "./egress.js";
 
 export type ActionDecision = "allow" | "require_approval" | "deny";
 
@@ -71,6 +72,24 @@ export interface BrokerPolicy {
   persistenceGuard: "always" | "tainted" | "off";
   /** limits on how fast and how repetitively a run may act before a person is asked */
   burst: BurstPolicy;
+  /**
+   * Once a run has read outside content, does every tool not known to be read-only need a person? True for
+   * an agent whose tools all pass through the broker (the MCP proxy). A harness with its own permission
+   * prompts (a coding agent's shell) sets false and relies on the specific checks: persistence, data leaving,
+   * codes, blocklists, peripherals.
+   */
+  approveWhenTainted: boolean;
+  /**
+   * Is every "scheme:rest" in the arguments held to parsing as an address? True for tool arguments, where a
+   * field that looks like an address is one. False for free text such as shell commands.
+   */
+  strictAddresses: boolean;
+  /** requests to one host the run met in outside content, within ten minutes, before a person is asked */
+  callHomeLimit: number;
+  /** email addresses in one action's arguments, in a run that has read outside content, before a person is asked */
+  massRecipients: number;
+  /** how long a verification code the run read stays unsendable, milliseconds */
+  codeTtlMs: number;
 }
 
 export const DEFAULT_BROKER_POLICY: BrokerPolicy = {
@@ -86,12 +105,29 @@ export const DEFAULT_BROKER_POLICY: BrokerPolicy = {
   onApproverUnavailable: "deny",
   persistenceGuard: "always",
   burst: DEFAULT_BURST,
+  approveWhenTainted: true,
+  strictAddresses: true,
+  callHomeLimit: 6,
+  massRecipients: 10,
+  codeTtlMs: 30 * 60_000,
 };
 
 export interface ProposedAction {
   runId: string;
   tool: string;
   args: unknown;
+  /**
+   * The parts of the arguments that can change something, when the caller can tell (a shell command with its
+   * read-only parts removed). When given, the check for things that act later reads these instead of every
+   * argument, so that reading a startup file is not mistaken for writing one.
+   */
+  writes?: string[];
+  /**
+   * Ways the action sends data to another machine, in plain words, when the caller can tell (a shell command
+   * that uploads a file). In a run that has read outside content these need a person, unless every address
+   * in the arguments is this machine, on the allowlist, or one the person named.
+   */
+  sends?: string[];
 }
 
 export interface ApprovalRequest {
@@ -142,7 +178,23 @@ export interface BrokerEvent {
   policy: { name: string; version: number };
 }
 
-interface RunState { sources: Set<string>; receipts: Set<string>; hosts: Set<string>; quarantined: Set<string>; canaries: string[]; burst: BurstCounter }
+interface RunState {
+  sources: Set<string>; receipts: Set<string>; hosts: Set<string>; quarantined: Set<string>; canaries: string[]; burst: BurstCounter;
+  /** verification codes the run read, with when */
+  codes: Map<string, number>;
+  /** hosts named in content the run read, with the source that named each first */
+  mentioned: Map<string, string>;
+  /** hosts the person named in their own words, when the caller can see those (a prompt hook can; a tool proxy cannot) */
+  typed: Set<string>;
+  heardPerson: boolean;
+  home: HomeCalls;
+}
+
+/** A run's state as plain data, so a hook that starts a new process per event can carry it between events. */
+export interface SerializedRun {
+  sources: string[]; receipts: string[]; hosts: string[]; quarantined: string[]; canaries: string[];
+  codes: Array<[string, number]>; mentioned: Array<[string, string]>; typed: string[]; heardPerson: boolean; home: Record<string, number[]>; burst: { at: number[]; same: Array<[string, number[]]> };
+}
 
 /** deterministic JSON: object keys sorted at every depth, so one call has one digest */
 export function canonicalJson(v: unknown): string {
@@ -256,6 +308,10 @@ export function exfilShapes(args: unknown): string[] {
 
 const hostAllowed = (host: string, allow: string[]) => allow.some((a) => { const x = a.toLowerCase().replace(/\.$/, ""); return x.startsWith(".") ? host === x.slice(1) || host.endsWith(x) : host === x; });
 const hostMatches = (host: string, q: string) => host === q || host.endsWith("." + q);
+/** the source that first named this host (or a parent of it) in content the run read */
+const metIn = (r: RunState, h: string): string | undefined => r.mentioned.get(h) ?? [...r.mentioned].find(([m]) => h.endsWith("." + m))?.[1];
+/** did the person name this host (or a parent of it) themselves? */
+const typedBy = (r: RunState, h: string): boolean => r.typed.has(h) || [...r.typed].some((t) => h.endsWith("." + t));
 
 export class ActionBroker {
   readonly policy: BrokerPolicy;
@@ -263,14 +319,56 @@ export class ActionBroker {
   private globalQuarantine = new Set<string>();
   private used = new Set<string>();
 
-  constructor(policy: Partial<BrokerPolicy> = {}, private deps: { approver?: Approver; log?: (e: BrokerEvent) => void; now?: () => number; /** why everything is stopped, or undefined (see safeguards.stopReason) */ stopCheck?: () => string | undefined } = {}) {
+  constructor(policy: Partial<BrokerPolicy> = {}, private deps: {
+    approver?: Approver; log?: (e: BrokerEvent) => void; now?: () => number;
+    /** why everything is stopped, or undefined (see safeguards.stopReason) */
+    stopCheck?: () => string | undefined;
+    /** known-bad destinations (see egress.Blocklist) */
+    blocklist?: Blocklist;
+    /** the program listening on a local port, so a tunnel behind "localhost" is seen for what it is */
+    portProgram?: (port: number) => string | undefined;
+  } = {}) {
     this.policy = { ...DEFAULT_BROKER_POLICY, ...policy, readOnlyTools: policy.readOnlyTools ?? DEFAULT_BROKER_POLICY.readOnlyTools, burst: { ...DEFAULT_BROKER_POLICY.burst, ...(policy.burst ?? {}) } };
   }
 
   private run(runId: string): RunState {
     let r = this.runs.get(runId);
-    if (!r) { r = { sources: new Set(), receipts: new Set(), hosts: new Set(), quarantined: new Set(), canaries: [], burst: new BurstCounter() }; this.runs.set(runId, r); }
+    if (!r) { r = { sources: new Set(), receipts: new Set(), hosts: new Set(), quarantined: new Set(), canaries: [], burst: new BurstCounter(), codes: new Map(), mentioned: new Map(), typed: new Set(), heardPerson: false, home: new HomeCalls() }; this.runs.set(runId, r); }
     return r;
+  }
+
+  /** A run's state as plain data (see SerializedRun). */
+  exportRun(runId: string): SerializedRun {
+    const r = this.run(runId);
+    return { sources: [...r.sources].slice(-200), receipts: [...r.receipts].slice(-200), hosts: [...r.hosts].slice(-400), quarantined: [...r.quarantined], canaries: [...r.canaries], codes: [...r.codes], mentioned: [...r.mentioned].slice(-800), typed: [...r.typed].slice(-400), heardPerson: r.heardPerson, home: r.home.export(), burst: r.burst.export() };
+  }
+
+  /**
+   * What the person said in their own words (not what they pasted). A destination they named is theirs: it is
+   * not reported as coming from content, and repeated requests to it are not counted as calling home.
+   */
+  notePersonSaid(runId: string, text: string): void {
+    const r = this.run(runId);
+    r.heardPerson = true;
+    for (const h of hostsMentioned(text)) if (r.typed.size < 2000) r.typed.add(h);
+  }
+
+  /** Restore a run from exported state. Unknown or malformed fields are ignored, never trusted to loosen anything. */
+  importRun(runId: string, s: Partial<SerializedRun> | undefined): void {
+    if (!s || typeof s !== "object") return;
+    const r = this.run(runId);
+    const strs = (v: unknown) => (Array.isArray(v) ? v.filter((x): x is string => typeof x === "string") : []);
+    for (const x of strs(s.sources)) r.sources.add(x);
+    for (const x of strs(s.receipts)) r.receipts.add(x);
+    for (const x of strs(s.hosts)) r.hosts.add(x);
+    for (const x of strs(s.quarantined)) r.quarantined.add(x);
+    for (const x of strs(s.canaries)) if (!r.canaries.includes(x)) r.canaries.push(x);
+    for (const e of Array.isArray(s.codes) ? s.codes : []) if (Array.isArray(e) && typeof e[0] === "string" && typeof e[1] === "number") r.codes.set(e[0], e[1]);
+    for (const e of Array.isArray(s.mentioned) ? s.mentioned : []) if (Array.isArray(e) && typeof e[0] === "string" && typeof e[1] === "string") r.mentioned.set(e[0], e[1]);
+    for (const x of strs(s.typed)) r.typed.add(x);
+    if (s.heardPerson === true) r.heardPerson = true;
+    r.home.import(s.home);
+    r.burst.import(s.burst);
   }
 
   /**
@@ -300,9 +398,14 @@ export class ActionBroker {
   }
 
   /** record outside content the run has taken in. Any source taints the run, whatever its verdict. */
-  ingest(runId: string, source: { ref: string; receiptDigest?: string; host?: string }): { tainted: true; sources: string[] } {
+  ingest(runId: string, source: { ref: string; receiptDigest?: string; host?: string; /** the text the run was given from this source: read for verification codes and for the hosts it names */ text?: string }): { tainted: true; sources: string[] } {
     const r = this.run(runId);
     r.sources.add(source.ref);
+    if (source.text) {
+      const now = this.deps.now?.() ?? Date.now();
+      for (const c of oneTimeCodes(source.text)) r.codes.set(c, now);
+      for (const h of hostsMentioned(source.text)) if (!r.mentioned.has(h) && r.mentioned.size < 2000) r.mentioned.set(h, source.ref);
+    }
     if (source.receiptDigest) r.receipts.add(source.receiptDigest);
     const host = source.host?.toLowerCase().replace(/\.$/, "");
     if (host) r.hosts.add(host);
@@ -338,6 +441,9 @@ export class ActionBroker {
     const rule = this.policy.rules.find((x) => globMatch(x.tool, action.tool));
     const readOnly = !rule && this.policy.readOnlyTools.some((g) => globMatch(g, action.tool));
     const dest = destinationsIn(action.args);
+    // in free text such as a shell command, "a:b" is syntax far more often than an address: only what is
+    // written as a network URL is held to how it parses
+    if (!this.policy.strictAddresses) dest.oddities = dest.oddities.filter((o) => /international domain|\((?:https?|wss?|ftps?|sftp|ssh|git|smb|s3|gs):[\\/]{2}/i.test(o));
     const fields = walkStrings(action.args).fields;
     let decision: ActionDecision;
     if (rule) {
@@ -351,7 +457,7 @@ export class ActionBroker {
       }
     } else if (!tainted) {
       decision = "allow";
-    } else if (readOnly) {
+    } else if (readOnly || !this.policy.approveWhenTainted) {
       decision = "allow";
     } else {
       decision = "require_approval";
@@ -373,7 +479,7 @@ export class ActionBroker {
     const walked = walkStrings(action.args);
     // something that acts later always goes to a person: one steered moment must not become a standing one
     if (this.policy.persistenceGuard !== "off" && (tainted || this.policy.persistenceGuard === "always") && !readOnly) {
-      const p = persistenceShapes(action.tool, walked.strings);
+      const p = persistenceShapes(action.tool, action.writes ?? walked.strings);
       if (p.length) { decision = strongest(decision, "require_approval"); reasons.push(...p.map((h) => `creates something that acts later: ${h.why}`)); }
     }
     // a burst, or the same action again and again
@@ -381,6 +487,58 @@ export class ActionBroker {
       const b = r.burst.check(actionKey(action.tool, canonicalArgs), this.deps.now?.() ?? Date.now(), this.policy.burst);
       if (b.length) { decision = strongest(decision, "require_approval"); reasons.push(...b); }
     }
+    // ---- egress: what leaves, judged with what the run has read (egress.ts) ----
+    const now = this.deps.now?.() ?? Date.now();
+    const outside = dest.hosts.filter((h) => !hostAllowed(h, this.policy.allowHosts));
+    // where a destination came from: named first by content the run read, not by the person
+    // (a host the person named themselves is theirs, whatever content also names it)
+    const fromContent = outside.filter((h) => metIn(r, h) !== undefined && !typedBy(r, h));
+    const provenance = (h: string) => metIn(r, h) ?? "content this run read";
+    if (tainted) {
+      const creds = credentialsLeaving(walked.strings);
+      if (creds) { decision = strongest(decision, "require_approval"); reasons.push(`the arguments carry ${creds} credential${creds === 1 ? "" : "s"}, in a run that has taken in outside content`); }
+      // data going to another machine: fine toward this machine, the allowlist, or a place the person named
+      if (action.sends?.length) {
+        const urls = walked.strings.flatMap((s) => [...s.matchAll(/\b[a-z][a-z0-9+.-]{1,15}:\/\/(?:[^\s/@"']*@)?(\[[0-9a-f:.]+\]|[^\s/:?#"'<>()]+)/gi)].map((m) => m[1].toLowerCase().replace(/^\[|\]$/g, "")));
+        const fine = (h: string) => /^(?:localhost|127(?:\.\d{1,3}){3}|::1|0\.0\.0\.0)$/.test(h) || hostAllowed(h, this.policy.allowHosts) || typedBy(r, h);
+        if (!(urls.length && urls.every(fine))) { decision = strongest(decision, "require_approval"); reasons.push(...action.sends.map((s) => `${s}, in a run that has taken in outside content`)); }
+      }
+      // one message to many people
+      const recipients = new Set(walked.strings.flatMap((s) => (s.length > 200_000 ? [] : [...s.matchAll(/[\w.+-]{1,64}@(?:[a-z0-9-]+\.)+[a-z]{2,24}/gi)].map((m) => m[0].toLowerCase())))).size;
+      if (recipients >= this.policy.massRecipients && !readOnly) { decision = strongest(decision, "require_approval"); reasons.push(`the arguments name ${recipients} email addresses: one action reaching many people`); }
+      const per = peripheralEgress(action.tool, walked.strings);
+      if (per.length) { decision = strongest(decision, "require_approval"); reasons.push(...per.map((p) => `data would leave this machine without the network: ${p.why}`)); }
+      // a loopback port owned by a tunnel or proxy is the internet
+      for (const port of this.deps.portProgram ? loopbackPorts(walked.strings) : []) {
+        const prog = this.deps.portProgram!(port);
+        if (isForwarder(prog)) { decision = strongest(decision, "require_approval"); reasons.push(`port ${port} on this machine belongs to ${prog}, which forwards elsewhere: this is not a local destination`); }
+      }
+      // many requests to a host the run met in outside content
+      for (const h of fromContent) {
+        const n = r.home.count(h, now);
+        if (n >= this.policy.callHomeLimit) { decision = strongest(decision, "require_approval"); reasons.push(`${n} requests in ten minutes to ${h}, a host this run first met in ${provenance(h)}`); }
+      }
+      // once a person is being asked anyway, say where each destination came from
+      if (decision !== "allow") for (const h of fromContent.slice(0, 4)) reasons.push(`${h} first appeared in ${provenance(h)}${r.heardPerson ? ", not in anything you typed" : ""}`);
+    }
+    // known-bad destinations: refused whatever the run has read
+    if (this.deps.blocklist?.size) {
+      for (const h of dest.hosts) { const hit = this.deps.blocklist.match(h); if (hit) { decision = "deny"; reasons.push(`${h} is on a blocklist of malware and botnet hosts (${hit})`); } }
+    }
+    // a verification code the run read: for the person to type, never for an agent to send
+    const live = [...r.codes].filter(([, at]) => now - at <= this.policy.codeTtlMs).map(([c]) => c);
+    const code = carriesCode(walked.strings, live);
+    if (code) {
+      // to a place that outside content named: that is the theft, and not a question. Anywhere else (a sign-in
+      // the person asked for) a person decides, knowing what the action carries. Short codes collide with
+      // ordinary numbers, so they only ever ask.
+      const stolen = fromContent.length > 0 && code.length >= 6;
+      decision = stolen ? "deny" : strongest(decision, "require_approval");
+      reasons.push(stolen
+        ? `the arguments carry a verification code this run read (ending ${code.slice(-2)}) to ${fromContent[0]}, a destination that came from ${provenance(fromContent[0])}`
+        : `the arguments carry a verification code this run read (ending ${code.slice(-2)}): approve only if you asked for this sign-in`);
+    }
+
     // the run's marker in an outbound argument: the context itself is leaving. Not a question for approval.
     if (carriesCanary(walked.strings, r.canaries)) {
       decision = "deny";
@@ -390,6 +548,18 @@ export class ActionBroker {
     const stopped = this.deps.stopCheck?.();
     if (stopped) { decision = "deny"; reasons.push(`a person has stopped all agent actions: ${stopped}`); }
     return { decision, reasons, digest, canonicalArgs, destinations: dest.hosts, fields };
+  }
+
+  /**
+   * Record that an action went ahead when something other than this broker's approver let it (a harness with
+   * its own permission prompt): the burst and call-home counters need to know.
+   */
+  noteRan(action: ProposedAction): void {
+    const now = this.deps.now?.() ?? Date.now();
+    const canonicalArgs = canonicalJson(action.args);
+    const r = this.run(action.runId);
+    if (!this.policy.readOnlyTools.some((g) => globMatch(g, action.tool))) r.burst.record(actionKey(action.tool, canonicalArgs), now);
+    for (const h of destinationsIn(action.args).hosts) if (metIn(r, h) !== undefined) r.home.record(h, now);
   }
 
   /**
@@ -426,6 +596,8 @@ export class ActionBroker {
     }
     // count what actually ran, so the burst guard sees it (read-only tools never count)
     if (verdict.permitted && !this.policy.readOnlyTools.some((g) => globMatch(g, action.tool))) this.run(action.runId).burst.record(actionKey(action.tool, c.canonicalArgs), now);
+    // and every request that went out, per destination, so a host being called again and again is seen
+    if (verdict.permitted) { const run = this.run(action.runId); for (const h of c.destinations) if (metIn(run, h) !== undefined) run.home.record(h, now); }
     this.deps.log?.({ event: "broker.decision", at: new Date(now).toISOString(), runId: action.runId, tool: action.tool, digest: c.digest, decision: verdict.decision, permitted: verdict.permitted, reasons: verdict.reasons, approval: verdict.approval, sources: this.state(action.runId).sources, policy: policyRef });
     return { ...verdict, args: deepFreeze(JSON.parse(c.canonicalArgs)) };
   }

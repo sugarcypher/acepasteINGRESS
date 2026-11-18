@@ -1,8 +1,14 @@
 {
   "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash|Write|Edit|MultiEdit|NotebookEdit|WebFetch|mcp__.*",
+        "hooks": [{ "type": "command", "command": "ingress hook pre-tool-use", "timeout": 15 }]
+      }
+    ],
     "PostToolUse": [
       {
-        "matcher": "WebFetch|WebSearch|Bash|Read|mcp__.*",
+        "matcher": "WebFetch|WebSearch|Bash|Read|Write|Edit|MultiEdit|NotebookEdit|mcp__.*",
         "hooks": [{ "type": "command", "command": "ingress hook post-tool-use", "timeout": 120 }]
       }
     ],

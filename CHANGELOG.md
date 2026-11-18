@@ -4,6 +4,51 @@ Every change bumps the patch version of all three packages. The ruleset id chang
 behavior changes; receipts carry it so verdicts are reproducible. Releases up to 0.9.6 are in the
 [README](README.md#changes-in-096-2026-11-18-ruleset-20261118-3-unchanged).
 
+## 0.9.17 (2026-11-18, ruleset unchanged)
+
+The egress gate (Phase 3): what an agent sends out or leaves behind, judged with what the run has read.
+No verdict on content changes in this release.
+
+- **`egress.ts`, in the action broker.** New checks, each with its reason in plain words:
+  - a destination on a local blocklist of botnet and attack infrastructure is refused, whatever the run has
+    read (`ingress blocklist update` downloads Feodo Tracker, Spamhaus DROP and Emerging Threats lists;
+    `ingress blocklist check <host>`; your own lists go in `<state>/blocklists`);
+  - a verification code the run read is refused toward a destination that came from outside content, and
+    needs a person anywhere else (codes are recognised by the words around them: "zip code 90210" is not one);
+  - a credential in the arguments, a print job, a copy to a removable drive, AirDrop or Bluetooth, a "localhost"
+    port owned by a tunnel or proxy, ten or more email addresses in one action, and repeated requests to a
+    host the run first met in outside content: each needs a person once the run has read outside content;
+  - where a destination first appeared is named in the approval request ("first appeared in <source>").
+- **`ingress hook pre-tool-use`**: the same checks for a coding agent. Replies "ask" or "deny" through the
+  harness's own permission prompt. Reading outside content does not make every later command a question;
+  the specific checks do the work. Shell commands are split so that reading a startup or settings file is
+  not mistaken for editing one (`shellWrites`), and uploads are recognised (`shellUploads`: `curl -d @file`,
+  `scp`, a pipe into `nc`, `git push <address>`, a request built from another command's output).
+- **The session marker.** `SessionStart` states a random marker; any command that carries it, plainly or
+  encoded, is refused: the context itself is leaving.
+- **Session memory for hooks.** `PostToolUse` records what the session read (sources, hosts named, codes), so
+  the egress gate, which runs as a new process per event, knows. What the person typed is recorded as theirs:
+  a host they named is never reported as coming from content.
+- **Provenance marks** (`provenance.ts`, `ingress provenance`). A file written after the session read outside
+  content is marked with the session and its sources. When a later session reads it, the text is scanned and,
+  if it is not clean, the reader is told where the file came from. Marks label and never withhold. A file
+  macOS recorded as downloaded is gated when read, like a web page.
+- **Every question and refusal is recorded** in `<state>/egress-log.jsonl` with its reasons, never the arguments.
+- **The MCP proxy** now passes delivered text to the broker (codes, hosts), loads the blocklists and looks up
+  what listens behind a loopback port.
+- **Measured.** One long real session (1,177 tool calls) replayed as if it had read outside content from the
+  start: 22 questions (1.9%), no refusals; 18 of them are the cases the gate exists for (edits to agent
+  hooks, tool-server lists and memory; a copy to an external drive). The first cut asked 80 times. This
+  session guided the fixes, so it is a development number. `tools/egress-replay/replay.mjs` repeats it.
+- **Fixed.** An empty quoted argument (`''`) ended the command it was in for the shell splitter (0.9.14), so
+  the words after it were read as a new command.
+- **Not done.** AgentDojo was not run (it needs a model API key). Sharing fingerprints of refused destinations
+  between machines is not built; everything stays local. Scope is judged by destination only. abuse.ch's
+  host lists now need an account key and are not in the default set. The hook reads a command, not what a
+  program it starts will do; a machine-wide filter is Phase 4.
+
+Tests: core 326 pass (22 new), proxy 6.
+
 ## 0.9.16 (2026-11-18, ruleset 2026.11.18-7)
 
 The learned pass (Phase 0): a small classifier beside the rules (`classifier.ts`, `classifier-model.ts`,

@@ -44,7 +44,7 @@ import { z } from "zod";
 import { appendFileSync, readFileSync } from "node:fs";
 import { randomBytes } from "node:crypto";
 import {
-  IngressEngine, ActionBroker, DEFAULT_BROKER_POLICY, auditEnvironment, formatAudit, trackAudit, formatAuditChanges, reviewToolDefinitions, heldDescription, stopReason, canaryNotice, parseScanHints, CONTENT_KINDS, ASSEMBLED_LIMITS, loadInstructionFiles, macosDialogApprover, denyAllApprover, loadPolicyFile, cloakingConfigFromEnv, HONEST_USER_AGENT, ENGINE_VERSION,
+  IngressEngine, ActionBroker, Blocklist, localPortProgram, DEFAULT_BROKER_POLICY, auditEnvironment, formatAudit, trackAudit, formatAuditChanges, reviewToolDefinitions, heldDescription, stopReason, canaryNotice, parseScanHints, CONTENT_KINDS, ASSEMBLED_LIMITS, loadInstructionFiles, macosDialogApprover, denyAllApprover, loadPolicyFile, cloakingConfigFromEnv, HONEST_USER_AGENT, ENGINE_VERSION,
   type IngressConfig, type IngressResult, type TaintReceipt, type BrokerPolicy, type Approver, type ToolHold,
 } from "@acepaste/ingress";
 
@@ -86,7 +86,11 @@ for (const d of proxyCfg.downstream ?? []) if (!/^[a-z0-9_-]{1,32}$/i.test(d.nam
 const approver: Approver = (env.INGRESS_APPROVER ?? (process.platform === "darwin" ? "macos-dialog" : "deny")) === "macos-dialog" ? macosDialogApprover() : denyAllApprover;
 // the gate's own read tools are always read-only; the config adds the downstream tools it knows only read
 // the stop switch: a file a person creates (`ingress stop`) that refuses every action until they remove it (`ingress resume`)
-const broker = new ActionBroker({ ...(proxyCfg.policy ?? {}), readOnlyTools: [...DEFAULT_BROKER_POLICY.readOnlyTools, ...(proxyCfg.policy?.readOnlyTools ?? [])] }, { approver, log: (e) => log(e as unknown as Record<string, unknown>), stopCheck: () => stopReason() });
+const broker = new ActionBroker({ ...(proxyCfg.policy ?? {}), readOnlyTools: [...DEFAULT_BROKER_POLICY.readOnlyTools, ...(proxyCfg.policy?.readOnlyTools ?? [])] }, {
+  approver, log: (e) => log(e as unknown as Record<string, unknown>), stopCheck: () => stopReason(),
+  // known-bad destinations (ingress blocklist update), and what really listens behind a "localhost" address
+  blocklist: Blocklist.load(), portProgram: localPortProgram,
+});
 for (const q of proxyCfg.quarantine ?? []) broker.quarantine(q);
 // one run per server session: taint cannot be cleared by the model, only by starting a new session
 const runId = `run_${randomBytes(6).toString("hex")}`;
@@ -107,7 +111,8 @@ let admitChain: Promise<unknown> = Promise.resolve();
 /** gate one piece of outside content, then the run's recent inputs combined; taint the run either way */
 function admit(r: IngressResult, sourceId: string): Promise<{ result: IngressResult; composed?: string }> {
   const next = admitChain.then(async () => {
-    broker.ingest(runId, { ref: r.receipt.finalUrl || sourceId, receiptDigest: r.receipt.digest, host: hostOf(r.receipt.finalUrl) });
+    // the text the model is given is also read for verification codes and for the hosts it names (egress checks)
+    broker.ingest(runId, { ref: r.receipt.finalUrl || sourceId, receiptDigest: r.receipt.digest, host: hostOf(r.receipt.finalUrl), text: r.tier === "clean" || r.overridden ? r.delivered : undefined });
     if (r.tier !== "clean" || !r.delivered) return { result: r };
     // fit the window to the combined check's limits: trim each piece, drop the oldest until the total fits
     const per = ASSEMBLED_LIMITS.fragmentBytes - 64;
