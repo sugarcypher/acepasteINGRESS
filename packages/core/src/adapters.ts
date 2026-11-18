@@ -7,19 +7,34 @@
 
 import type { ContentKind, Finding, TextSegment } from "./types.js";
 import { adaptTerminal } from "./terminal.js";
+import { adaptEmail, looksLikeEmailJson, looksLikeRawEmail } from "./email.js";
+import { adaptCalendar, looksLikeCalendarJson } from "./calendar.js";
+
+/** JSON whose shape is a known channel (a mail message, a calendar event) is read as that channel */
+function jsonChannel(body: string): ContentKind | undefined {
+  let doc: unknown;
+  try { doc = JSON.parse(body); } catch { return undefined; }
+  if (looksLikeEmailJson(doc)) return "email";
+  if (looksLikeCalendarJson(doc)) return "calendar";
+  return "json";
+}
 
 export function detectKind(contentType: string, body: string, urlHint = ""): ContentKind {
   const ct = contentType.toLowerCase();
   if (/x-log|x-terminal|x-ansi/.test(ct) || /\.log(\?|#|$)/i.test(urlHint)) return "log";
+  if (/message\/rfc822|message\/global/.test(ct) || /\.eml(\?|#|$)/i.test(urlHint)) return "email";
+  if (/text\/calendar|application\/ics/.test(ct) || /\.ics(\?|#|$)/i.test(urlHint)) return "calendar";
   // terminal control sequences anywhere in the first part: replay it as a terminal would, whatever it claims to be
   if (/\x1b[\[\]]/.test(body.slice(0, 65_536)) && !/html|xhtml/.test(ct)) return "log";
   if (/html|xhtml/.test(ct)) return "html";
   if (/markdown/.test(ct) || /\.(md|markdown)(\?|#|$)/i.test(urlHint)) return "markdown";
-  if (/json/.test(ct)) return "json";
+  if (/json/.test(ct)) return jsonChannel(body) ?? "json";
   if (/javascript|ecmascript/.test(ct) || /\.(m?js|cjs)(\?|#|$)/i.test(urlHint)) return "javascript";
   const head = body.slice(0, 2048);
+  if (/^\s*BEGIN:VCALENDAR\b/i.test(head)) return "calendar";
+  if (looksLikeRawEmail(body)) return "email";
   if (/^\s*<(!doctype|html|head|body|div|p|span|article|main|table)/i.test(head)) return "html";
-  if (/^\s*[\[{]/.test(head)) { try { JSON.parse(body); return "json"; } catch { /* not json */ } }
+  if (/^\s*[\[{]/.test(head)) { const k = jsonChannel(body); if (k) return k; }
   if (/^(#{1,6}\s|\*\*|- |\d+\. |```|\[.+\]\(.+\))/m.test(head) && /\n/.test(head)) return "markdown";
   return "text";
 }
@@ -135,17 +150,20 @@ export function adaptText(raw: string): AdapterResult {
  * One adapter per content kind. HTML is not here: it goes through visibility.ts, which needs the stylesheet
  * rules the engine fetched. A kind without an adapter yet is read as plain text, so nothing is skipped.
  */
-const ADAPTERS: Partial<Record<ContentKind, (raw: string) => AdapterResult>> = {
-  markdown: adaptMarkdown,
-  json: adaptJson,
-  javascript: adaptJavascript,
-  text: adaptText,
-  log: adaptTerminal,
-};
-
 export function adaptByKind(kind: ContentKind, raw: string): AdapterResult {
-  return (ADAPTERS[kind] ?? adaptText)(raw);
+  switch (kind) {
+    case "markdown": return adaptMarkdown(raw);
+    case "json": return adaptJson(raw);
+    case "javascript": return adaptJavascript(raw);
+    case "log": return adaptTerminal(raw);
+    case "email": return adaptEmail(raw);
+    case "calendar": return adaptCalendar(raw);
+    default: return adaptText(raw);
+  }
 }
+
+/** kinds whose adapters parse HTML themselves: entities in them must reach that parser undecoded */
+export const KINDS_WITH_MARKUP: ReadonlySet<ContentKind> = new Set<ContentKind>(["html", "email", "calendar"]);
 
 /** Plain JavaScript fetched directly (a module, a bundle): the whole thing is a script; any string literals are visible text. */
 export function adaptJavascript(raw: string): AdapterResult {

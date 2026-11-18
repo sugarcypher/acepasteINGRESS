@@ -22,6 +22,8 @@ import type { Finding, TextSegment } from "./types.js";
 import { variants } from "./normalize.js";
 
 export interface MeaningInput {
+  /** the content kind, when the caller knows it: some checks only make sense for some channels */
+  kind?: string;
   /** segments from the visibility pass (or a single visible segment for plain text) */
   segments: TextSegment[];
   /** payloads decoded by the character pass */
@@ -369,12 +371,15 @@ function scoreText(text: string, hidden: boolean, where: string, findings: Findi
     // hostile for it. Templated means a real placeholder ({{x}}, ${x}, %7B, [context]), not any $ or [.
     const longValue = q.split("&").some((kv) => carriesText(kv.split("=").slice(1).join("=")));
     const templated = /=\{|\{\{|\$\{|%7B|\[(?:secret|key|token|context|conversation|summary|data|history|prompt)\]/i.test(q);
-    const strongImg = hidden || longValue || templated;
+    // Hidden does not make a pixel an exfiltration. Every analytics snippet ends in a <noscript> image with a few
+    // short named parameters (Wikipedia's own, on every article, rated its prompt-injection page hostile). A
+    // hidden image counts when its address carries text out, or when the hidden text around it gives an order.
+    const strongImg = longValue || templated || (hidden && hits.length > 0);
     findings.push({
-      // a visible image with a short named query (?style=flat&logo=github) is how every badge works: recorded only (0.9.5)
+      // an image with a short named query (?style=flat&logo=github, ?type=1x1) is a badge or a pixel: recorded only
       pass: "meaning", kind: "meaning.exfil_markdown_image", confidence: (strongImg ? 0.85 : 0.1) * codeFactor, severity: 0.9,
       message: `image whose URL carries ${q.length} bytes of query data (EchoLeak pattern)`,
-      excerpt: imgs[0].slice(0, 120), location: where, inHidden: hidden, action: "neutralized",
+      excerpt: imgs[0].slice(0, 120), location: where, inHidden: hidden && strongImg, action: "neutralized",
     });
   } else if (hidden && MD_IMAGE_ANY.test(text)) {
     findings.push({ pass: "meaning", kind: "meaning.exfil_markdown_image", confidence: 0.6, severity: 0.7, message: `markdown image reference inside hidden text`, location: where, inHidden: hidden, action: "neutralized" });
@@ -391,10 +396,13 @@ function scoreText(text: string, hidden: boolean, where: string, findings: Findi
     });
   }
 
+  // A message, a log or an event ends in a signature, a legal notice, a tracking id or a quoted header: its last
+  // tokens are symbol-laced as a matter of course, and four ordinary emails in three thousand were refused for it.
+  // In those channels a visible suffix is weak evidence: it counts beside something else, never alone.
   if (!inCode) {
     const sfx = adversarialSuffix(text);
     if (sfx) findings.push({
-      pass: "meaning", kind: "meaning.adversarial_suffix", confidence: hidden ? 0.7 : 0.55, severity: 0.6,
+      pass: "meaning", kind: "meaning.adversarial_suffix", confidence: hidden ? 0.7 : SUFFIX_WEAK.has(channelKind) ? 0.3 : 0.55, severity: 0.6,
       message: `optimizer-style adversarial suffix: ${sfx.weird} of the last ${sfx.tokens} tokens are symbol-laced fragments after ordinary prose (GCG-style jailbreak)`,
       excerpt: sfx.tail.slice(-120), location: where, inHidden: hidden, action: "neutralized",
     });
@@ -471,7 +479,17 @@ function adversarialSuffix(text: string): { tail: string; tokens: number; weird:
   return { tail, tokens: tokens.length, weird };
 }
 
+/** channels whose visible text routinely ends in non-prose */
+const SUFFIX_WEAK = new Set(["email", "log", "calendar", "message", "notification"]);
+/** the kind of the content being scanned; set for the duration of one scanMeaning call (the pass is synchronous) */
+let channelKind = "";
+
 export function scanMeaning(input: MeaningInput): Finding[] {
+  channelKind = input.kind ?? "";
+  try { return scanMeaningInner(input); } finally { channelKind = ""; }
+}
+
+function scanMeaningInner(input: MeaningInput): Finding[] {
   const findings: Finding[] = [];
   // score what the model would actually receive as one unit: visible text plus delivered alt text, so a payload split across them recombines here
   const delivered = input.segments.filter((s) => s.visibility === "visible" || (s.visibility === "attribute" && s.path.endsWith("@alt")));

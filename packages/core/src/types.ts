@@ -7,9 +7,9 @@
 
 import type { NetPolicy } from "./netpolicy.js";
 
-export const ENGINE_VERSION = "0.9.14";
+export const ENGINE_VERSION = "0.9.16";
 /** bump whenever a detector's behavior changes; receipts carry it so verdicts are reproducible */
-export const RULESET_VERSION = "2026.11.18-5";
+export const RULESET_VERSION = "2026.11.18-7";
 
 /**
  * clean: delivered. suspect: refused, overridable. hostile: refused, not overridable.
@@ -73,6 +73,8 @@ export type PassName =
   // structure of the channel itself: a control code that acts on the person's machine, two parts of one
   // message that disagree, a sender who is not who the content says
   | "channel"
+  // the learned pass: resemblance to known attacks (classifier.ts)
+  | "classifier"
   | "plugin";
 
 export type FindingKind =
@@ -103,6 +105,17 @@ export type FindingKind =
   | "visibility.markdown_hidden"
   | "visibility.terminal_hidden"
   | "visibility.terminal_control"
+  // channel structure: email
+  | "email.part_divergence"
+  | "email.sender_mismatch"
+  | "email.authentication_failed"
+  | "email.remote_content"
+  | "email.uninspected_part"
+  // channel structure: calendar
+  | "calendar.alarm_action"
+  | "calendar.description_divergence"
+  // learned pass
+  | "classifier.injection_likely"
   // script pass
   | "script.obfuscation"
   | "script.runtime_codegen"
@@ -337,6 +350,11 @@ export interface IngressConfig {
   detectors: Detector[];
   /** chain receipts: each receipt carries the digest of the previous one */
   chainReceipts: boolean;
+  /**
+   * Run the learned pass beside the rules. On its own it can make content suspect, never hostile.
+   * Off reproduces the rules-only verdicts of 0.9.15 and earlier.
+   */
+  classifier: boolean;
 }
 
 export const DEFAULT_CONFIG: IngressConfig = {
@@ -362,4 +380,5 @@ export const DEFAULT_CONFIG: IngressConfig = {
   policy: { domains: [] },
   detectors: [],
   chainReceipts: true,
+  classifier: true,
 };

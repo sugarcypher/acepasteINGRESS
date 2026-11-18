@@ -73,3 +73,32 @@ score. Closing the gap to the PINT leaders needs a learned classifier pass, not 
 The non-English sets say the same louder: 0.9.5 has instruction rules in 30-odd languages and scripts and still catches
 about 3% of Turkish and multilingual attacks, because real attacks are paraphrases, not the canonical "ignore all
 previous instructions" in translation. False alarms stay near zero (6 of 4,855 benign inputs).
+
+## With the learned pass (0.9.16)
+
+0.9.16 adds a small classifier beside the rules (`packages/core/src/classifier.ts`, trained by `tools/classifier`).
+Same 6,876 inputs:
+
+| | 0.9.15, rules only | 0.9.16, rules and classifier |
+|---|---|---|
+| English injections caught (672) | 21.0% | 89.1% |
+| jailbreaks caught (139) | 39.6% | 80.6% |
+| multilingual attacks caught (660) | 1.5% | 32.6% |
+| Turkish attacks caught (550) | 3.3% | 3.3% |
+| attacks caught, all sets (2,021) | 11.1% | 46.7% |
+| benign passed, all sets (4,855) | 99.9% | 99.8% |
+| **balanced accuracy** | **55.5%** | **73.3%** |
+
+How to read this honestly:
+
+- The classifier never trained on a row of these sets: every text here was removed from its training data by
+  exact match, and it used only the *training* splits of the sets whose test splits are scored.
+- These sets did choose two numbers: the lines at which the classifier may decide for plain text (0.85) and for
+  messages (0.8). So they are a development set for this release, not a hold-out. The email hold-out in
+  `tools/email-eval` is the clean number.
+- Two sets are close to the training data: SPML (other rows of the same set were trained on) and the multilingual
+  set (its training split was). English injections at 89% lean on SPML; the deepset and jailbreak sets, which
+  have no such overlap, are the fairer read.
+- Turkish did not move, because no Turkish attack was in the training data. A bag-of-words model does not carry
+  what it learned in one language to another. That needs a multilingual embedding model, which is not built.
+- Still not a PINT score: only Lakera can produce one.
