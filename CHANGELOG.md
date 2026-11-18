@@ -4,6 +4,45 @@ Every change bumps the patch version of all three packages. The ruleset id chang
 behavior changes; receipts carry it so verdicts are reproducible. Releases up to 0.9.6 are in the
 [README](README.md#changes-in-096-2026-11-18-ruleset-20261118-3-unchanged).
 
+## 0.9.18 (2026-11-18, ruleset 2026.11.18-8)
+
+Images and QR codes (Phase 6): what a picture says to a person, and what it says only to a machine.
+Verdicts on text are unchanged; `image` is a new content kind. Full description: `docs/IMAGES.md`.
+
+- **`engine.scanImage(bytes)`**, `ingress --image <file>`, the MCP tool `ingress_scan_image`, `POST /v1/scan-image`.
+  The delivered text is what a person can read in the picture, plus a line for each code in it.
+- **The vision helper** (`packages/core/native/ingress-vision.swift`, macOS, Apple's Vision framework, nothing
+  leaves the machine). Shipped as source and compiled on each machine (`ingress vision build`); its hash is
+  recorded and checked before each use. `ingress vision selftest` builds nine test pictures and checks each trick.
+- **Text a person is not shown** becomes concealed content and goes through the ordinary rules and classifier:
+  - only after resizing without smoothing (an image-scaling attack): nearest, bilinear and bicubic resampling
+    to the sizes models use, compared with every honest view of the picture;
+  - only after the contrast is raised (near-white on white);
+  - only on another background, or in the colours of fully transparent pixels;
+  - only in later frames of an animation;
+  - in the file: PNG text chunks, JPEG comments, EXIF, XMP, IPTC, GIF comments, and bytes after the image's
+    end (`image-meta.ts`, pure TypeScript, every platform).
+- **QR codes and barcodes** (`qr.ts`). The payload is judged for what following it would do: a link is listed
+  with its host; joining a Wi-Fi network, a one-time-code secret, a text message, a payment and an app link
+  are actions and are held; plain text is scanned as concealed content. Nothing is followed. Words beside a
+  code that name another site are a mismatch.
+- **Where pictures are gated.** The MCP proxy reads pictures in tool results: a clean one is handed on, one it
+  refuses or cannot read is withheld with the reason (before, all pictures were withheld). The Claude Code
+  hook reads pictures the agent opens, both the file on disk and the resized copy the harness hands the model,
+  and replaces a refused one with a blank picture.
+- **Lookalike-letter checks are not applied to recognised text**: the recogniser chose those characters.
+- **Measured** (`tools/images/README.md`): on ordinary Wikimedia Commons images, an untouched set scored once
+  gives 87 of 89 clean (97.8%), 2 suspect, none hostile. An earlier hold-out gave 93 of 95 before its two
+  false alarms were fixed (it is development data since). The first cut refused 26 of 95: every image with
+  dense text. Both remaining false alarms are recorded and not fixed.
+- **Not measured: recall on real image attacks.** No public set was scored. The constructed test pictures
+  show the mechanisms work.
+- **Limits.** Pixels are read on macOS only; elsewhere the container is checked and the result says the
+  picture was not read. The resizing check covers common sizes and three kernels. Adversarial noise with no
+  readable words, and steganography that needs a decoder, are not detected. About 4 seconds per image.
+
+Tests: core 343 pass (17 new, one runs the real helper), proxy 7 (1 new).
+
 ## 0.9.17 (2026-11-18, ruleset unchanged)
 
 The egress gate (Phase 3): what an agent sends out or leaves behind, judged with what the run has read.

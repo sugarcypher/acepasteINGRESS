@@ -7,9 +7,9 @@
 
 import type { NetPolicy } from "./netpolicy.js";
 
-export const ENGINE_VERSION = "0.9.17";
+export const ENGINE_VERSION = "0.9.18";
 /** bump whenever a detector's behavior changes; receipts carry it so verdicts are reproducible */
-export const RULESET_VERSION = "2026.11.18-7";
+export const RULESET_VERSION = "2026.11.18-8";
 
 /**
  * clean: delivered. suspect: refused, overridable. hostile: refused, not overridable.
@@ -22,7 +22,7 @@ export type Tier = "clean" | "suspect" | "hostile" | "unreachable";
  * What the content is. The first five are document formats; the rest are channels, each with its own adapter
  * that turns the channel's structure into segments the passes read (see docs/ROADMAP.md, shared foundations).
  */
-export type ContentKind = "html" | "markdown" | "json" | "text" | "javascript" | "log" | "email" | "calendar" | "message" | "notification" | "nearby" | "automation" | "captions";
+export type ContentKind = "html" | "markdown" | "json" | "text" | "javascript" | "log" | "email" | "calendar" | "message" | "notification" | "nearby" | "automation" | "captions" | "image";
 
 /**
  * Who could have written the content. Lower is more trusted. It never makes a verdict more lenient than the
@@ -43,7 +43,7 @@ export interface SourceInfo {
   trust?: TrustLevel;
 }
 
-export const CONTENT_KINDS: readonly ContentKind[] = ["html", "markdown", "json", "text", "javascript", "log", "email", "calendar", "message", "notification", "nearby", "automation", "captions"];
+export const CONTENT_KINDS: readonly ContentKind[] = ["html", "markdown", "json", "text", "javascript", "log", "email", "calendar", "message", "notification", "nearby", "automation", "captions", "image"];
 
 /** Read a content kind and source from untyped input (an HTTP body, tool arguments). Unknown values are dropped, never guessed. */
 export function parseScanHints(o: { kind?: unknown; trust?: unknown; channel?: unknown; sender?: unknown }): { kind?: ContentKind; source?: SourceInfo } {
@@ -114,6 +114,18 @@ export type FindingKind =
   // channel structure: calendar
   | "calendar.alarm_action"
   | "calendar.description_divergence"
+  // channel structure: images and the codes in them
+  | "image.text_only_when_resized"
+  | "image.low_contrast_text"
+  | "image.transparency_text"
+  | "image.later_frame_text"
+  | "image.metadata_text"
+  | "image.trailing_data"
+  | "image.active_content"
+  | "image.code_payload"
+  | "image.code_action"
+  | "image.caption_mismatch"
+  | "image.pixels_not_inspected"
   // learned pass
   | "classifier.injection_likely"
   // script pass
@@ -299,7 +311,7 @@ export interface IngressResult {
   /** timing in milliseconds per pass, for the speed budget */
   timings: Partial<Record<PassName | "total", number>>;
   /** what was inspected, and what was not (code languages, units skipped). Unknown is not clean. */
-  coverage?: { code?: import("./codepass.js").CodeCoverage };
+  coverage?: { code?: import("./codepass.js").CodeCoverage; image?: import("./image.js").ImageCoverage };
 }
 
 export interface IngressConfig {

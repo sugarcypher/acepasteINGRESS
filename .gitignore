@@ -1,5 +1,7 @@
 node_modules/
 dist/
+# the vision helper is compiled on each machine from packages/core/native; binaries are never committed
+.build/
 
 # signing keys and local data: never commit
 *.pem

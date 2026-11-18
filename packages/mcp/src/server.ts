@@ -41,7 +41,7 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport, getDefaultEnvironment } from "@modelcontextprotocol/sdk/client/stdio.js";
 import { ListToolsRequestSchema, CallToolRequestSchema } from "@modelcontextprotocol/sdk/types.js";
 import { z } from "zod";
-import { appendFileSync, readFileSync } from "node:fs";
+import { appendFileSync, readFileSync, statSync } from "node:fs";
 import { randomBytes } from "node:crypto";
 import {
   IngressEngine, ActionBroker, Blocklist, localPortProgram, DEFAULT_BROKER_POLICY, auditEnvironment, formatAudit, trackAudit, formatAuditChanges, reviewToolDefinitions, heldDescription, stopReason, canaryNotice, parseScanHints, CONTENT_KINDS, ASSEMBLED_LIMITS, loadInstructionFiles, macosDialogApprover, denyAllApprover, loadPolicyFile, cloakingConfigFromEnv, HONEST_USER_AGENT, ENGINE_VERSION,
@@ -163,6 +163,12 @@ const OWN_TOOLS = [
     inputSchema: { type: "object", properties: { content: { type: "string" }, source: { type: "string", description: "where the content came from, for the receipt" }, contentType: { type: "string" }, isHtml: { type: "boolean" }, override: { type: "boolean" }, kind: { type: "string", enum: [...CONTENT_KINDS], description: "the channel, when you know it: log (logs and terminal output), email, message, notification, calendar, nearby, automation, captions" }, trust: { type: "integer", minimum: 1, maximum: 6, description: "who could have written it: 1 the person, 2 known contacts, 3 an agent earlier, 4 strangers, 5 open channels and logs, 6 broadcasts" }, channel: { type: "string" }, sender: { type: "string" } }, required: ["content"] },
   },
   {
+    name: "ingress_scan_image",
+    title: "Scan a picture through AcePaste Ingress",
+    description: "Gate an image before looking at it: a file path on this machine, or base64 data. Returns the text a person can read in the picture and a line for each QR code or barcode. Refuses images carrying text a person would not see: text that appears only after resizing, too faint to read, under transparent pixels, in later frames, in the file's metadata, or inside a code. A code's payload is described, never followed. Same verdict policy as ingress_fetch.",
+    inputSchema: { type: "object", properties: { path: { type: "string", description: "an image file on this machine" }, data: { type: "string", description: "the image, base64-encoded (instead of path)" }, caption: { type: "string", description: "words shown beside the image: a caption, alt text" }, source: { type: "string", description: "where the image came from, for the receipt" }, override: { type: "boolean" }, trust: { type: "integer", minimum: 1, maximum: 6 }, channel: { type: "string" }, sender: { type: "string" } } },
+  },
+  {
     name: "ingress_status",
     title: "What this run has taken in",
     description: "Outside sources this run has read, whether side effects now need a person's approval, and any quarantined sources. Approval itself happens outside the conversation; there is no tool for it.",
@@ -211,6 +217,23 @@ async function callOwn(name: string, raw: unknown) {
     const r = await engine.scan(a.content, { url: a.source, contentType: a.contentType, isHtml: a.isHtml, override: a.override, ...parseScanHints(a) });
     const { result, composed } = await admit(r, a.source ?? "inline:scan");
     return present(result, composed);
+  }
+  if (name === "ingress_scan_image") {
+    const a = z.object({ path: z.string().min(1).optional(), data: z.string().max(70_000_000).optional(), caption: z.string().max(2000).optional(), source: z.string().optional(), override: z.boolean().optional(), trust: z.number().optional(), channel: z.string().optional(), sender: z.string().optional() }).parse(raw);
+    if (!a.path === !a.data) throw new Error("give either path or data");
+    let bytes: Buffer;
+    if (a.path) {
+      const st = statSync(a.path);
+      if (!st.isFile() || st.size > 50_000_000) throw new Error("not a file, or larger than 50 MB");
+      bytes = readFileSync(a.path);
+    } else bytes = Buffer.from(a.data!, "base64");
+    const sourceId = a.source ?? (a.path ? `file:${a.path}` : "inline:image");
+    const r = await engine.scanImage(bytes, { url: sourceId, caption: a.caption, override: a.override, source: parseScanHints(a).source });
+    const { result, composed } = await admit(r, sourceId);
+    const out = present(result, composed);
+    if (r.coverage?.image) (out.structuredContent as Record<string, unknown>).coverage = r.coverage.image;
+    if (r.coverage?.image && !r.coverage.image.pixels && !out.isError) out.content.push({ type: "text", text: `[AcePaste Ingress: the picture itself was not read (${r.coverage.image.pixelsReason}). Only the file's metadata and structure were checked.]` });
+    return out;
   }
   if (name === "ingress_status") {
     const s = broker.state(runId);
@@ -302,7 +325,9 @@ async function callProxied(name: string, raw: unknown) {
   }
   const items = (res.content as Array<{ type: string; text?: string }> | undefined) ?? [];
   const text = items.filter((c) => c.type === "text").map((c) => c.text ?? "").join("\n");
-  const uninspected = items.filter((c) => c.type !== "text").map((c) => c.type);
+  const pictures = items.filter((c) => c.type === "image") as Array<{ type: "image"; data?: string; mimeType?: string }>;
+  // pictures are read (0.9.18); audio and resources still cannot be, and are withheld
+  const uninspected = [...items.filter((c) => c.type !== "text" && c.type !== "image").map((c) => c.type), ...pictures.slice(8).map(() => "image")];
   if (p.server.trusted) return res;
   // Read the result as what it is. A mail or calendar server's JSON is recognised by its shape; the operator
   // can say so outright, and say how far the people who write to that channel are trusted (strangers: 4).
@@ -311,7 +336,22 @@ async function callProxied(name: string, raw: unknown) {
   const r = await engine.scan(text, { url: `tool:${name}`, ...(hints.kind ? {} : { contentType: "" }), ...hints });
   const { result, composed } = await admit(r, `tool:${name}`);
   const out = present(result, composed);
-  // non-text parts (images, audio, resources) are not inspected: say so rather than pass them silently
+  // Each picture is gated on its own: text in it, codes, and what only a machine would read. One that passes is
+  // handed on as it was; one that does not, or whose pixels could not be read on this machine, is withheld.
+  const pictureNotes: string[] = [];
+  for (const [i, pic] of pictures.slice(0, 8).entries()) {
+    let why: string;
+    try {
+      const ir = await engine.scanImage(Buffer.from(String(pic.data ?? ""), "base64"), { url: `tool:${name}#image${i + 1}`, source: hints.source });
+      broker.ingest(runId, { ref: `tool:${name}#image${i + 1}`, receiptDigest: ir.receipt.digest, text: ir.tier === "clean" ? ir.delivered : undefined });
+      if (ir.tier === "clean" && ir.coverage?.image?.pixels) { if (!out.isError) (out.content as unknown[]).push(pic); continue; }
+      why = ir.tier !== "clean" ? `${ir.tier}: ${[...new Set(ir.findings.filter((f) => f.confidence * f.severity >= 0.05).map((f) => f.kind))].slice(0, 6).join(", ")}` : `its pixels could not be inspected: ${ir.coverage?.image?.pixelsReason ?? "unknown reason"}`;
+    } catch (e) { why = `it could not be read (${String((e as Error)?.message ?? e).slice(0, 120)})`; }
+    pictureNotes.push(`image ${i + 1} withheld (${why})`);
+  }
+  if (pictureNotes.length && !out.isError) out.content.push({ type: "text", text: `[AcePaste Ingress: ${pictureNotes.join("; ")}]` });
+  if (pictures.length) (out.structuredContent as Record<string, unknown>).images = { received: pictures.length, withheld: pictureNotes.length + Math.max(0, pictures.length - 8) };
+  // other non-text parts (audio, resources) are not inspected: say so rather than pass them silently
   if (uninspected.length) (out.structuredContent as Record<string, unknown>).coverage = { text: "inspected", notInspected: uninspected };
   if (uninspected.length && !out.isError) out.content.push({ type: "text", text: `[AcePaste Ingress: ${uninspected.length} non-text part(s) (${[...new Set(uninspected)].join(", ")}) were withheld because they could not be inspected]` });
   return out;

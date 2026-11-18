@@ -24,6 +24,10 @@ import { engageStop, clearStop, stopReason } from "./safeguards.js";
 import { postToolUse, preToolUse, userPromptSubmit, preCompact, postCompact, sessionStart, remoteGate, type HookGate } from "./agent-hooks.js";
 import { Blocklist, BLOCKLIST_FEEDS } from "./egress.js";
 import { ProvenanceLedger, describeMark, downloadOrigin } from "./provenance.js";
+import { buildVisionHelper, visionHelperPath, visionHelperProblem } from "./image.js";
+import { execFileSync } from "node:child_process";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { stateDir } from "./changes.js";
 import { appendFileSync, mkdirSync, renameSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
@@ -45,6 +49,22 @@ async function main() {
   if (args[0] === "tools") return toolsCommand(args.slice(1));
   if (args[0] === "blocklist") return blocklistCommand(args.slice(1));
   if (args[0] === "provenance") return provenanceCommand(args.slice(1));
+  if (args[0] === "vision") return visionCommand(args.slice(1));
+  // ingress --image <file>: gate a picture (text in it, codes, what only a machine would read)
+  if (flag("image")) {
+    const file = args.find((x) => !x.startsWith("--"));
+    if (!file) { console.error("usage: ingress --image <file> [--json] [--caption=words shown beside it]"); process.exit(2); }
+    const engine = new IngressEngine({ ...(opt("policy") ? loadPolicyFile(opt("policy")!) : {}), sandbox: "off" });
+    const r = await engine.scanImage(readFileSync(file), { url: `file:${file}`, caption: opt("caption"), override: flag("override") });
+    if (flag("json")) console.log(JSON.stringify(r, null, 2));
+    else {
+      console.log(r.envelope);
+      const c = r.coverage?.image;
+      if (c && !c.pixels) console.error(`\nnote: the picture itself was not read (${c.pixelsReason}). Only the file's metadata and structure were checked.`);
+    }
+    if (r.tier !== "clean") process.exitCode = 1;
+    return;
+  }
   // ingress stop [reason]: every broker on this machine refuses every agent action until `ingress resume`.
   // Anyone may stop, an agent included. Only a person at a terminal may resume.
   if (args[0] === "stop") {
@@ -161,8 +181,10 @@ async function hookCommand(event: string | undefined, stdin: string) {
     if (pk) cfg.signingPrivateKey = pk;
     const logPath = process.env.INGRESS_LOG;
     const engine = new IngressEngine(cfg, { log: (e) => { if (logPath) { try { appendFileSync(logPath, JSON.stringify(e) + "\n"); } catch { /* best effort */ } } } });
-    gate = { fetch: (u) => engine.fetch(u), scan: (c, o) => engine.scan(c, o) };
+    gate = { fetch: (u) => engine.fetch(u), scan: (c, o) => engine.scan(c, o), scanImage: (b, o) => engine.scanImage(b, o) };
   }
+  // pictures are always read in this process: the helper is on this machine, and nothing about an image needs the service
+  if (!gate.scanImage) { const local = new IngressEngine({ sandbox: "off" }, { log: () => {} }); gate.scanImage = (b, o) => local.scanImage(b, o); }
   const out = (v: unknown) => { if (v !== undefined) process.stdout.write(JSON.stringify(v) + "\n"); };
   switch (event) {
     // the egress gate needs no engine: it judges the action with what the session has already read.
@@ -175,6 +197,45 @@ async function hookCommand(event: string | undefined, stdin: string) {
     case "session-start": return out(sessionStart(input, { marker: process.env.INGRESS_SESSION_MARKER !== "0" }));
     default: console.error("usage: ingress hook pre-tool-use|post-tool-use|user-prompt-submit|pre-compact|post-compact|session-start   (event JSON on stdin)"); process.exit(2);
   }
+}
+
+/**
+ *   ingress vision               is the helper that reads pictures built, and does it match its recorded hash?
+ *   ingress vision build         compile it on this machine (macOS with Xcode or its command line tools)
+ *   ingress vision selftest      build its test pictures and check that each hidden-text trick is caught
+ */
+async function visionCommand(a: string[]) {
+  if (a[0] === "build") {
+    try { const b = await buildVisionHelper(); console.log(`built ${b.path}\nsha256 ${b.sha256}`); }
+    catch (e) { console.error(`not built: ${(e as Error).message}`); process.exit(1); }
+    return;
+  }
+  const problem = visionHelperProblem();
+  if (a[0] === "selftest") {
+    if (problem) { console.error(problem); process.exit(1); }
+    const dir = mkdtempSync(join(tmpdir(), "ingress-vision-selftest-"));
+    try {
+      execFileSync(visionHelperPath(), ["--make-fixtures", dir], { timeout: 120_000 });
+      const engine = new IngressEngine({ sandbox: "off" }, { log: () => {} });
+      const expect: Record<string, { refused: boolean; kind?: string }> = {
+        "plain.png": { refused: false }, "no-text.png": { refused: false }, "qr-link.png": { refused: false },
+        "faint-text.png": { refused: true, kind: "image.low_contrast_text" }, "resize-attack.png": { refused: true, kind: "image.text_only_when_resized" },
+        "under-alpha.png": { refused: true, kind: "image.transparency_text" }, "second-frame.gif": { refused: true, kind: "image.later_frame_text" },
+        "qr-wifi.png": { refused: true, kind: "image.code_action" }, "qr-text.png": { refused: true, kind: "image.code_payload" },
+      };
+      let bad = 0;
+      for (const [name, want] of Object.entries(expect)) {
+        const r = await engine.scanImage(readFileSync(join(dir, name)), { url: `selftest:${name}` });
+        const ok = (r.tier !== "clean") === want.refused && (!want.kind || r.findings.some((f) => f.kind === want.kind));
+        if (!ok) bad++;
+        console.log(`${ok ? "ok  " : "FAIL"} ${name.padEnd(20)} ${r.tier}${want.kind ? ` (${want.kind})` : ""}`);
+      }
+      if (bad) { console.error(`${bad} of ${Object.keys(expect).length} checks failed on this machine`); process.exitCode = 1; }
+    } finally { try { rmSync(dir, { recursive: true, force: true }); } catch { /* temp folder */ } }
+    return;
+  }
+  console.log(problem ? `not ready: ${problem}` : `ready: ${visionHelperPath()}`);
+  if (problem) process.exitCode = 1;
 }
 
 /**

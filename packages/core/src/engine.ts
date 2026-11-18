@@ -23,6 +23,10 @@ import { scanCode } from "./codepass.js";
 import { scanSecrets, redactSecrets, collectSecrets, scrubExcerpt } from "./secrets.js";
 import { attachEvidence } from "./evidence.js";
 import { adaptByKind, decodeEntities, detectKind, KINDS_WITH_MARKUP } from "./adapters.js";
+import { inspectImage, type ImageCoverage, type VisionRunner } from "./image.js";
+import { detectImageFormat } from "./image-meta.js";
+
+const MAX_IMAGE_BYTES = 50_000_000;
 import { servedWords, compareServed } from "./served.js";
 import { scanClassifier } from "./classifier.js";
 import { runSandbox } from "./sandbox.js";
@@ -246,6 +250,32 @@ export class IngressEngine {
   }
 
   /**
+   * Gate an image: what it says to a person, and what it says only to a machine (see image.ts).
+   * The delivered text is the text a person can read in the picture, with a line for each code in it.
+   * Whether the picture itself goes on to the model is the caller's decision, made on the verdict.
+   */
+  async scanImage(bytes: Uint8Array, opts: IngressOptions & { url?: string; source?: SourceInfo; /** words shown beside the image: a caption, alt text, a file name */ caption?: string; /** how to read the pixels (default: the vision helper when built); false reads the container only */ vision?: VisionRunner | false } = {}): Promise<IngressResult> {
+    const t0 = performance.now();
+    const url = opts.url ?? "inline:image";
+    if (opts.quarantined) return this.refuse(url, [{ pass: "policy", kind: "policy.denied_source", confidence: 1, severity: 1, message: `source is quarantined by your organization: ${opts.quarantined}`, action: "none" }], {}, t0, "image", "hostile", true);
+    if (bytes.length > MAX_IMAGE_BYTES) return this.refuse(url, [{ pass: "policy", kind: "policy.denied_source", confidence: 0.5, severity: 0.5, message: `image is ${bytes.length} bytes, over the ${MAX_IMAGE_BYTES} byte limit`, action: "none" }], {}, t0, "image");
+    const rule = url.startsWith("inline:") ? undefined : this.domainRule(url);
+    return this.guarded(url, "image", t0, async () => {
+      // an SVG is markup: its text, hidden or shown, is read as a page's is
+      if (detectImageFormat(bytes) === "svg") {
+        const text = new TextDecoder("utf-8", { fatal: false }).decode(bytes);
+        const extra: Finding[] = /<script\b|\son[a-z]+\s*=|<foreignObject\b|javascript:/i.test(text)
+          ? [{ pass: "channel", kind: "image.active_content", confidence: 0.5, severity: 0.6, message: "this SVG carries scripts, event handlers or embedded HTML: it is a program as well as a picture", action: "none" }]
+          : [];
+        return this.analyze({ url, finalUrl: url, redirectChain: [], raw: text, kind: "html", externalRules: [], timings: {}, t0, override: !!opts.override, extraFindings: extra, rule, source: opts.source });
+      }
+      const ti = performance.now();
+      const insp = await inspectImage(bytes, { vision: opts.vision, caption: opts.caption });
+      return this.analyze({ url, finalUrl: url, redirectChain: [], raw: insp.report, kind: "image", externalRules: [], timings: { visibility: performance.now() - ti }, t0, override: !!opts.override, extraFindings: insp.findings, rule, source: opts.source, adapted: { segments: insp.segments, findings: [] }, imageCoverage: insp.coverage });
+    });
+  }
+
+  /**
    * Gate what the model will actually receive when several sources are combined (search
    * results, retrieved chunks, several tool results). An instruction can be split so each
    * fragment looks harmless alone: each fragment is gated, then the text that would be
@@ -339,6 +369,9 @@ export class IngressEngine {
     externalRules: HiddenRule[]; externalColorRules?: ColorRule[]; timings: IngressResult["timings"]; t0: number; override: boolean; extraFindings: Finding[];
     rule: ReturnType<IngressEngine["domainRule"]>;
     source?: SourceInfo;
+    /** segments already made by a caller that read something other than text (an image); `raw` is then its report */
+    adapted?: { segments: TextSegment[]; findings: Finding[] };
+    imageCoverage?: ImageCoverage;
   }): Promise<IngressResult> {
     const findings: Finding[] = [...a.extraFindings];
     const passesRun: PassName[] = [];
@@ -350,7 +383,7 @@ export class IngressEngine {
     // entity decoding for kinds without markup of their own (parse5 decodes for HTML, and for the HTML inside
     // an email or an event: decoding first would turn text a message quotes, "&lt;div hidden&gt;", into a tag)
     let raw = a.raw;
-    if (!KINDS_WITH_MARKUP.has(a.kind)) {
+    if (!KINDS_WITH_MARKUP.has(a.kind) && !a.adapted) {
       const dec = decodeEntities(raw);
       if (dec.suspicious > 0) {
         findings.push({ pass: "character", kind: "unicode.entity_smuggling", confidence: Math.min(0.95, 0.6 + dec.suspicious * 0.05), severity: 0.7, message: `${dec.suspicious} HTML entities decoding to invisible or format characters`, excerpt: dec.sample, action: "neutralized" });
@@ -368,7 +401,7 @@ export class IngressEngine {
       segments = v.segments; scripts = v.scripts; visibleText = v.visibleText;
       findings.push(...v.findings);
     } else {
-      const r = adaptByKind(a.kind, raw);
+      const r = a.adapted ?? adaptByKind(a.kind, raw);
       segments = r.segments; findings.push(...r.findings);
       if (a.kind === "javascript") scripts = [{ index: 0, source: raw, inline: true }];
       visibleText = segments.filter((s) => s.visibility === "visible").map((s) => s.text).join(" ").replace(/\s+/g, " ").trim();
@@ -406,7 +439,11 @@ export class IngressEngine {
 
     // character pass
     const tch = performance.now();
-    const charAll = scanCharacters(segments.map((s) => s.text).join("\n"));
+    // Text recognised in a picture has no characters of its own: the recogniser chose them, and on small print it
+    // mixes alphabets freely. Lookalike-letter findings there say something about the recogniser, not the author.
+    // The characters that are really in an image file are its metadata, its codes' payloads and appended text.
+    const authored = a.kind === "image" ? segments.filter((s) => /^image\/(?:metadata|code|after-end)/.test(s.path)) : segments;
+    const charAll = scanCharacters(authored.map((s) => s.text).join("\n"));
     findings.push(...charAll.findings);
     let cleanedSegments = segments.map((s) => ({ ...s, text: scanCharacters(s.text).cleaned }));
     timings.character = performance.now() - tch;
@@ -533,7 +570,7 @@ export class IngressEngine {
 
     if (tier !== "clean") this.deps.log(buildLogEntry(a.finalUrl, tier, score, findings, safePayloads, receipt, overridden));
 
-    return { tier, score, contentKind: a.kind, delivered, envelope, findings, receipt, timings, overridden, coverage: { code: codeScan.coverage } };
+    return { tier, score, contentKind: a.kind, delivered, envelope, findings, receipt, timings, overridden, coverage: { code: codeScan.coverage, ...(a.imageCoverage ? { image: a.imageCoverage } : {}) } };
   }
 
   private async fetchStylesheets(html: string, baseUrl: string): Promise<{ hidden: HiddenRule[]; color: ColorRule[] }> {
