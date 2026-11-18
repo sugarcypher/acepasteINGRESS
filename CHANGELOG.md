@@ -4,6 +4,35 @@ Every change bumps the patch version of all three packages. The ruleset id chang
 behavior changes; receipts carry it so verdicts are reproducible. Releases up to 0.9.6 are in the
 [README](README.md#changes-in-096-2026-11-18-ruleset-20261118-3-unchanged).
 
+## 0.9.20 (2026-11-18, ruleset 2026.11.18-10)
+
+Captions, meeting transcripts and audio (Phase 8). Full description: `docs/AUDIO-CAPTIONS.md`. WebVTT, SubRip
+and transcript JSON are now read as captions; `audio` is a new content kind; other verdicts are unchanged.
+
+- **Captions** (`captions.ts`): cues on screen too briefly to read or sized to nothing, cues a `STYLE` block
+  makes invisible, `NOTE` blocks, and, given a transcript of the audio (`scan(captions, { spoken })`), passages
+  nobody said. Each becomes concealed text.
+- **Meeting transcripts**: an utterance that speaks to the notetaker or assistant with something to do is
+  reported, more strongly from a speaker listed as outside the organisation. A spoken approval is noted and
+  is never an approval.
+- **Audio** (`audio.ts`, `engine.scanAudio`, `ingress --audio`): the recording is transcribed as heard, with
+  its quiet parts raised, and after three re-encodings a listener would not notice. Speech too quiet to make
+  out is concealed text; a transcript that does not survive re-encoding is reported. The file's tags (ID3,
+  WAV INFO, Vorbis comments) are scanned.
+- **Transcription is pluggable**: `INGRESS_AUDIO_TRANSCRIBER` names a command. `tools/audio/transcribe.py` is a
+  reference one (an open Whisper model, on the machine). Without one, tags are read and the result says the
+  recording was not transcribed.
+- **Found while building**: the speech model stops at the first long pause unless it decodes in short pieces,
+  which would have skipped exactly the words hidden after a silence; and it invents "Thank you." for a noise
+  floor. Both are handled in the reference transcriber.
+- **Measured**: constructed recordings behave (plain speech passes; an instruction 40 dB under a podcast is
+  refused; noise yields nothing); 24 of 24 LibriSpeech utterances are clean.
+- **Not measured**: adversarial audio (none was made or scored); real recordings with music or crosstalk.
+  **Not built**: a native macOS transcriber (needs a permission a person grants), audio in MCP tool results
+  (still withheld), video.
+
+Tests: core 365 pass (9 new), proxy 7.
+
 ## 0.9.19 (2026-11-18, ruleset 2026.11.18-9)
 
 Messages and notifications (Phase 6): chat, text messages, and the banners an operating system shows

@@ -25,8 +25,11 @@ import { attachEvidence } from "./evidence.js";
 import { adaptByKind, decodeEntities, detectKind, KINDS_WITH_MARKUP } from "./adapters.js";
 import { inspectImage, type ImageCoverage, type VisionRunner } from "./image.js";
 import { detectImageFormat } from "./image-meta.js";
+import { inspectAudio, type AudioCoverage, type AudioRunner } from "./audio.js";
+import type { CaptionHints } from "./captions.js";
 
 const MAX_IMAGE_BYTES = 50_000_000;
+const MAX_AUDIO_BYTES = 200_000_000;
 import { servedWords, compareServed } from "./served.js";
 import { scanClassifier } from "./classifier.js";
 import { runSandbox } from "./sandbox.js";
@@ -236,7 +239,7 @@ export class IngressEngine {
   }
 
   /** Gate text or HTML already in hand (paste, tool result, file). */
-  async scan(content: string, opts: IngressOptions & { url?: string; isHtml?: boolean; contentType?: string; /** the channel, when the caller knows it; otherwise it is detected */ kind?: ContentKind; /** where it came from and how far that source is trusted */ source?: SourceInfo } = {}): Promise<IngressResult> {
+  async scan(content: string, opts: IngressOptions & { url?: string; isHtml?: boolean; contentType?: string; /** the channel, when the caller knows it; otherwise it is detected */ kind?: ContentKind; /** where it came from and how far that source is trusted */ source?: SourceInfo; /** for captions: what was actually said (a transcript of the audio), and speakers from outside the organisation */ spoken?: string; outsideSpeakers?: string[] } = {}): Promise<IngressResult> {
     const t0 = performance.now();
     const url = opts.url ?? "inline:";
     if (opts.quarantined) return this.refuse(url, [{ pass: "policy", kind: "policy.denied_source", confidence: 1, severity: 1, message: `source is quarantined by your organization: ${opts.quarantined}`, action: "none" }], {}, t0, "text", "hostile", true);
@@ -246,7 +249,7 @@ export class IngressEngine {
     }
     const kind: ContentKind = opts.kind ?? (opts.isHtml === true ? "html" : opts.isHtml === false ? "text" : detectKind(opts.contentType ?? "", content, opts.url ?? ""));
     const rule = url.startsWith("inline:") ? undefined : this.domainRule(url);
-    return this.guarded(url, kind, t0, () => this.analyze({ url, finalUrl: url, redirectChain: [], raw: content, kind, externalRules: [], timings: {}, t0, override: !!opts.override, extraFindings: [], rule, source: opts.source }));
+    return this.guarded(url, kind, t0, () => this.analyze({ url, finalUrl: url, redirectChain: [], raw: content, kind, externalRules: [], timings: {}, t0, override: !!opts.override, extraFindings: [], rule, source: opts.source, hints: { spoken: opts.spoken, outsideSpeakers: opts.outsideSpeakers } }));
   }
 
   /**
@@ -272,6 +275,24 @@ export class IngressEngine {
       const ti = performance.now();
       const insp = await inspectImage(bytes, { vision: opts.vision, caption: opts.caption });
       return this.analyze({ url, finalUrl: url, redirectChain: [], raw: insp.report, kind: "image", externalRules: [], timings: { visibility: performance.now() - ti }, t0, override: !!opts.override, extraFindings: insp.findings, rule, source: opts.source, adapted: { segments: insp.segments, findings: [] }, imageCoverage: insp.coverage });
+    });
+  }
+
+  /**
+   * Gate a sound recording: what is said in it, and what is there only for a machine (see audio.ts).
+   * The delivered text is the transcript of what a listener hears. `captions`, when given, are compared with
+   * what was said.
+   */
+  async scanAudio(bytes: Uint8Array, opts: IngressOptions & { url?: string; source?: SourceInfo; /** how to transcribe (default: the command in INGRESS_AUDIO_TRANSCRIBER); false reads the container only */ transcriber?: AudioRunner | false } = {}): Promise<IngressResult> {
+    const t0 = performance.now();
+    const url = opts.url ?? "inline:audio";
+    if (opts.quarantined) return this.refuse(url, [{ pass: "policy", kind: "policy.denied_source", confidence: 1, severity: 1, message: `source is quarantined by your organization: ${opts.quarantined}`, action: "none" }], {}, t0, "audio", "hostile", true);
+    if (bytes.length > MAX_AUDIO_BYTES) return this.refuse(url, [{ pass: "policy", kind: "policy.denied_source", confidence: 0.5, severity: 0.5, message: `recording is ${bytes.length} bytes, over the ${MAX_AUDIO_BYTES} byte limit`, action: "none" }], {}, t0, "audio");
+    const rule = url.startsWith("inline:") ? undefined : this.domainRule(url);
+    return this.guarded(url, "audio", t0, async () => {
+      const ti = performance.now();
+      const insp = await inspectAudio(bytes, { transcriber: opts.transcriber });
+      return this.analyze({ url, finalUrl: url, redirectChain: [], raw: insp.report, kind: "audio", externalRules: [], timings: { visibility: performance.now() - ti }, t0, override: !!opts.override, extraFindings: insp.findings, rule, source: opts.source, adapted: { segments: insp.segments, findings: [] }, audioCoverage: insp.coverage });
     });
   }
 
@@ -372,6 +393,8 @@ export class IngressEngine {
     /** segments already made by a caller that read something other than text (an image); `raw` is then its report */
     adapted?: { segments: TextSegment[]; findings: Finding[] };
     imageCoverage?: ImageCoverage;
+    audioCoverage?: AudioCoverage;
+    hints?: CaptionHints;
   }): Promise<IngressResult> {
     const findings: Finding[] = [...a.extraFindings];
     const passesRun: PassName[] = [];
@@ -401,7 +424,7 @@ export class IngressEngine {
       segments = v.segments; scripts = v.scripts; visibleText = v.visibleText;
       findings.push(...v.findings);
     } else {
-      const r = a.adapted ?? adaptByKind(a.kind, raw);
+      const r = a.adapted ?? adaptByKind(a.kind, raw, a.hints);
       segments = r.segments; findings.push(...r.findings);
       if (a.kind === "javascript") scripts = [{ index: 0, source: raw, inline: true }];
       visibleText = segments.filter((s) => s.visibility === "visible").map((s) => s.text).join(" ").replace(/\s+/g, " ").trim();
@@ -442,7 +465,7 @@ export class IngressEngine {
     // Text recognised in a picture has no characters of its own: the recogniser chose them, and on small print it
     // mixes alphabets freely. Lookalike-letter findings there say something about the recogniser, not the author.
     // The characters that are really in an image file are its metadata, its codes' payloads and appended text.
-    const authored = a.kind === "image" ? segments.filter((s) => /^image\/(?:metadata|code|after-end)/.test(s.path)) : segments;
+    const authored = a.kind === "image" ? segments.filter((s) => /^image\/(?:metadata|code|after-end)/.test(s.path)) : a.kind === "audio" ? segments.filter((s) => s.path.startsWith("audio/metadata")) : segments;
     const charAll = scanCharacters(authored.map((s) => s.text).join("\n"));
     findings.push(...charAll.findings);
     let cleanedSegments = segments.map((s) => ({ ...s, text: scanCharacters(s.text).cleaned }));
@@ -511,7 +534,7 @@ export class IngressEngine {
       const tcl = performance.now();
       // what the model was trained on is a message's subject and body: its address lines (From, To, Date) are
       // not prose, and a line of addresses is not evidence of anything
-      const deliveredText = cleanedSegments.filter((s) => (s.visibility === "visible" || (s.visibility === "attribute" && s.path.endsWith("@alt"))) && !/\/header:(from|to|cc|reply-to|date)$|\/sender$/.test(s.path)).map((s) => s.text).join("\n");
+      const deliveredText = cleanedSegments.filter((s) => (s.visibility === "visible" || (s.visibility === "attribute" && s.path.endsWith("@alt"))) && !/\/header:(from|to|cc|reply-to|date)$|\/sender$|\/speaker$/.test(s.path)).map((s) => s.text).join("\n");
       findings.push(...scanClassifier({ visible: deliveredText, segments: cleanedSegments, kind: a.kind }));
       timings.classifier = performance.now() - tcl;
       passesRun.push("classifier");
@@ -570,7 +593,7 @@ export class IngressEngine {
 
     if (tier !== "clean") this.deps.log(buildLogEntry(a.finalUrl, tier, score, findings, safePayloads, receipt, overridden));
 
-    return { tier, score, contentKind: a.kind, delivered, envelope, findings, receipt, timings, overridden, coverage: { code: codeScan.coverage, ...(a.imageCoverage ? { image: a.imageCoverage } : {}) } };
+    return { tier, score, contentKind: a.kind, delivered, envelope, findings, receipt, timings, overridden, coverage: { code: codeScan.coverage, ...(a.imageCoverage ? { image: a.imageCoverage } : {}), ...(a.audioCoverage ? { audio: a.audioCoverage } : {}) } };
   }
 
   private async fetchStylesheets(html: string, baseUrl: string): Promise<{ hidden: HiddenRule[]; color: ColorRule[] }> {
