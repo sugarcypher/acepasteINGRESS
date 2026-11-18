@@ -44,7 +44,7 @@ import { z } from "zod";
 import { appendFileSync, readFileSync, statSync } from "node:fs";
 import { randomBytes } from "node:crypto";
 import {
-  IngressEngine, ActionBroker, Blocklist, localPortProgram, DEFAULT_BROKER_POLICY, auditEnvironment, formatAudit, trackAudit, formatAuditChanges, reviewToolDefinitions, heldDescription, stopReason, canaryNotice, parseScanHints, CONTENT_KINDS, ASSEMBLED_LIMITS, loadInstructionFiles, macosDialogApprover, denyAllApprover, loadPolicyFile, cloakingConfigFromEnv, HONEST_USER_AGENT, ENGINE_VERSION,
+  IngressEngine, ActionBroker, Blocklist, localPortProgram, DEFAULT_BROKER_POLICY, auditEnvironment, formatAudit, trackAudit, formatAuditChanges, reviewToolDefinitions, heldDescription, stopReason, canaryNotice, parseScanHints, CONTENT_KINDS, ASSEMBLED_LIMITS, loadInstructionFiles, macosDialogApprover, presenceApprover, denyAllApprover, loadPolicyFile, cloakingConfigFromEnv, HONEST_USER_AGENT, ENGINE_VERSION,
   type IngressConfig, type IngressResult, type TaintReceipt, type BrokerPolicy, type Approver, type ToolHold,
 } from "@acepaste/ingress";
 
@@ -83,7 +83,10 @@ interface ProxyConfig { policy?: Partial<BrokerPolicy>; downstream?: Downstream[
 const proxyCfg: ProxyConfig = env.INGRESS_PROXY_CONFIG ? JSON.parse(readFileSync(env.INGRESS_PROXY_CONFIG, "utf8")) : {};
 for (const d of proxyCfg.downstream ?? []) if (!/^[a-z0-9_-]{1,32}$/i.test(d.name)) throw new Error(`downstream server name ${JSON.stringify(d.name)} must be 1-32 letters, digits, - or _`);
 
-const approver: Approver = (env.INGRESS_APPROVER ?? (process.platform === "darwin" ? "macos-dialog" : "deny")) === "macos-dialog" ? macosDialogApprover() : denyAllApprover;
+// INGRESS_APPROVER: "macos-dialog" (the default on macOS), "macos-presence" (the dialog, then Touch ID or the login
+// password, confirmed by macOS; INGRESS_PRESENCE_BIOMETRY_ONLY=1 accepts a fingerprint only), or "deny"
+const approverName = env.INGRESS_APPROVER ?? (process.platform === "darwin" ? "macos-dialog" : "deny");
+const approver: Approver = approverName === "macos-dialog" ? macosDialogApprover() : approverName === "macos-presence" ? presenceApprover(macosDialogApprover(), { biometryOnly: env.INGRESS_PRESENCE_BIOMETRY_ONLY === "1" }) : denyAllApprover;
 // the gate's own read tools are always read-only; the config adds the downstream tools it knows only read
 // the stop switch: a file a person creates (`ingress stop`) that refuses every action until they remove it (`ingress resume`)
 const broker = new ActionBroker({ ...(proxyCfg.policy ?? {}), readOnlyTools: [...DEFAULT_BROKER_POLICY.readOnlyTools, ...(proxyCfg.policy?.readOnlyTools ?? [])] }, {

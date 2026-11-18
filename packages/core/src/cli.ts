@@ -24,7 +24,9 @@ import { engageStop, clearStop, stopReason } from "./safeguards.js";
 import { postToolUse, preToolUse, userPromptSubmit, preCompact, postCompact, sessionStart, remoteGate, type HookGate } from "./agent-hooks.js";
 import { Blocklist, BLOCKLIST_FEEDS } from "./egress.js";
 import { ProvenanceLedger, describeMark, downloadOrigin } from "./provenance.js";
-import { buildVisionHelper, visionHelperPath, visionHelperProblem } from "./image.js";
+import { buildVisionHelper, buildNativeHelper, visionHelperPath, visionHelperProblem } from "./image.js";
+import { presenceHelperPath } from "./approvers.js";
+import { collectNearby } from "./nearby.js";
 import { execFileSync } from "node:child_process";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -50,6 +52,45 @@ async function main() {
   if (args[0] === "blocklist") return blocklistCommand(args.slice(1));
   if (args[0] === "provenance") return provenanceCommand(args.slice(1));
   if (args[0] === "vision") return visionCommand(args.slice(1));
+  // ingress presence [build|check]: the helper that asks macOS to confirm a person is at the machine (Touch ID or password)
+  if (args[0] === "presence") {
+    if (args[1] === "build") {
+      try { const b = await buildNativeHelper("ingress-presence"); console.log(`built ${b.path}\nsha256 ${b.sha256}\nuse it with INGRESS_APPROVER=macos-presence`); }
+      catch (e) { console.error(`not built: ${(e as Error).message}`); process.exit(1); }
+      return;
+    }
+    try { console.log(execFileSync(presenceHelperPath(), ["--check"], { encoding: "utf8", timeout: 10_000 }).trim()); }
+    catch { console.error("not ready: the presence helper is not built (run: ingress presence build)"); process.exitCode = 1; }
+    return;
+  }
+  // ingress nearby [--json] [--seconds=3]: what devices around this Mac say about themselves, read as content (read-only)
+  if (args[0] === "nearby") {
+    const records = await collectNearby({ seconds: Number(opt("seconds") ?? 3) });
+    const engine = new IngressEngine({ sandbox: "off" }, { log: () => {} });
+    const r = await engine.scan(JSON.stringify(records), { kind: "nearby", url: "nearby:this-mac" });
+    if (flag("json")) { console.log(JSON.stringify({ records, result: r }, null, 2)); return; }
+    const by = (t: string) => records.filter((x) => x.type === t).length;
+    console.log(`${records.length} records: ${by("bonjour")} Bonjour services, ${by("bluetooth")} Bluetooth devices, ${by("printer")} printers`);
+    console.log(`verdict: ${r.tier} (score ${r.score})`);
+    for (const f of r.findings.filter((x) => x.confidence * x.severity >= 0.05)) console.log(`  [${f.kind}] ${f.message}`);
+    if (r.tier !== "clean") process.exitCode = 1;
+    return;
+  }
+  // ingress shortcut <file>: what a shortcut can do, before it is installed
+  if (args[0] === "shortcut") {
+    const file = args[1];
+    if (!file) { console.error("usage: ingress shortcut <file.shortcut | file.json | file.plist> [--json]"); process.exit(2); }
+    let text = readFileSync(file).toString("latin1");
+    // a binary property list is converted by the system's own tool; a signed shortcut cannot be read
+    if (text.startsWith("bplist00") && process.platform === "darwin") { try { text = execFileSync("/usr/bin/plutil", ["-convert", "json", "-o", "-", file], { encoding: "utf8", timeout: 20_000, maxBuffer: 64 * 1024 * 1024 }); } catch { /* scanned as it is, and the result says it was not read */ } }
+    else if (!text.startsWith("AEA1")) text = readFileSync(file, "utf8");
+    const engine = new IngressEngine({ sandbox: "off" }, { log: () => {} });
+    const r = await engine.scan(text, { kind: "automation", url: `file:${file}` });
+    if (flag("json")) { console.log(JSON.stringify(r, null, 2)); return; }
+    console.log(r.envelope);
+    if (r.tier !== "clean") process.exitCode = 1;
+    return;
+  }
   // ingress --audio <file>: gate a recording (what is said, what is too quiet to hear, the file's tags)
   if (flag("audio")) {
     const file = args.find((x) => !x.startsWith("--"));

@@ -7,9 +7,9 @@
 
 import type { NetPolicy } from "./netpolicy.js";
 
-export const ENGINE_VERSION = "0.9.20";
+export const ENGINE_VERSION = "0.9.21";
 /** bump whenever a detector's behavior changes; receipts carry it so verdicts are reproducible */
-export const RULESET_VERSION = "2026.11.18-10";
+export const RULESET_VERSION = "2026.11.18-11";
 
 /**
  * clean: delivered. suspect: refused, overridable. hostile: refused, not overridable.
@@ -121,6 +121,16 @@ export type FindingKind =
   | "message.verification_code"
   | "message.uninspected_part"
   | "notification.source_mismatch"
+  // channel structure: nearby devices, automations
+  | "nearby.authority_name"
+  | "nearby.lookalike"
+  | "nearby.link"
+  | "nearby.oversized_field"
+  | "automation.private_outside_send"
+  | "automation.runs_code"
+  | "automation.destination"
+  | "automation.unreadable"
+  | "image.clickfix"
   // channel structure: captions, transcripts and audio
   | "captions.hidden_cue"
   | "captions.unreadable_cue"

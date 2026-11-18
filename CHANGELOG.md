@@ -4,6 +4,37 @@ Every change bumps the patch version of all three packages. The ruleset id chang
 behavior changes; receipts carry it so verdicts are reproducible. Releases up to 0.9.6 are in the
 [README](README.md#changes-in-096-2026-11-18-ruleset-20261118-3-unchanged).
 
+## 0.9.21 (2026-11-18, ruleset 2026.11.18-11)
+
+Nearby devices, shortcuts, approvals that need a person present, fake "paste this" screens (Phases 7, 9, 10).
+The last milestone of `docs/ROADMAP.md`.
+
+- **Nearby** (`nearby.ts`, `kind: "nearby"`, `ingress nearby`): Bonjour service names, Bluetooth device names,
+  printer descriptions and beacon links are read as content at the lowest trust (6). An instruction in a name or
+  a record refuses the list. Reported: authority names from devices nobody here set up, a name one character
+  from a device you know or the same chosen name at another address, links that hide their destination,
+  oversized records. `ingress nearby` reads what this Mac lists (read-only: nothing is joined, paired or
+  contacted). Found on the first live run and fixed: one device listed over both Bluetooth and Bonjour was
+  taken for an impostor of itself.
+- **Shortcuts** (`shortcuts.ts`, `kind: "automation"`, `ingress shortcut <file>`): a shortcut's actions are read
+  for what it can do. Reads private data, takes input from outside, and can send things out, all three in one
+  shortcut, is reported; so is running code. Every piece of text inside is scanned. JSON and XML property
+  lists are read; a signed shortcut is encrypted and the result says it was not read.
+- **Presence approvals** (`presenceApprover`, `native/ingress-presence.swift`, `INGRESS_APPROVER=macos-presence`,
+  `ingress presence build`): after the dialog showing the exact action is approved, macOS confirms a person is
+  there (Touch ID, an unlocked Apple Watch, or the login password). Anything else is a refusal.
+- **ClickFix screens** (`image.clickfix`): a picture that tells its reader to open a terminal or the Run box
+  and paste something.
+- **README**: a section listing every channel added since 0.9.6, with where each is measured.
+- **Not done.** The presence prompt was compiled and its availability checked (this Mac reports Touch ID), but
+  no real approval was given through it: that needs a person. A FIDO2 security key is not supported. Fake
+  interface elements in a screenshot, rendered text against page source, cameras, and other automation
+  formats (launch agents and cron are covered by the persistence guard; Zapier, IFTTT, n8n exports are not
+  read) are not built. No public set of malicious shortcuts or hostile device names was scored: these checks
+  are tested on constructed cases.
+
+Tests: core 374 pass (9 new), proxy 7.
+
 ## 0.9.20 (2026-11-18, ruleset 2026.11.18-10)
 
 Captions, meeting transcripts and audio (Phase 8). Full description: `docs/AUDIO-CAPTIONS.md`. WebVTT, SubRip

@@ -11,6 +11,8 @@ import { adaptEmail, looksLikeEmailJson, looksLikeRawEmail } from "./email.js";
 import { adaptCalendar, looksLikeCalendarJson } from "./calendar.js";
 import { adaptMessages, adaptNotifications, looksLikeMessagesJson, looksLikeNotificationJson } from "./messages.js";
 import { adaptCaptions, looksLikeCaptions, looksLikeTranscriptJson, type CaptionHints } from "./captions.js";
+import { adaptNearby, looksLikeNearbyJson, type NearbyHints } from "./nearby.js";
+import { adaptShortcut, looksLikeShortcut } from "./shortcuts.js";
 
 /** JSON whose shape is a known channel (a mail message, a calendar event) is read as that channel */
 function jsonChannel(body: string): ContentKind | undefined {
@@ -21,6 +23,8 @@ function jsonChannel(body: string): ContentKind | undefined {
   if (looksLikeMessagesJson(doc)) return "message";
   if (looksLikeNotificationJson(doc)) return "notification";
   if (looksLikeTranscriptJson(doc)) return "captions";
+  if (looksLikeShortcut(doc)) return "automation";
+  if (looksLikeNearbyJson(doc)) return "nearby";
   return "json";
 }
 
@@ -38,6 +42,8 @@ export function detectKind(contentType: string, body: string, urlHint = ""): Con
   if (/javascript|ecmascript/.test(ct) || /\.(m?js|cjs)(\?|#|$)/i.test(urlHint)) return "javascript";
   const head = body.slice(0, 2048);
   if (/^\s*BEGIN:VCALENDAR\b/i.test(head)) return "calendar";
+  // a shortcut saved as an XML property list
+  if (/^\s*(?:<\?xml|<!DOCTYPE plist|<plist)/i.test(head) && /<key>WFWorkflowActions<\/key>/.test(body.slice(0, 200_000))) return "automation";
   if (looksLikeRawEmail(body)) return "email";
   if (/^\s*<(!doctype|html|head|body|div|p|span|article|main|table)/i.test(head)) return "html";
   if (/^\s*[\[{]/.test(head)) { const k = jsonChannel(body); if (k) return k; }
@@ -156,7 +162,7 @@ export function adaptText(raw: string): AdapterResult {
  * One adapter per content kind. HTML is not here: it goes through visibility.ts, which needs the stylesheet
  * rules the engine fetched. A kind without an adapter yet is read as plain text, so nothing is skipped.
  */
-export function adaptByKind(kind: ContentKind, raw: string, hints: CaptionHints = {}): AdapterResult {
+export function adaptByKind(kind: ContentKind, raw: string, hints: CaptionHints & NearbyHints = {}): AdapterResult {
   switch (kind) {
     case "captions": return adaptCaptions(raw, hints);
     case "markdown": return adaptMarkdown(raw);
@@ -167,12 +173,14 @@ export function adaptByKind(kind: ContentKind, raw: string, hints: CaptionHints 
     case "calendar": return adaptCalendar(raw);
     case "message": return adaptMessages(raw);
     case "notification": return adaptNotifications(raw);
+    case "nearby": return adaptNearby(raw, hints);
+    case "automation": return adaptShortcut(raw);
     default: return adaptText(raw);
   }
 }
 
 /** kinds whose adapters parse HTML themselves: entities in them must reach that parser undecoded */
-export const KINDS_WITH_MARKUP: ReadonlySet<ContentKind> = new Set<ContentKind>(["html", "email", "calendar", "message", "notification", "captions"]);
+export const KINDS_WITH_MARKUP: ReadonlySet<ContentKind> = new Set<ContentKind>(["html", "email", "calendar", "message", "notification", "captions", "nearby", "automation"]);
 
 /** Plain JavaScript fetched directly (a module, a bundle): the whole thing is a script; any string literals are visible text. */
 export function adaptJavascript(raw: string): AdapterResult {

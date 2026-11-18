@@ -5,6 +5,10 @@
  */
 
 import { execFile } from "node:child_process";
+import { createHash } from "node:crypto";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
+import { stateDir } from "./changes.js";
 import { describeApproval, type ApprovalRequest, type Approver } from "./broker.js";
 
 /**
@@ -33,6 +37,41 @@ export function macosDialogApprover(opts: { timeoutSec?: number; osascript?: str
         return resolve(err && /timed out|ETIMEDOUT/i.test(String(err)) ? "timeout" : "denied");
       });
     }),
+  };
+}
+
+/** Where the built presence helper is expected: INGRESS_PRESENCE_HELPER, or <state>/bin/ingress-presence. */
+export function presenceHelperPath(): string { return process.env.INGRESS_PRESENCE_HELPER || join(stateDir(), "bin", "ingress-presence"); }
+
+/**
+ * An approval that also needs a person at the machine: after `inner` shows the exact action and is answered
+ * "approve", macOS itself confirms someone is there (Touch ID, an unlocked Apple Watch, or the login password).
+ * A dialog button can be clicked by anything that controls the pointer; a fingerprint cannot be produced by it.
+ * Anything other than a confirmed person is a refusal: the helper missing, failing, or timing out included.
+ *
+ * Limits: with `biometryOnly: false` (the default) the login password is accepted, and an agent that knows
+ * the password and controls the keyboard could type it. On a Mac with Touch ID, set `biometryOnly`.
+ * A hardware security key (FIDO2) is not supported here.
+ */
+export function presenceApprover(inner: Approver, opts: { helper?: string; biometryOnly?: boolean } = {}): Approver {
+  return {
+    name: `${inner.name}+presence`,
+    request: async (req: ApprovalRequest) => {
+      const first = await inner.request(req);
+      if (first !== "approved") return first;
+      const helper = opts.helper ?? presenceHelperPath();
+      // a helper in the state folder must be the one that was built here
+      if (!opts.helper && !process.env.INGRESS_PRESENCE_HELPER) {
+        try { if (readFileSync(`${helper}.sha256`, "utf8").trim() !== createHash("sha256").update(readFileSync(helper)).digest("hex")) return "denied"; } catch { return "denied"; }
+      }
+      const reason = `approve the action "${req.tool}" (${req.digest.slice(0, 12)})`;
+      return new Promise((resolve) => {
+        execFile(helper, [...(opts.biometryOnly ? ["--biometry-only"] : []), reason], { timeout: 150_000, encoding: "utf8" }, (err, stdout) => {
+          if (err) return resolve(/nobody answered|timed out|ETIMEDOUT/i.test(`${stdout} ${err}`) ? "timeout" : "denied");
+          try { resolve((JSON.parse(String(stdout)) as { ok?: boolean }).ok === true ? "approved" : "denied"); } catch { resolve("denied"); }
+        });
+      });
+    },
   };
 }
 

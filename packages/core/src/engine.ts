@@ -27,6 +27,7 @@ import { inspectImage, type ImageCoverage, type VisionRunner } from "./image.js"
 import { detectImageFormat } from "./image-meta.js";
 import { inspectAudio, type AudioCoverage, type AudioRunner } from "./audio.js";
 import type { CaptionHints } from "./captions.js";
+import type { NearbyHints } from "./nearby.js";
 
 const MAX_IMAGE_BYTES = 50_000_000;
 const MAX_AUDIO_BYTES = 200_000_000;
@@ -239,7 +240,7 @@ export class IngressEngine {
   }
 
   /** Gate text or HTML already in hand (paste, tool result, file). */
-  async scan(content: string, opts: IngressOptions & { url?: string; isHtml?: boolean; contentType?: string; /** the channel, when the caller knows it; otherwise it is detected */ kind?: ContentKind; /** where it came from and how far that source is trusted */ source?: SourceInfo; /** for captions: what was actually said (a transcript of the audio), and speakers from outside the organisation */ spoken?: string; outsideSpeakers?: string[] } = {}): Promise<IngressResult> {
+  async scan(content: string, opts: IngressOptions & { url?: string; isHtml?: boolean; contentType?: string; /** the channel, when the caller knows it; otherwise it is detected */ kind?: ContentKind; /** where it came from and how far that source is trusted */ source?: SourceInfo; /** for captions: what was actually said (a transcript of the audio), and speakers from outside the organisation */ spoken?: string; outsideSpeakers?: string[]; /** for nearby devices: the ones the person knows, for lookalike checks */ knownDevices?: Array<{ name: string; address?: string }> } = {}): Promise<IngressResult> {
     const t0 = performance.now();
     const url = opts.url ?? "inline:";
     if (opts.quarantined) return this.refuse(url, [{ pass: "policy", kind: "policy.denied_source", confidence: 1, severity: 1, message: `source is quarantined by your organization: ${opts.quarantined}`, action: "none" }], {}, t0, "text", "hostile", true);
@@ -249,7 +250,10 @@ export class IngressEngine {
     }
     const kind: ContentKind = opts.kind ?? (opts.isHtml === true ? "html" : opts.isHtml === false ? "text" : detectKind(opts.contentType ?? "", content, opts.url ?? ""));
     const rule = url.startsWith("inline:") ? undefined : this.domainRule(url);
-    return this.guarded(url, kind, t0, () => this.analyze({ url, finalUrl: url, redirectChain: [], raw: content, kind, externalRules: [], timings: {}, t0, override: !!opts.override, extraFindings: [], rule, source: opts.source, hints: { spoken: opts.spoken, outsideSpeakers: opts.outsideSpeakers } }));
+    return this.guarded(url, kind, t0, () => this.analyze({ url, finalUrl: url, redirectChain: [], raw: content, kind, externalRules: [], timings: {}, t0, override: !!opts.override, extraFindings: [], rule,
+      // what devices broadcast is the lowest-trust content there is, unless the caller knows better
+      source: kind === "nearby" && !opts.source?.trust ? { channel: "nearby devices", ...opts.source, trust: 6 } : opts.source,
+      hints: { spoken: opts.spoken, outsideSpeakers: opts.outsideSpeakers, knownDevices: opts.knownDevices } }));
   }
 
   /**
@@ -394,7 +398,7 @@ export class IngressEngine {
     adapted?: { segments: TextSegment[]; findings: Finding[] };
     imageCoverage?: ImageCoverage;
     audioCoverage?: AudioCoverage;
-    hints?: CaptionHints;
+    hints?: CaptionHints & NearbyHints;
   }): Promise<IngressResult> {
     const findings: Finding[] = [...a.extraFindings];
     const passesRun: PassName[] = [];
