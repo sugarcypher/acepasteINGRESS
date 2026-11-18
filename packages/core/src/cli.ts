@@ -50,6 +50,21 @@ async function main() {
   if (args[0] === "blocklist") return blocklistCommand(args.slice(1));
   if (args[0] === "provenance") return provenanceCommand(args.slice(1));
   if (args[0] === "vision") return visionCommand(args.slice(1));
+  // ingress --audio <file>: gate a recording (what is said, what is too quiet to hear, the file's tags)
+  if (flag("audio")) {
+    const file = args.find((x) => !x.startsWith("--"));
+    if (!file) { console.error("usage: ingress --audio <file> [--json]   (set INGRESS_AUDIO_TRANSCRIBER; see tools/audio)"); process.exit(2); }
+    const engine = new IngressEngine({ ...(opt("policy") ? loadPolicyFile(opt("policy")!) : {}), sandbox: "off" });
+    const r = await engine.scanAudio(readFileSync(file), { url: `file:${file}`, override: flag("override") });
+    if (flag("json")) console.log(JSON.stringify(r, null, 2));
+    else {
+      console.log(r.envelope);
+      const c = r.coverage?.audio;
+      if (c && !c.transcribed) console.error(`\nnote: the recording was not transcribed (${c.reason}). Only the file's tags were checked.`);
+    }
+    if (r.tier !== "clean") process.exitCode = 1;
+    return;
+  }
   // ingress --image <file>: gate a picture (text in it, codes, what only a machine would read)
   if (flag("image")) {
     const file = args.find((x) => !x.startsWith("--"));

@@ -10,6 +10,7 @@ import { adaptTerminal } from "./terminal.js";
 import { adaptEmail, looksLikeEmailJson, looksLikeRawEmail } from "./email.js";
 import { adaptCalendar, looksLikeCalendarJson } from "./calendar.js";
 import { adaptMessages, adaptNotifications, looksLikeMessagesJson, looksLikeNotificationJson } from "./messages.js";
+import { adaptCaptions, looksLikeCaptions, looksLikeTranscriptJson, type CaptionHints } from "./captions.js";
 
 /** JSON whose shape is a known channel (a mail message, a calendar event) is read as that channel */
 function jsonChannel(body: string): ContentKind | undefined {
@@ -19,6 +20,7 @@ function jsonChannel(body: string): ContentKind | undefined {
   if (looksLikeCalendarJson(doc)) return "calendar";
   if (looksLikeMessagesJson(doc)) return "message";
   if (looksLikeNotificationJson(doc)) return "notification";
+  if (looksLikeTranscriptJson(doc)) return "captions";
   return "json";
 }
 
@@ -27,6 +29,7 @@ export function detectKind(contentType: string, body: string, urlHint = ""): Con
   if (/x-log|x-terminal|x-ansi/.test(ct) || /\.log(\?|#|$)/i.test(urlHint)) return "log";
   if (/message\/rfc822|message\/global/.test(ct) || /\.eml(\?|#|$)/i.test(urlHint)) return "email";
   if (/text\/calendar|application\/ics/.test(ct) || /\.ics(\?|#|$)/i.test(urlHint)) return "calendar";
+  if (/text\/vtt|application\/x-subrip/.test(ct) || /\.(vtt|srt)(\?|#|$)/i.test(urlHint) || looksLikeCaptions(body)) return "captions";
   // terminal control sequences anywhere in the first part: replay it as a terminal would, whatever it claims to be
   if (/\x1b[\[\]]/.test(body.slice(0, 65_536)) && !/html|xhtml/.test(ct)) return "log";
   if (/html|xhtml/.test(ct)) return "html";
@@ -153,8 +156,9 @@ export function adaptText(raw: string): AdapterResult {
  * One adapter per content kind. HTML is not here: it goes through visibility.ts, which needs the stylesheet
  * rules the engine fetched. A kind without an adapter yet is read as plain text, so nothing is skipped.
  */
-export function adaptByKind(kind: ContentKind, raw: string): AdapterResult {
+export function adaptByKind(kind: ContentKind, raw: string, hints: CaptionHints = {}): AdapterResult {
   switch (kind) {
+    case "captions": return adaptCaptions(raw, hints);
     case "markdown": return adaptMarkdown(raw);
     case "json": return adaptJson(raw);
     case "javascript": return adaptJavascript(raw);
@@ -168,7 +172,7 @@ export function adaptByKind(kind: ContentKind, raw: string): AdapterResult {
 }
 
 /** kinds whose adapters parse HTML themselves: entities in them must reach that parser undecoded */
-export const KINDS_WITH_MARKUP: ReadonlySet<ContentKind> = new Set<ContentKind>(["html", "email", "calendar", "message", "notification"]);
+export const KINDS_WITH_MARKUP: ReadonlySet<ContentKind> = new Set<ContentKind>(["html", "email", "calendar", "message", "notification", "captions"]);
 
 /** Plain JavaScript fetched directly (a module, a bundle): the whole thing is a script; any string literals are visible text. */
 export function adaptJavascript(raw: string): AdapterResult {
