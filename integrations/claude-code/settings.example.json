@@ -1,0 +1,30 @@
+{
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "WebFetch|WebSearch|Bash|Read|mcp__.*",
+        "hooks": [{ "type": "command", "command": "ingress hook post-tool-use", "timeout": 120 }]
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "hooks": [{ "type": "command", "command": "ingress hook user-prompt-submit", "timeout": 30 }]
+      }
+    ],
+    "PreCompact": [
+      {
+        "hooks": [{ "type": "command", "command": "ingress hook pre-compact", "timeout": 10 }]
+      }
+    ],
+    "PostCompact": [
+      {
+        "hooks": [{ "type": "command", "command": "ingress hook post-compact", "timeout": 30 }]
+      }
+    ],
+    "SessionStart": [
+      {
+        "hooks": [{ "type": "command", "command": "ingress hook session-start", "timeout": 10 }]
+      }
+    ]
+  }
+}

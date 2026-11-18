@@ -12,6 +12,7 @@ be tested without the listed need), **not built** (with the reason).
 | 0.9.11 | 8a, foundations | Content kinds and source trust on `scan()`; log and terminal adapter; log injection; `StreamScanner` with cut and retract | done | Added beyond the plan: terminal control codes that hide text from a person or act on their machine (clipboard write, mismatched link). Streams release raw text, not normalised text |
 | 0.9.12 | 7, 10b, 10d, 11 | Audit: devices that can type, listening services, tunnels, printers, network interfaces | done (macOS; lsof/ps/lpstat parts also on Linux) | The "Allow accessories to connect" setting is not read: no documented, readable location for it was found. Composite-device detection (keyboard plus storage) is by name only |
 | 0.9.13 | 0 (precision) | Seven causes of refusing real documentation fixed: CSS property matching, `var()`, pseudo-element and state selectors, class-name hints, zero-width layout characters, descriptive instruction shapes, `<pre>` code | done | Not planned: found because the gate on the author's machine refused the Claude Code hooks reference as hostile. 22 of 26 real pages clean after; recall on public sets 11.3% to 11.1% |
+| 0.9.14 | 10a, 12 | `ingress hook <event>`: PostToolUse routing, paste gate, summary gate, stop notice; Claude Code integration folder | done (repo only, not installed) | Replaces the one-off Python hook on the author's machine with a tested implementation. PostCompact cannot change a summary, so a flagged summary is reported at the SessionStart that follows. The PreToolUse egress hook comes with Phase 3 |
 
 ## Needs from a person
 
@@ -21,3 +22,4 @@ Items that cannot be finished from this machine, and exactly what each needs. Fi
 |---|---|
 | Publishing to npm | Two-factor approval: `npm publish -w packages/core && npm publish -w packages/mcp -w packages/http` in a regular Terminal |
 | Phase 4, machine-wide egress | An Apple Developer ID with the Network Extension entitlement, and notarization |
+| Turning the hooks on | They ship in the repo only. To use them: publish, `npm install -g @acepaste/ingress`, and merge `integrations/claude-code/settings.example.json` into `~/.claude/settings.json` (replacing the `ingress-route` Python hook there) |

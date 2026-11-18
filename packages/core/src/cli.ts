@@ -21,6 +21,10 @@ import { trackAudit, confirmAuditArea, formatAuditChanges, AUDIT_NEEDS_CONFIRMAT
 import { confirmServerTools, describeServerTools } from "./tooldefs.js";
 import { BaselineStore } from "./changes.js";
 import { engageStop, clearStop, stopReason } from "./safeguards.js";
+import { postToolUse, userPromptSubmit, preCompact, postCompact, sessionStart, remoteGate, type HookGate } from "./agent-hooks.js";
+import { appendFileSync } from "node:fs";
+import { homedir } from "node:os";
+import { join } from "node:path";
 import type { AuditArea } from "./audit-parsers.js";
 import { createInterface } from "node:readline/promises";
 import { userInfo } from "node:os";
@@ -34,6 +38,7 @@ const url = args.find((a) => /^https?:\/\//.test(a));
 async function main() {
   const chunksIn = async () => { const c: Buffer[] = []; for await (const x of process.stdin) c.push(x as Buffer); return Buffer.concat(c).toString("utf8"); };
   if (args[0] === "instructions") return instructionsCommand(args.slice(1));
+  if (args[0] === "hook") return hookCommand(args[1], await chunksIn());
   if (args[0] === "tools") return toolsCommand(args.slice(1));
   // ingress stop [reason]: every broker on this machine refuses every agent action until `ingress resume`.
   // Anyone may stop, an agent included. Only a person at a terminal may resume.
@@ -124,6 +129,45 @@ async function main() {
   console.error(`\n[timings] ${Object.entries(result.timings).map(([k, v]) => `${k}=${v!.toFixed(1)}ms`).join(" ")}`);
 }
 main().catch((e) => { console.error(e); process.exit(1); });
+
+/**
+ *   ingress hook <event>     reply to an agent harness hook: the event's JSON on stdin, the reply on stdout
+ *       events: post-tool-use, user-prompt-submit, pre-compact, post-compact, session-start
+ *   The engine runs in this process unless INGRESS_HOOK_SERVICE names a running Ingress service
+ *   (http://127.0.0.1:8787), whose key is read from INGRESS_HOOK_KEY_FILE (default ~/.acepaste-ingress/local-api-key);
+ *   then the service's receipts and audit trail record what the hooks gated.
+ */
+async function hookCommand(event: string | undefined, stdin: string) {
+  let input: Record<string, unknown>;
+  try { input = JSON.parse(stdin || "{}") as Record<string, unknown>; } catch { console.error("ingress hook: the event on stdin is not JSON"); process.exit(1); }
+  const service = process.env.INGRESS_HOOK_SERVICE;
+  let gate: HookGate;
+  let ownPort: number | undefined;
+  if (service) {
+    const keyFile = process.env.INGRESS_HOOK_KEY_FILE ?? join(homedir(), ".acepaste-ingress", "local-api-key");
+    let key = "";
+    try { key = readFileSync(keyFile, "utf8").trim(); } catch { /* the gate reports it: a missing key fails closed in the handlers */ }
+    gate = key ? remoteGate(service, key) : { fetch: async () => { throw new Error(`cannot read the Ingress API key at ${keyFile}`); }, scan: async () => { throw new Error(`cannot read the Ingress API key at ${keyFile}`); } };
+    try { const u = new URL(service); if (u.port) ownPort = Number(u.port); } catch { /* not a URL: nothing is exempt */ }
+  } else {
+    const cfg: Partial<IngressConfig> = { ...(process.env.INGRESS_POLICY ? loadPolicyFile(process.env.INGRESS_POLICY) : {}), ...cloakingConfigFromEnv(process.env, HONEST_USER_AGENT) };
+    const sb = process.env.INGRESS_SANDBOX; cfg.sandbox = sb === "always" || sb === "escalate" ? sb : "off";
+    const pk = process.env.INGRESS_SIGNING_PRIVATE_KEY_FILE ? readFileSync(process.env.INGRESS_SIGNING_PRIVATE_KEY_FILE, "utf8") : process.env.INGRESS_SIGNING_PRIVATE_KEY;
+    if (pk) cfg.signingPrivateKey = pk;
+    const logPath = process.env.INGRESS_LOG;
+    const engine = new IngressEngine(cfg, { log: (e) => { if (logPath) { try { appendFileSync(logPath, JSON.stringify(e) + "\n"); } catch { /* best effort */ } } } });
+    gate = { fetch: (u) => engine.fetch(u), scan: (c, o) => engine.scan(c, o) };
+  }
+  const out = (v: unknown) => { if (v !== undefined) process.stdout.write(JSON.stringify(v) + "\n"); };
+  switch (event) {
+    case "post-tool-use": return out(await postToolUse(input, gate, { ownPort }));
+    case "user-prompt-submit": return out(await userPromptSubmit(input, gate));
+    case "pre-compact": process.stdout.write(preCompact() + "\n"); return;
+    case "post-compact": await postCompact(input, gate); return;
+    case "session-start": return out(sessionStart(input));
+    default: console.error("usage: ingress hook post-tool-use|user-prompt-submit|pre-compact|post-compact|session-start   (event JSON on stdin)"); process.exit(2);
+  }
+}
 
 /**
  *   ingress tools                      downstream MCP servers whose tools were recorded, and their state

@@ -4,6 +4,27 @@ Every change bumps the patch version of all three packages. The ruleset id chang
 behavior changes; receipts carry it so verdicts are reproducible. Releases up to 0.9.6 are in the
 [README](README.md#changes-in-096-2026-11-18-ruleset-20261118-3-unchanged).
 
+## 0.9.14 (2026-11-18, ruleset unchanged)
+
+Hooks for coding agents: `ingress hook <event>` (Phases 10a and 12; `agent-hooks.ts`, `shell-commands.ts`,
+`integrations/claude-code/`).
+
+- **`post-tool-use`:** outside content a tool brought back is replaced by what the gate lets through.
+  `WebFetch` is fetched again by the gate (with the cloaking comparison) and paged; `WebSearch`, MCP tools,
+  shell commands that reach the network and background-task output files are scanned. Shell output is read
+  as terminal output, so text hidden with control codes is found. Loopback is gated; only requests addressed
+  solely to the Ingress service's own port are skipped. Fails closed in the tool's own output shape.
+- **`user-prompt-submit`, the paste gate:** hidden characters anywhere in a prompt, and a pasted block rated
+  hostile, stop the prompt and are shown to the person. A suspect paste goes through with a note to the model.
+  A paste with markup partway through is also read as a page, and the stricter verdict kept. Typed text is
+  never judged for what it asks. `[ingress: send as is]`, typed outside the paste, sends it anyway.
+- **`pre-compact`, `post-compact`, `session-start`, the summary gate:** the summariser is asked to keep
+  outside content marked as such; the summary is scanned; when it is flagged, the model is told at the
+  restart that follows compaction. A session start also says when `ingress stop` is in effect.
+- The engine runs in the hook's own process, or the hooks use a running Ingress service
+  (`INGRESS_HOOK_SERVICE`) so its audit trail records what they gated.
+- `integrations/claude-code/README.md` and `settings.example.json`. Nothing is installed by this release.
+
 ## 0.9.13 (2026-11-18, ruleset 2026.11.18-5)
 
 Precision on real documentation. Found when the gate refused the Claude Code hooks reference as hostile
