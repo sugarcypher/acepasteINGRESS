@@ -284,7 +284,9 @@ export class IngressEngine {
     while ((m = re.exec(raw))) {
       if (++opens > 400000) return "more than 400000 tags";
       if (m[2].length > 2000) {
-        const n = (m[2].match(/\s[\w:.-]+(=|\s|$)/g) ?? []).length;
+        // count attribute names, not words inside quoted values: a long SVG path or a JSON props blob is one attribute
+        const names = m[2].replace(/"[^"]*"|'[^']*'/g, '""');
+        const n = (names.match(/\s[\w:.-]+(=|\s|$)/g) ?? []).length;
         if (n > 300) return `element with ${n} attributes`;
         attrs += n;
         if (attrs > 50000) return "more than 50000 attributes";

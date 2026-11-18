@@ -60,6 +60,17 @@ export const MULTILINGUAL_RULES: Rule[] = [
   R("override.ko", "ko", "override", /이전\s*(?:의\s*)?(?:모든\s*)?(?:지시|지침|명령)(?:사항)?(?:을|를)?\s*(?:모두\s*)?무시/u),
   // Hindi
   R("override.hi", "hi", "override", /पिछले\s+(?:सभी\s+)?निर्देशों\s+को\s+(?:अनदेखा|नज़रअंदाज़|नजरअंदाज)\s+कर/u),
+  // added 2026-11-17 (AgentShield misses): word-order and pronoun variants, and system-prompt extraction
+  R("override.es2", "es", "override", /\b(?:ignora|olvida|descarta|olvide)\s+(?:todas\s+)?(?:tus|sus|las)\s+instrucciones\s+(?:anteriores|previas)\b/iu),
+  R("override.de2", "de", "override", /\b(?:ignorieren|vergessen)\s+sie\s+(?:alle\s+)?(?:vorherigen|bisherigen|früheren)\s+(?:anweisungen|instruktionen)\b/iu),
+  R("override.tr2", "tr", "override", /(?:tüm\s+)?önceki\s+(?:tüm\s+)?talimatları\s+(?:unutun|unut|yok\s+sayın|görmezden\s+gelin)/iu),
+  R("override.ja2", "ja", "override", /(?:以前|前|これまで)の(?:すべて|全て)の指示を無視/u),
+  R("extract.ru", "ru", "extract", /(?:выведи|покажи|раскрой|выведите|покажите)[^.\n]{0,30}(?:системн\S*\s+(?:промпт|подсказк|инструкци))/iu),
+  R("extract.fr", "fr", "extract", /\b(?:affiche[rz]?|montre[rz]?|révèle[rz]?)\b[^.\n]{0,30}\b(?:prompt|invite|message)\s+(?:système|systeme)/iu),
+  R("extract.ja", "ja", "extract", /システムプロンプト(?:を|全体を)?(?:完全に)?(?:出力|表示|教え)/u),
+  R("extract.ko", "ko", "extract", /시스템\s*프롬프트(?:를|을)?\s*(?:출력|보여|공개)/u),
+  R("extract.ar", "ar", "extract", /(?:اعرض|أظهر|اكشف)\s+(?:رسالة|تعليمات)\s+النظام/u),
+  R("unrestricted.multi", "multi", "override", /(?:sans\s+aucune\s+restriction|sin\s+restricciones|ohne\s+einschränkungen|без\s+ограничений|制限のない|没有任何限制|بدون\s+أي\s+قيود|kısıtlaması\s+olmayan|mode\s+développeur|modo\s+desarrollador|entwicklermodus|وضع\s+المطور)/iu),
 ];
 
 const KIND_LABEL: Record<Rule["kind"], string> = {
@@ -82,11 +93,13 @@ export function scanMultilingual(text: string, hidden: boolean, where: string): 
     for (const [view, t] of views) {
       const m = t.match(rule.re);
       if (!m) continue;
+      // two rules on the same words are one instruction
+      if (out.some((f) => f.excerpt && (f.excerpt.includes(m[0].slice(0, 120)) || m[0].includes(f.excerpt)))) break;
       out.push({
         pass: "meaning", kind: rule.kind === "extract" ? "meaning.system_prompt_imitation" : "meaning.instruction_shaped",
-        confidence: hidden ? 0.85 : 0.2, severity: hidden ? 0.9 : 0.45,
-        message: `${KIND_LABEL[rule.kind]} (${rule.lang}, rule ${rule.id}, ${view} view; ${MULTILINGUAL_RULESET})${hidden ? ", in text a human would not see" : ", visible: recorded, not refused on its own"}`,
-        excerpt: m[0].slice(0, 120), location: where, inHidden: hidden, action: hidden ? "quarantined" : "none",
+        confidence: hidden ? 0.85 : 0.675, severity: hidden ? 0.9 : 0.6,
+        message: `${KIND_LABEL[rule.kind]} (${rule.lang}, rule ${rule.id}, ${view} view; ${MULTILINGUAL_RULESET})${hidden ? ", in text a human would not see" : ", visible: same weight as the English shape"}`,
+        excerpt: m[0].slice(0, 120), location: where, inHidden: hidden, action: hidden ? "quarantined" : "neutralized",
       });
       break;
     }
