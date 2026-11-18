@@ -11,6 +11,7 @@ be tested without the listed need), **not built** (with the reason).
 | 0.9.10 | 9d, 12 | Broker safeguards: persistence guard (automation write guard), canary tripwire, burst guard, stop switch | done | Persistence needs a person even in a clean run. A canary hit is a denial, not an approval question. Stop: anyone may stop, only a person at a terminal may resume |
 | 0.9.11 | 8a, foundations | Content kinds and source trust on `scan()`; log and terminal adapter; log injection; `StreamScanner` with cut and retract | done | Added beyond the plan: terminal control codes that hide text from a person or act on their machine (clipboard write, mismatched link). Streams release raw text, not normalised text |
 | 0.9.12 | 7, 10b, 10d, 11 | Audit: devices that can type, listening services, tunnels, printers, network interfaces | done (macOS; lsof/ps/lpstat parts also on Linux) | The "Allow accessories to connect" setting is not read: no documented, readable location for it was found. Composite-device detection (keyboard plus storage) is by name only |
+| 0.9.13 | 0 (precision) | Seven causes of refusing real documentation fixed: CSS property matching, `var()`, pseudo-element and state selectors, class-name hints, zero-width layout characters, descriptive instruction shapes, `<pre>` code | done | Not planned: found because the gate on the author's machine refused the Claude Code hooks reference as hostile. 22 of 26 real pages clean after; recall on public sets 11.3% to 11.1% |
 
 ## Needs from a person
 

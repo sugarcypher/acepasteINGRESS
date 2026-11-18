@@ -121,7 +121,18 @@ export function scanCharacters(text: string): CharacterResult {
   }
 
   // 3. Zero-width characters, script-aware.
-  const zw = [...cleaned.matchAll(ZERO_WIDTH)];
+  // What counts is a zero-width character doing something to the text: splitting a word ("ig<ZWSP>nore") or
+  // standing in a run (a bit channel). One standing alone, or beside punctuation or space, is layout: a break
+  // hint in a long path, or the whole text of a heading anchor (VitePress writes one into every heading, and ten
+  // of them rated vuejs.org hostile). Layout ones are still removed from the cleaned text; they are not evidence.
+  const allZw = [...cleaned.matchAll(ZERO_WIDTH)];
+  const zwOne = new RegExp(`^(?:${ZERO_WIDTH.source})$`, ZERO_WIDTH.flags.replace("g", ""));
+  const isZw = (c: string | undefined) => c !== undefined && zwOne.test(c);
+  const isWordChar = (c: string | undefined) => c !== undefined && /[\p{L}\p{N}]/u.test(c);
+  const zw = allZw.filter((m) => {
+    const prev = cleaned[m.index! - 1], next = cleaned[m.index! + m[0].length];
+    return isZw(prev) || isZw(next) || (isWordChar(prev) && isWordChar(next));
+  });
   const joinerStray: number[] = [];
   for (let i = 0; i < cleaned.length; i++) {
     const ch = cleaned[i];
@@ -156,6 +167,9 @@ export function scanCharacters(text: string): CharacterResult {
         if (/^[\x20-\x7E\s]+$/.test(out)) decodedPayloads.push(out);
       }
     }
+  }
+  // every zero-width character is removed from the cleaned text, whether or not it counted as evidence
+  if (allZw.length || joinerStray.length) {
     // single pass removal: indices in joinerStray refer to the string before any removal
     const drop = new Set(joinerStray);
     let out = "";

@@ -9,8 +9,8 @@ export { checkTarget, isPrivateIP, isPrivateIPv4, isPrivateIPv6, NetPolicyError,
 export type { NetPolicy } from "./netpolicy.js";
 export { checkLocalRequest, isLoopbackBind } from "./localguard.js";
 export type { LocalRequestHeaders, LocalGuardOptions, LocalGuardVerdict } from "./localguard.js";
-export { analyzeHtml, findStylesheetLinks, rulesFromCss, colorRulesFromCss } from "./visibility.js";
-export type { HiddenRule, ColorRule, VisibilityResult } from "./visibility.js";
+export { analyzeHtml, findStylesheetLinks, rulesFromCss, colorRulesFromCss, classifyStyle, parseDeclarations, collectCssVars } from "./visibility.js";
+export type { HiddenRule, ColorRule, VisibilityResult, CssVars } from "./visibility.js";
 export { parseColor, contrastRatio, INVISIBLE_CONTRAST } from "./color.js";
 export { scanCharacters } from "./character.js";
 export { analyzeScripts, analyzeScript } from "./script.js";

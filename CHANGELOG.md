@@ -4,6 +4,52 @@ Every change bumps the patch version of all three packages. The ruleset id chang
 behavior changes; receipts carry it so verdicts are reproducible. Releases up to 0.9.6 are in the
 [README](README.md#changes-in-096-2026-11-18-ruleset-20261118-3-unchanged).
 
+## 0.9.13 (2026-11-18, ruleset 2026.11.18-5)
+
+Precision on real documentation. Found when the gate refused the Claude Code hooks reference as hostile
+(score 1.0) while this roadmap was being built. Seven causes, each a refusal on a real page.
+
+How pages are read (`visibility.ts`, `character.ts`):
+
+- **Properties are matched by their exact names.** `-webkit-tap-highlight-color:transparent`, in the base
+  stylesheet of every Tailwind 4 site, was read as transparent text on `<html>`, so the whole page counted
+  as hidden. `background-color:rgba(0,0,0,0)`, `fill-opacity:0` and `--tw-bg-opacity:0` were misread the same
+  way. Declarations are now parsed, not searched.
+- **`var()` is resolved before judging.** Tailwind 4 writes every text size as `font-size:var(--text-sm)`;
+  any variable-driven size, opacity, transform or display was treated as hidden. A variable is now resolved
+  against every definition the stylesheet and the page's style attributes give it, and its fallback. It hides
+  when any of those hides (`--o:0` with `opacity:var(--o)` is still caught); an undefined one is unknown.
+- **Selectors that do not describe the default page are skipped.** A pseudo-element rule
+  (`.scroll::-webkit-scrollbar{display:none}` hides a scrollbar) hid every table on the page. Rules for
+  pseudo-elements, states (`:hover`, `[data-state=closed]`), theme or state ancestors, and media queries for
+  print, dark mode or phone widths are no longer applied. `:not(.class)` and `.a.b` are now checked exactly.
+- **Class names hide only as whole names.** `overflow-hidden`, `overflow-x-clip` and `bg-clip-text` were read
+  as `hidden` and `clip`. Responsive variants are read for a desktop reader: `hidden lg:block` is shown,
+  `lg:hidden` is not.
+- **A zero-width character counts when it splits a word or runs in a row.** One alone (VitePress puts one in
+  every heading anchor; ten rated vuejs.org hostile) or beside punctuation is layout. All are still removed
+  from delivered text.
+
+What reads as an instruction (`meaning.ts`):
+
+- **Sending context out** needs the object to be the reader's own ("your conversation", "the system
+  prompt"). "Send the messages array", "list API keys for a project" and "embed the conversation widget" are
+  documentation. `include`, `attach` and `paste` count only in imperative position.
+- **Descriptive shapes do not corroborate each other.** "The agent must call the API" and "Claude should use
+  the weather tool" are a description; either beside a concealment, an override, a destination or a named
+  secret still refuses.
+- **A standing order** needs the order itself after its trigger ("from now on, respond only..."). "Whenever a
+  hook exits with code 2, Claude Code prints..." has a subject doing the printing.
+- **Concealment** is also recognised as "must not tell the user" and "without telling the user".
+- A line-start label (`system:masters`) with no instruction within reach counts for half. Code under `<pre>`
+  on an HTML page is scored as code.
+
+Measured: 26 real documentation pages, 22 clean (the four refused are suspect: three are about or for AI
+prompts, one serves AI fetchers different content). Before this release 8 of the first 20 were refused, one
+as hostile. Eval unchanged (90/90 attacks, 48/48 benign). Public sets: 55.5% balanced accuracy on 6,876
+inputs (0.9.12: 55.6%); attacks caught 11.1% (11.3%), the cost of the tighter context-exfiltration rule.
+No attack example from those sets was read.
+
 ## 0.9.12 (2026-11-18, ruleset unchanged)
 
 The environment audit looks at what is attached to the machine and what it exposes (`audit-local.ts`;
