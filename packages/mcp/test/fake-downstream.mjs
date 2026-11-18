@@ -53,6 +53,15 @@ const picture = () => {
   ]).toString("base64");
 };
 
+// a voicemail tool: a line of text and a short recording (a silent WAV; what it "says" is up to the test's transcriber)
+tools.push({ name: "voicemail", description: "Fetch the newest voicemail.", inputSchema: { type: "object", properties: {} } });
+const recording = () => {
+  const data = Buffer.alloc(3200);
+  const body = Buffer.concat([Buffer.from("WAVEfmt \x10\x00\x00\x00\x01\x00\x01\x00\x80\x3e\x00\x00\x00\x7d\x00\x00\x02\x00\x10\x00data", "latin1"), Buffer.from([data.length & 255, (data.length >> 8) & 255, 0, 0]), data]);
+  const head = Buffer.alloc(8); head.write("RIFF", 0, "latin1"); head.writeUInt32LE(body.length, 4);
+  return Buffer.concat([head, body]).toString("base64");
+};
+
 const server = new Server({ name: "fake-downstream", version: "0.0.0" }, { capabilities: { tools: {} } });
 server.setRequestHandler(ListToolsRequestSchema, async () => ({ tools }));
 server.setRequestHandler(CallToolRequestSchema, async (req) => {
@@ -60,6 +69,7 @@ server.setRequestHandler(CallToolRequestSchema, async (req) => {
   if (req.params.name === "echo") return { content: [{ type: "text", text: String(a.text ?? "") }] };
   if (req.params.name === "add") return { content: [{ type: "text", text: String(Number(a.a) + Number(a.b)) }] };
   if (req.params.name === "list_messages") return { content: [{ type: "text", text: inbox() }] };
+  if (req.params.name === "voicemail") return { content: [{ type: "text", text: "One new voicemail, 12 seconds." }, { type: "audio", data: recording(), mimeType: "audio/wav" }] };
   if (req.params.name === "chart") return { content: [{ type: "text", text: "Sales chart for the third quarter." }, { type: "image", data: picture(), mimeType: "image/png" }] };
   return { content: [{ type: "text", text: "uploaded" }] };
 });

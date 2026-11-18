@@ -261,7 +261,7 @@ export class IngressEngine {
    * The delivered text is the text a person can read in the picture, with a line for each code in it.
    * Whether the picture itself goes on to the model is the caller's decision, made on the verdict.
    */
-  async scanImage(bytes: Uint8Array, opts: IngressOptions & { url?: string; source?: SourceInfo; /** words shown beside the image: a caption, alt text, a file name */ caption?: string; /** how to read the pixels (default: the vision helper when built); false reads the container only */ vision?: VisionRunner | false } = {}): Promise<IngressResult> {
+  async scanImage(bytes: Uint8Array, opts: IngressOptions & { url?: string; source?: SourceInfo; /** words shown beside the image: a caption, alt text, a file name */ caption?: string; /** for a screenshot: the text the page's own source says is on it (see image.ts) */ sourceText?: string; /** how to read the pixels (default: the vision helper when built); false reads the container only */ vision?: VisionRunner | false } = {}): Promise<IngressResult> {
     const t0 = performance.now();
     const url = opts.url ?? "inline:image";
     if (opts.quarantined) return this.refuse(url, [{ pass: "policy", kind: "policy.denied_source", confidence: 1, severity: 1, message: `source is quarantined by your organization: ${opts.quarantined}`, action: "none" }], {}, t0, "image", "hostile", true);
@@ -277,7 +277,7 @@ export class IngressEngine {
         return this.analyze({ url, finalUrl: url, redirectChain: [], raw: text, kind: "html", externalRules: [], timings: {}, t0, override: !!opts.override, extraFindings: extra, rule, source: opts.source });
       }
       const ti = performance.now();
-      const insp = await inspectImage(bytes, { vision: opts.vision, caption: opts.caption });
+      const insp = await inspectImage(bytes, { vision: opts.vision, caption: opts.caption, sourceText: opts.sourceText });
       return this.analyze({ url, finalUrl: url, redirectChain: [], raw: insp.report, kind: "image", externalRules: [], timings: { visibility: performance.now() - ti }, t0, override: !!opts.override, extraFindings: insp.findings, rule, source: opts.source, adapted: { segments: insp.segments, findings: [] }, imageCoverage: insp.coverage });
     });
   }

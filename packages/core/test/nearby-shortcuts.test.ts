@@ -148,3 +148,17 @@ test("a screen that tells its reader to open a terminal and paste is reported, w
   assert.ok(!kinds((await screen(["Keyboard shortcuts", "Press Cmd + Space to open Spotlight", "Press Cmd + C to copy"])).findings).includes("image.clickfix"));
   assert.ok(!kinds((await screen(["Open Terminal to see the build output."])).findings).includes("image.clickfix"));
 });
+
+test("a screenshot against the page's own text: words painted onto the screen that the page does not contain", async () => {
+  const L = (text: string) => ({ text, conf: 1, x: 0, y: 0, w: 1, h: 0.1 });
+  const png = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+  const page = "Quarterly report. Revenue rose twelve percent over last year. Hiring continued in the support team. The outlook for the next quarter is stable, with two launches planned.";
+  const shot = (lines: string[], sourceText?: string) => inspectImage(png, { sourceText, vision: async () => ({ width: 1280, height: 800, frames: 1, hasAlpha: false, full: lines.map(L), variants: [], barcodes: [], notes: [] }) });
+  const honest = ["Quarterly report", "Revenue rose twelve percent over last year.", "Hiring continued in the support team."];
+  assert.ok(!kinds((await shot(honest, page)).findings).includes("image.screen_not_in_source"));
+  const painted = await shot([...honest, "Your session has expired. Enter your password again in the box below to continue reading."], page);
+  assert.ok(kinds(painted.findings).includes("image.screen_not_in_source"));
+  assert.match(painted.findings.find((f) => f.kind === "image.screen_not_in_source")!.excerpt!, /Enter your password again/);
+  // without the page's text there is nothing to compare with
+  assert.ok(!kinds((await shot([...honest, "Your session has expired. Enter your password again in the box below to continue reading."])).findings).includes("image.screen_not_in_source"));
+});

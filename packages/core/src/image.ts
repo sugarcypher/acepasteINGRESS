@@ -28,6 +28,7 @@ import { stateDir } from "./changes.js";
 import { readImageMeta, type ImageMeta } from "./image-meta.js";
 import { judgeQrPayload, type QrVerdict } from "./qr.js";
 import { hostsMentioned } from "./egress.js";
+import { passagesOnlyIn } from "./served.js";
 import type { Finding, TextSegment } from "./types.js";
 
 export interface VisionLine { text: string; conf: number; x: number; y: number; w: number; h: number }
@@ -244,6 +245,12 @@ export interface InspectOptions {
   vision?: VisionRunner | false;
   /** the words shown beside the image (a caption, alt text, a file name), for comparison with what it holds */
   caption?: string;
+  /**
+   * For a screenshot of a page or an app: the text that page's own source says is on it (its visible DOM text,
+   * its accessibility tree). Words on the screen that the source does not have were drawn there some other way:
+   * an image, a canvas, an overlay. That is how a fake dialog or a fake message is painted into a real window.
+   */
+  sourceText?: string;
 }
 
 export async function inspectImage(bytes: Uint8Array, opts: InspectOptions = {}): Promise<ImageInspection> {
@@ -304,6 +311,10 @@ export async function inspectImage(bytes: Uint8Array, opts: InspectOptions = {})
     const flat = shown.replace(/\s+/g, " ");
     if (CLICKFIX_OPEN.test(flat) && CLICKFIX_PASTE.test(flat)) add({ kind: "image.clickfix", confidence: 0.55, severity: 0.75, message: "the picture tells its reader to open a terminal or the Run box and paste something: a fake verification or fix screen (ClickFix). Nothing on a screen is a reason to run a command", location: "image/text" });
 
+    if (opts.sourceText && opts.sourceText.trim().split(/\s+/).length >= 20) {
+      const painted = passagesOnlyIn(flat, opts.sourceText, 8);
+      if (painted.length) add({ kind: "image.screen_not_in_source", confidence: 0.35, severity: 0.6, message: `${painted.length} passage(s) on this screen are not in the page's own text: they were drawn there (an image, a canvas, an overlay), which is how a fake dialog or message is painted into a real window`, excerpt: painted[0].slice(0, 160), location: "image/text" });
+    }
     const resized = resizedOnly(vision);
     if (resized.lines.length) {
       segments.push({ text: resized.lines.join("\n"), visibility: "concealed", path: "image/only-when-resized" });

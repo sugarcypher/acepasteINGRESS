@@ -7,9 +7,9 @@
 
 import type { NetPolicy } from "./netpolicy.js";
 
-export const ENGINE_VERSION = "0.9.21";
+export const ENGINE_VERSION = "0.9.22";
 /** bump whenever a detector's behavior changes; receipts carry it so verdicts are reproducible */
-export const RULESET_VERSION = "2026.11.18-11";
+export const RULESET_VERSION = "2026.11.18-12";
 
 /**
  * clean: delivered. suspect: refused, overridable. hostile: refused, not overridable.
@@ -131,6 +131,7 @@ export type FindingKind =
   | "automation.destination"
   | "automation.unreadable"
   | "image.clickfix"
+  | "image.screen_not_in_source"
   // channel structure: captions, transcripts and audio
   | "captions.hidden_cue"
   | "captions.unreadable_cue"
