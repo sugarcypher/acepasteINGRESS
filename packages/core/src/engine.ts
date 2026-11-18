@@ -511,7 +511,7 @@ export class IngressEngine {
       const tcl = performance.now();
       // what the model was trained on is a message's subject and body: its address lines (From, To, Date) are
       // not prose, and a line of addresses is not evidence of anything
-      const deliveredText = cleanedSegments.filter((s) => (s.visibility === "visible" || (s.visibility === "attribute" && s.path.endsWith("@alt"))) && !/\/header:(from|to|cc|reply-to|date)$/.test(s.path)).map((s) => s.text).join("\n");
+      const deliveredText = cleanedSegments.filter((s) => (s.visibility === "visible" || (s.visibility === "attribute" && s.path.endsWith("@alt"))) && !/\/header:(from|to|cc|reply-to|date)$|\/sender$/.test(s.path)).map((s) => s.text).join("\n");
       findings.push(...scanClassifier({ visible: deliveredText, segments: cleanedSegments, kind: a.kind }));
       timings.classifier = performance.now() - tcl;
       passesRun.push("classifier");

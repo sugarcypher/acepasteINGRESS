@@ -7,9 +7,9 @@
 
 import type { NetPolicy } from "./netpolicy.js";
 
-export const ENGINE_VERSION = "0.9.18";
+export const ENGINE_VERSION = "0.9.19";
 /** bump whenever a detector's behavior changes; receipts carry it so verdicts are reproducible */
-export const RULESET_VERSION = "2026.11.18-8";
+export const RULESET_VERSION = "2026.11.18-9";
 
 /**
  * clean: delivered. suspect: refused, overridable. hostile: refused, not overridable.
@@ -114,6 +114,13 @@ export type FindingKind =
   // channel structure: calendar
   | "calendar.alarm_action"
   | "calendar.description_divergence"
+  // channel structure: messages and notifications
+  | "message.text_divergence"
+  | "message.sender_impersonation"
+  | "message.scam_shape"
+  | "message.verification_code"
+  | "message.uninspected_part"
+  | "notification.source_mismatch"
   // channel structure: images and the codes in them
   | "image.text_only_when_resized"
   | "image.low_contrast_text"
