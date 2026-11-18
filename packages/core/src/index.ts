@@ -7,6 +7,8 @@ export { summarize, findingWeight, cloakingConfigFromEnv } from "./summary.js";
 export type { ResultSummary, FindingGroup, TopFinding } from "./summary.js";
 export { checkTarget, isPrivateIP, isPrivateIPv4, isPrivateIPv6, NetPolicyError, DEFAULT_NET_POLICY } from "./netpolicy.js";
 export type { NetPolicy } from "./netpolicy.js";
+export { checkLocalRequest, isLoopbackBind } from "./localguard.js";
+export type { LocalRequestHeaders, LocalGuardOptions, LocalGuardVerdict } from "./localguard.js";
 export { analyzeHtml, findStylesheetLinks, rulesFromCss, colorRulesFromCss } from "./visibility.js";
 export type { HiddenRule, ColorRule, VisibilityResult } from "./visibility.js";
 export { parseColor, contrastRatio, INVISIBLE_CONTRAST } from "./color.js";

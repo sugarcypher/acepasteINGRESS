@@ -6,6 +6,7 @@ be tested without the listed need), **not built** (with the reason).
 | version | phase | what | status | notes |
 |---|---|---|---|---|
 | 0.9.7 | - | Roadmap, this log, CHANGELOG.md, version bump tool | done | Releases from 0.9.7 are in CHANGELOG.md; older ones stay in the README |
+| 0.9.8 | 11 | HTTP service Host and Origin checks; every spelling of a loopback or private address refused | done | Live-tested: rebinding and cross-site requests get 403. The Claude Code hook's loopback skip was fixed on the author's machine the same day (not a repo file then; shipped in the repo in a later version) |
 
 ## Needs from a person
 
