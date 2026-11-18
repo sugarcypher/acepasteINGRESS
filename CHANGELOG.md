@@ -4,6 +4,25 @@ Every change bumps the patch version of all three packages. The ruleset id chang
 behavior changes; receipts carry it so verdicts are reproducible. Releases up to 0.9.6 are in the
 [README](README.md#changes-in-096-2026-11-18-ruleset-20261118-3-unchanged).
 
+## 0.9.22 (2026-11-18, ruleset 2026.11.18-12)
+
+Three loose ends from the roadmap run.
+
+- **Recordings in MCP tool results are gated** (they were withheld unread). The proxy transcribes each one
+  with the configured transcriber; a clean one is handed on with its transcript, and one that says something
+  hostile, or cannot be transcribed, is withheld with the reason. The transcript joins what the run has read,
+  so a code or an address spoken aloud is known to the action broker.
+- **A screenshot against the page's own text** (`scanImage(bytes, { sourceText })`, finding
+  `image.screen_not_in_source`): passages on the screen that the page's source does not contain were drawn
+  there some other way, which is how a fake dialog is painted into a real window. Needs the caller to supply
+  the page's text (its visible DOM text or accessibility tree).
+- **README**: the corpus numbers were two releases stale (85/85 and 45/45; they are 90/90 and 48/48).
+
+Still not built, as listed in `docs/ROADMAP-LOG.md`: video, a machine-wide filter, a multilingual model, an
+installed retrained classifier.
+
+Tests: core 375 pass (1 new), proxy 8 (1 new).
+
 ## 0.9.21 (2026-11-18, ruleset 2026.11.18-11)
 
 Nearby devices, shortcuts, approvals that need a person present, fake "paste this" screens (Phases 7, 9, 10).

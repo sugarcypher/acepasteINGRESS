@@ -329,8 +329,9 @@ async function callProxied(name: string, raw: unknown) {
   const items = (res.content as Array<{ type: string; text?: string }> | undefined) ?? [];
   const text = items.filter((c) => c.type === "text").map((c) => c.text ?? "").join("\n");
   const pictures = items.filter((c) => c.type === "image") as Array<{ type: "image"; data?: string; mimeType?: string }>;
-  // pictures are read (0.9.18); audio and resources still cannot be, and are withheld
-  const uninspected = [...items.filter((c) => c.type !== "text" && c.type !== "image").map((c) => c.type), ...pictures.slice(8).map(() => "image")];
+  const recordings = items.filter((c) => c.type === "audio") as Array<{ type: "audio"; data?: string; mimeType?: string }>;
+  // pictures (0.9.18) and recordings (0.9.22) are read; anything else cannot be, and is withheld
+  const uninspected = [...items.filter((c) => c.type !== "text" && c.type !== "image" && c.type !== "audio").map((c) => c.type), ...pictures.slice(8).map(() => "image"), ...recordings.slice(4).map(() => "audio")];
   if (p.server.trusted) return res;
   // Read the result as what it is. A mail or calendar server's JSON is recognised by its shape; the operator
   // can say so outright, and say how far the people who write to that channel are trusted (strangers: 4).
@@ -354,7 +355,22 @@ async function callProxied(name: string, raw: unknown) {
   }
   if (pictureNotes.length && !out.isError) out.content.push({ type: "text", text: `[AcePaste Ingress: ${pictureNotes.join("; ")}]` });
   if (pictures.length) (out.structuredContent as Record<string, unknown>).images = { received: pictures.length, withheld: pictureNotes.length + Math.max(0, pictures.length - 8) };
-  // other non-text parts (audio, resources) are not inspected: say so rather than pass them silently
+  // A recording is gated the same way: handed on only when it was transcribed and what is said in it is clean.
+  // Its transcript joins what the run has read, so a code or an address spoken aloud is known to the broker.
+  const audioNotes: string[] = [];
+  for (const [i, rec] of recordings.slice(0, 4).entries()) {
+    let why: string;
+    try {
+      const ar = await engine.scanAudio(Buffer.from(String(rec.data ?? ""), "base64"), { url: `tool:${name}#audio${i + 1}`, source: hints.source });
+      broker.ingest(runId, { ref: `tool:${name}#audio${i + 1}`, receiptDigest: ar.receipt.digest, text: ar.tier === "clean" ? ar.delivered : undefined });
+      if (ar.tier === "clean" && ar.coverage?.audio?.transcribed) { if (!out.isError) { (out.content as unknown[]).push(rec); if (ar.delivered.trim()) out.content.push({ type: "text", text: `[transcript of audio ${i + 1}]\n${ar.delivered}` }); } continue; }
+      why = ar.tier !== "clean" ? `${ar.tier}: ${[...new Set(ar.findings.filter((f) => f.confidence * f.severity >= 0.05).map((f) => f.kind))].slice(0, 6).join(", ")}` : `it could not be transcribed: ${ar.coverage?.audio?.reason ?? "unknown reason"}`;
+    } catch (e) { why = `it could not be read (${String((e as Error)?.message ?? e).slice(0, 120)})`; }
+    audioNotes.push(`audio ${i + 1} withheld (${why})`);
+  }
+  if (audioNotes.length && !out.isError) out.content.push({ type: "text", text: `[AcePaste Ingress: ${audioNotes.join("; ")}]` });
+  if (recordings.length) (out.structuredContent as Record<string, unknown>).audio = { received: recordings.length, withheld: audioNotes.length + Math.max(0, recordings.length - 4) };
+  // other non-text parts (resources) are not inspected: say so rather than pass them silently
   if (uninspected.length) (out.structuredContent as Record<string, unknown>).coverage = { text: "inspected", notInspected: uninspected };
   if (uninspected.length && !out.isError) out.content.push({ type: "text", text: `[AcePaste Ingress: ${uninspected.length} non-text part(s) (${[...new Set(uninspected)].join(", ")}) were withheld because they could not be inspected]` });
   return out;

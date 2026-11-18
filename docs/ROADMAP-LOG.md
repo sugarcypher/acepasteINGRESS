@@ -20,6 +20,7 @@ be tested without the listed need), **not built** (with the reason).
 | 0.9.19 | 6 (messages, notifications), 0 (short-text mode) | Message adapter (Slack, Discord, Telegram, Teams, WhatsApp, SMS exports) and notification adapter; shown-vs-read divergence, sender names, scam shape, payload fields; classifier short-text mode | done, with limits | Hold-out: 0.1% of 2,408 ordinary texts refused; 80.8% of attack emails sent as texts caught. Not done: retrained classifier installed (see below); present-day smishing and chat-native attack sets; native notification readers |
 | 0.9.20 | 8 (audio, captions), 12 | Caption adapter (unreadable and hidden cues, captions vs. speech), meeting transcripts (speaking to the notetaker; a voice is never an approval), `scanAudio` with a pluggable transcriber and a reference Whisper script, audio tags | done, with limits | Constructed cases pass; 24 of 24 real speech clips clean. Not measured: adversarial audio, noisy real-world recordings. Not built: native macOS transcriber, audio in MCP results, video frames |
 | 0.9.21 | 7, 9c, 10e, 8 (screens, part) | Nearby adapter and `ingress nearby`; shortcut scanner; presence approver (Touch ID or password through macOS); ClickFix screen check; README channel table | done, with limits | Live nearby scan of the author's Mac: 17 records, clean after one false alarm was fixed. Not done: a real approval through the presence prompt (needs a person), FIDO2 keys, fake-interface detection in screenshots, rendered-vs-source, cameras, other automation formats |
+| 0.9.22 | 8 (follow-up) | Recordings in MCP tool results are transcribed and gated; a screenshot can be compared with the page's own text; stale README numbers corrected | done | Published state: 0.9.21 went to npm on 2026-11-18; 0.9.22 is merged and not published |
 
 ## What was not built at all
 
@@ -30,7 +31,7 @@ be tested without the listed need), **not built** (with the reason).
 | Phase 3: sharing fingerprints of refused destinations between machines | Everything stays on the machine; a sharing service is a product decision, not a build step |
 | Phase 6: native notification readers (macOS, Android) | No supported way to read other apps' notifications from a command-line tool; notifications come in through the API |
 | Phase 8: video (briefly shown frames, captions against the picture), cameras | Not started; audio and captions took the milestone |
-| Phase 8: fake interface elements in screenshots, rendered text against page source | Only the ClickFix text pattern is built |
+| Phase 8: recognising fake interface elements in a screenshot by how they look | The ClickFix text pattern and the comparison with the page's own text (0.9.22) are built; judging a drawn dialog by its appearance is not |
 | Phase 0: a multilingual embedding model | The n-gram classifier does not transfer between languages (Turkish 3.3%); a second model was not trained |
 
 ## Needs from a person
