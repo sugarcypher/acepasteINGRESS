@@ -54,3 +54,34 @@ caught half as often as Phase 1. The structure checks this adapter adds (hidden 
 differs, sender spoofing) barely appear in this data, because the challenge's emails were plain text typed
 into a form. Closing the gap is the classifier's job (roadmap Phase 0). Newsletter-style mail is the
 false-alarm risk: about 4% of "hard ham" is refused, mostly for imperative marketing copy.
+
+## Results, 0.9.16 (2026-11-18, rules and the learned pass, source trust 4)
+
+The same hold-out sample, scored once for this release:
+
+| set | class | messages | refused | rate |
+|---|---|---|---|---|
+| LLMail-Inject Phase1 | attack | 1,899 | 1,718 | 90.5% |
+| LLMail-Inject Phase2 | attack | 1,899 | 1,677 | 88.3% |
+| Enron | benign | 2,900 | 8 | 0.3% |
+| SpamAssassin easy ham | benign | 1,400 | 3 | 0.2% |
+| SpamAssassin hard ham | benign | 250 | 12 | 4.8% |
+| SpamAssassin spam | other | 1,397 | 30 | 2.1% |
+
+**Attacks caught 3,395 of 3,798 (89.4%); legitimate mail passed 4,527 of 4,550 (99.5%); balanced accuracy 94.4%**
+(0.9.15, rules only: 32.1%, 99.6%, 65.8%). Development sample: 89.3%, 99.8%, 94.6%.
+
+What keeps this number honest, and what limits it:
+
+- The hold-out was not used to choose anything. The classifier's training data excludes every message in both
+  samples, and excludes every challenge team that has a message in either sample, because teams resubmitted
+  near-copies of their own attacks.
+- LLMail-Inject was a game with one goal: get the assistant to send a fixed word to a fixed address. The first
+  model trained on it scored 95%, and 72% once that address and word were masked: it had learned the goal.
+  Training now gives each attack its own stand-in address and word, and the masked and unmasked scores agree
+  (91% for the classifier alone). `tools/classifier/train.py --mask-goal` repeats the check.
+- It is still one style of attack: instructions typed into a form to make an assistant send mail. Attacks that
+  ask for something else, or arrive as HTML, are not measured here.
+- The first model also rated ordinary email furniture as attack-like (an unsubscribe footer scored 0.94),
+  because the benign mail it trained on is from 2001. Generated present-day email text was added to training
+  (`tools/classifier/hard_negatives.py`); that footer now scores 0.003.

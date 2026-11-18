@@ -26,6 +26,8 @@ export { adaptEmail, parseEmail, looksLikeEmailJson, looksLikeRawEmail } from ".
 export type { EmailPart } from "./email.js";
 export { adaptCalendar, parseIcs, looksLikeCalendarJson } from "./calendar.js";
 export { passagesOnlyIn } from "./served.js";
+export { classifyText, scanClassifier, classifierInfo } from "./classifier.js";
+export { CLASSIFIER_MODEL } from "./classifier-model.js";
 export { shellTokens, shellInvocations, shellOutputSource } from "./shell-commands.js";
 export type { ShellGateOptions } from "./shell-commands.js";
 export { postToolUse, userPromptSubmit, preCompact, postCompact, sessionStart, remoteGate, withheld, PASTE_OVERRIDE } from "./agent-hooks.js";

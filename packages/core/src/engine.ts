@@ -24,6 +24,7 @@ import { scanSecrets, redactSecrets, collectSecrets, scrubExcerpt } from "./secr
 import { attachEvidence } from "./evidence.js";
 import { adaptByKind, decodeEntities, detectKind, KINDS_WITH_MARKUP } from "./adapters.js";
 import { servedWords, compareServed } from "./served.js";
+import { scanClassifier } from "./classifier.js";
 import { runSandbox } from "./sandbox.js";
 import {
   DEFAULT_CONFIG,
@@ -467,6 +468,17 @@ export class IngressEngine {
     findings.push(...scanMeaning({ kind: a.kind, segments: cleanedSegments, decodedPayloads: charAll.decodedPayloads }));
     timings.meaning = performance.now() - tm;
     passesRun.push("meaning");
+
+    // learned pass: what the delivered text and each hidden passage resemble
+    if (this.config.classifier) {
+      const tcl = performance.now();
+      // what the model was trained on is a message's subject and body: its address lines (From, To, Date) are
+      // not prose, and a line of addresses is not evidence of anything
+      const deliveredText = cleanedSegments.filter((s) => (s.visibility === "visible" || (s.visibility === "attribute" && s.path.endsWith("@alt"))) && !/\/header:(from|to|cc|reply-to|date)$/.test(s.path)).map((s) => s.text).join("\n");
+      findings.push(...scanClassifier({ visible: deliveredText, segments: cleanedSegments, kind: a.kind }));
+      timings.classifier = performance.now() - tcl;
+      passesRun.push("classifier");
+    }
 
     // plugins
     if (this.config.detectors.length) {

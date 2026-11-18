@@ -371,12 +371,15 @@ function scoreText(text: string, hidden: boolean, where: string, findings: Findi
     // hostile for it. Templated means a real placeholder ({{x}}, ${x}, %7B, [context]), not any $ or [.
     const longValue = q.split("&").some((kv) => carriesText(kv.split("=").slice(1).join("=")));
     const templated = /=\{|\{\{|\$\{|%7B|\[(?:secret|key|token|context|conversation|summary|data|history|prompt)\]/i.test(q);
-    const strongImg = hidden || longValue || templated;
+    // Hidden does not make a pixel an exfiltration. Every analytics snippet ends in a <noscript> image with a few
+    // short named parameters (Wikipedia's own, on every article, rated its prompt-injection page hostile). A
+    // hidden image counts when its address carries text out, or when the hidden text around it gives an order.
+    const strongImg = longValue || templated || (hidden && hits.length > 0);
     findings.push({
-      // a visible image with a short named query (?style=flat&logo=github) is how every badge works: recorded only (0.9.5)
+      // an image with a short named query (?style=flat&logo=github, ?type=1x1) is a badge or a pixel: recorded only
       pass: "meaning", kind: "meaning.exfil_markdown_image", confidence: (strongImg ? 0.85 : 0.1) * codeFactor, severity: 0.9,
       message: `image whose URL carries ${q.length} bytes of query data (EchoLeak pattern)`,
-      excerpt: imgs[0].slice(0, 120), location: where, inHidden: hidden, action: "neutralized",
+      excerpt: imgs[0].slice(0, 120), location: where, inHidden: hidden && strongImg, action: "neutralized",
     });
   } else if (hidden && MD_IMAGE_ANY.test(text)) {
     findings.push({ pass: "meaning", kind: "meaning.exfil_markdown_image", confidence: 0.6, severity: 0.7, message: `markdown image reference inside hidden text`, location: where, inHidden: hidden, action: "neutralized" });

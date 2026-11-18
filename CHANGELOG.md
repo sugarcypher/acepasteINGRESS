@@ -4,6 +4,40 @@ Every change bumps the patch version of all three packages. The ruleset id chang
 behavior changes; receipts carry it so verdicts are reproducible. Releases up to 0.9.6 are in the
 [README](README.md#changes-in-096-2026-11-18-ruleset-20261118-3-unchanged).
 
+## 0.9.16 (2026-11-18, ruleset 2026.11.18-7)
+
+The learned pass (Phase 0): a small classifier beside the rules (`classifier.ts`, `classifier-model.ts`,
+`tools/classifier/`).
+
+- **What it is.** A logistic regression over hashed word 1-2-grams and character 3-5-grams, trained on 74,019
+  public and generated texts. It ships inside the package (about 0.7 MB), has no runtime dependency, runs on
+  the machine and scores a text in well under a millisecond. The TypeScript featurizer is checked against the
+  trainer by parity vectors carried in the model.
+- **What it may decide.** Alone it makes content suspect, never hostile; a rule agreeing with it can. Its
+  authority depends on what it reads: hidden text anywhere (0.9), messages such as email and chat (0.8), plain
+  text of unknown kind (0.85). On the visible text of pages and documents it is recorded and decides nothing,
+  because it cannot tell writing about prompts from issuing them. Text is also scored with its quotations
+  removed. `classifier: false` in the config reproduces rules-only verdicts.
+- **Measured.**
+  - Email hold-out, scored once (`tools/email-eval`): 89.4% of 3,798 attack emails caught, 99.5% of 4,550
+    legitimate emails passed, 94.4% balanced accuracy (rules only: 32.1%, 99.6%, 65.8%).
+  - Public text sets (`tools/pint`), a development set for this release: 46.7% of 2,021 attacks caught, 99.8%
+    of 4,855 benign passed, 73.3% balanced accuracy (rules only: 11.1%, 99.9%, 55.5%).
+  - Corpus eval unchanged: 90/90 attacks, 48/48 benign, 3/3 ambiguous.
+  - 36 real pages (`npm run pages`): 30 clean, 5 suspect, none hostile.
+- **What went wrong on the way, and is recorded in `tools/classifier/README.md` and `tools/email-eval/README.md`:**
+  the first model had learned the email challenge's fixed goal (95% fell to 72% with the goal masked) and
+  rated an unsubscribe footer at 0.94. Both were found by testing for them and fixed in the training data.
+- **Limits.** Turkish attacks are caught no better than before (3.3%): a bag of words does not transfer between
+  languages. The email number is one style of attack. Not a PINT score.
+
+Also in this release:
+
+- A hidden image with a few short named parameters is a tracking pixel, not exfiltration. Every analytics
+  snippet has one in `<noscript>`; Wikipedia's rated its own article on prompt injection hostile. A hidden
+  image counts when its address carries text out or the hidden text around it gives an order.
+- `npm run pages`: fetches the pages in `tools/pages/real-pages.txt` through the gate and prints verdicts.
+
 ## 0.9.15 (2026-11-18, ruleset 2026.11.18-6)
 
 Email and calendars as content types (Phases 1, 2, 9a, 9b; `email.ts`, `calendar.ts`, `served.ts`).
