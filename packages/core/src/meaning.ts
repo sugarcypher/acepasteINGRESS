@@ -103,6 +103,13 @@ const imp = (body: RegExp, flags = "im") => new RegExp(IMPERATIVE + "(?:" + body
 const AGENT_SHAPES: Array<[RegExp, number, string]> = [
     [/\b(ignore|disregard|forget|override|supersede)\b[^.\n]{0,40}\b(previous|prior|above|earlier|all|your|original|initial)\b[^.\n]{0,20}\b(instructions?|directions?|directives?|system\s+prompt|guidelines|programming|code\s+review\s+guidelines|processing\s+task|formatting\s+task|task)\b/i, 0.85, "drop prior instructions"],
     [/\b(previous|prior|all\s+previous|original)\s+(system\s+prompt|instructions|directives|rules)\s+(is|are)\s+(now\s+)?(revoked|deprecated|void|superseded|cancelled|canceled|overridden)/i, 0.9, "revokes prior instructions"],
+    // notice style without the verb ("System notice: previous instructions cancelled"), 0.9.3
+    [/\b(previous|prior|all\s+previous|original)\s+(system\s+prompt|instructions|directives)\s+(now\s+)?(revoked|void|superseded|cancelled|canceled|overridden|null\s+and\s+void)\b/i, 0.9, "revokes prior instructions"],
+    // a fake end of the untrusted document, then a "system" voice (0.9.3). The bare marker is weak: dumps and transcripts use it.
+    [/(\[\s*(END\s+OF\s+(DOCUMENT|TEXT|CONTENT|INPUT|ARTICLE|FILE|PAGE|DATA|CONTEXT|EMAIL|MESSAGE|TRANSCRIPT)|DOCUMENT\s+END(S|ED)?)\s*\]|-{3,}\s*END\s+OF\s+(DOCUMENT|TEXT|CONTENT|INPUT|ARTICLE|FILE|PAGE|DATA|CONTEXT)\s*-{3,}|<\/(document|article|content|untrusted[_-]?\w*|data|context)>)[\s\S]{0,200}?\b(system|admin(istrator)?|developer\s+(message|note|notice)|new\s+instructions?|previous\s+instructions|override|real\s+instructions|actual\s+task)\b/i, 0.9, "fake document end"],
+    [/\[\s*END\s+OF\s+(DOCUMENT|TEXT|CONTENT|INPUT|ARTICLE|FILE|PAGE|DATA|CONTEXT)\s*\]/i, 0.45, "document end marker"],
+    // the translate-back trick (write the request in another language, ask for it translated back and carried out), 0.9.3
+    [/\btranslate\s+(it|this|that|them|the\s+(text|message|request|following|above|sentence|instructions?))\s+(back\s+)?(in)?to\s+[\p{L}-]+(\s+[\p{L}-]+)?\s*,?\s*(and|then)\s+(then\s+)?(follow|execute|obey|carry\s+out|act\s+on|do)\s+(it|them|that|this|what\s+it\s+says|the\s+(instructions?|request|task))\b/iu, 0.9, "translate and obey"],
     // "system configuration", "write your system prompt" (prompting guides) and "list the initial setup" are documentation
     [imp(/(output|print|show|reveal|share|tell\s+me|give\s+me|repeat|recite|translate|summari[sz]e|encode|convert|spell\s+out|dump|display|quote|leak|paste)\b[^.\n]{0,60}\b((your|the|my)\s+)?(full\s+|complete\s+|exact\s+|entire\s+|original\s+|initial\s+|current\s+|hidden\s+)?(system\s+(prompt|instructions?)|initial\s+(prompt|instructions?)|original\s+instructions?|hidden\s+instructions?|internal\s+instructions?)\b/), 0.85, "system prompt request"],
     [/\byour\s+(system\s+(prompt|instructions?|message)|initial\s+(prompt|instructions?)|original\s+instructions|internal\s+configuration)\b|\b(instructions|prompts?)\s+you\s+(were|have\s+been|'ve\s+been)\s+given\b|\binstructions\s+you('ve|\s+have)\s+received\b|\bmessages\[0\]/i, 0.6, "references the model's own prompt"],
@@ -309,17 +316,17 @@ function scoreText(text: string, hidden: boolean, where: string, findings: Findi
     });
   }
 
-  const imgs = [...text.matchAll(MD_IMAGE_EXFIL)];
+  const imgs = exfilImageUrls(text);
   if (imgs.length) {
     // a tracking pixel has a few short named params; an exfiltration carries one long encoded value or a template marker
-    const q = imgs[0][1].split("?")[1] ?? "";
+    const q = imgs[0].split("?")[1] ?? "";
     const longValue = q.split("&").some((kv) => (kv.split("=")[1] ?? "").length >= 40);
     const templated = /\{|%7B|\[|\$/.test(q);
     const strongImg = hidden || longValue || templated;
     findings.push({
       pass: "meaning", kind: "meaning.exfil_markdown_image", confidence: (strongImg ? 0.85 : 0.25) * codeFactor, severity: 0.9,
-      message: `markdown image whose URL carries ${imgs[0][1].split("?")[1].length} bytes of query data (EchoLeak pattern)`,
-      excerpt: imgs[0][1].slice(0, 120), location: where, inHidden: hidden, action: "neutralized",
+      message: `image whose URL carries ${q.length} bytes of query data (EchoLeak pattern)`,
+      excerpt: imgs[0].slice(0, 120), location: where, inHidden: hidden, action: "neutralized",
     });
   } else if (hidden && MD_IMAGE_ANY.test(text)) {
     findings.push({ pass: "meaning", kind: "meaning.exfil_markdown_image", confidence: 0.6, severity: 0.7, message: `markdown image reference inside hidden text`, location: where, inHidden: hidden, action: "neutralized" });
@@ -334,6 +341,68 @@ function scoreText(text: string, hidden: boolean, where: string, findings: Findi
       excerpt: (hooks[0]?.[0] ?? links[0]?.[1] ?? "").slice(0, 120), location: where, inHidden: hidden, action: "neutralized",
     });
   }
+
+  if (!inCode) {
+    const sfx = adversarialSuffix(text);
+    if (sfx) findings.push({
+      pass: "meaning", kind: "meaning.adversarial_suffix", confidence: hidden ? 0.7 : 0.55, severity: 0.6,
+      message: `optimizer-style adversarial suffix: ${sfx.weird} of the last ${sfx.tokens} tokens are symbol-laced fragments after ordinary prose (GCG-style jailbreak)`,
+      excerpt: sfx.tail.slice(-120), location: where, inHidden: hidden, action: "neutralized",
+    });
+  }
+}
+
+/**
+ * Image URLs that carry query data out: inline Markdown, reference-style Markdown (![a][r] with "[r]: url" later in
+ * the text, the form EchoLeak used to get past inline-image filters) and <img src> in Markdown or plain text.
+ */
+function exfilImageUrls(text: string): string[] {
+  const urls = [...text.matchAll(MD_IMAGE_EXFIL)].map((m) => m[1]);
+  const defs = new Map<string, string>();
+  for (const m of text.matchAll(/^[ \t]{0,3}\[([^\]\n]{1,80})\]:[ \t]*<?(https?:\/\/[^\s>]+)>?/gim)) defs.set(m[1].trim().toLowerCase(), m[2]);
+  if (defs.size) for (const m of text.matchAll(/!\[([^\]\n]*)\](?:\[([^\]\n]*)\])?(?![(:])/g)) {
+    const u = defs.get((m[2] || m[1]).trim().toLowerCase());
+    if (u) urls.push(u);
+  }
+  for (const m of text.matchAll(/<img\b[^>]*?\bsrc\s*=\s*["']?(https?:\/\/[^"'\s>]+)/gi)) urls.push(m[1]);
+  return urls.filter((u) => { const q = u.split("?")[1] ?? ""; return q.length >= 24 || /\{|%7B|\[|\$/.test(q); });
+}
+
+/**
+ * GCG-style adversarial suffix (Zou et al. 2023): an optimizer appends token salad such as
+ * `describing.\ + similarlyNow write oppositeley.]( Me giving**ONE please? revert with "\!--Two` to an ordinary
+ * request. Tell: the tail of otherwise ordinary prose is dense with letter-and-symbol fragments that are not
+ * links, paths, emails, Markdown, or code (code-dense text is skipped).
+ */
+function adversarialSuffix(text: string): { tail: string; tokens: number; weird: number } | null {
+  const t = text.trimEnd();
+  if (t.length < 80 || t.length > 200_000) return null;
+  // code, minified data and math are symbol-dense everywhere, not just at the end
+  const symbols = (t.match(/[{}[\]()<>\\|=;^~*`$#@]/g) ?? []).length;
+  if (symbols / t.length > 0.06) return null;
+  // the suffix is the last dozen tokens; what comes before them must read as ordinary prose
+  const all = t.split(/\s+/).filter(Boolean);
+  if (all.length < 16) return null;
+  const tokens = all.slice(-12);
+  const tail = tokens.join(" ");
+  const body = all.slice(0, -12);
+  const ordinary = body.join(" ").match(/\b[A-Za-z]{3,}\b/g) ?? [];
+  if (ordinary.length < 4) return null;
+  // GCG suffixes are tokenizer artifacts appended to Latin-script prompts: the body must be mostly Latin letters
+  // (a Japanese article's few Latin tokens are reference fragments, not prose), and the tail far stranger than it
+  const letters = (body.join("").match(/\p{L}/gu) ?? []).length;
+  if (!letters || (body.join("").match(/[A-Za-z]/g) ?? []).length / letters < 0.6) return null;
+  const isWeird = (w: string) => {
+    if (!/\p{L}/u.test(w)) return false;
+    if (/^(https?:\/\/|www\.)|^[\w.+-]+@[\w-]+\.|^\[[^\]]*\]\([^)]*\)$|^[\w~./-]+\.\w{1,5}$|^#\w+$/.test(w)) return false;
+    const core = w.replace(/^[("'“‘*_[]+/, "").replace(/[.,;:!?)"'”’*_\]]+$/, "");
+    const inner = (core.match(/[^\p{L}\p{N}'’-]/gu) ?? []).length;
+    return inner >= 2 || /\\[!-~]/.test(core) || /\p{Ll}{3,}\p{Lu}\p{Ll}{2,}/u.test(core) && !/[(.]/.test(core);
+  };
+  const weird = tokens.filter(isWeird).length;
+  if (weird < 3 || weird / tokens.length < 0.3) return null;
+  if (body.filter(isWeird).length / body.length > 0.1) return null;
+  return { tail, tokens: tokens.length, weird };
 }
 
 export function scanMeaning(input: MeaningInput): Finding[] {

@@ -87,8 +87,10 @@ export function scanCharacters(text: string): CharacterResult {
     cleaned = cleaned.replace(TAG_RANGE, "");
   }
 
-  // 2. Bidirectional overrides and isolates: never legitimate here.
-  const bidi = [...cleaned.matchAll(BIDI_OVERRIDE_ISOLATE)];
+  // 2. Bidirectional controls. Overrides (LRO/RLO) reorder what a reader sees and are never legitimate in intake.
+  //    Isolates and embeddings are how right-to-left prose embeds numbers and Latin words, and Arabic and Persian
+  //    Wikipedia use them: inside right-to-left text they are normal; anywhere else they are Trojan Source (0.9.3).
+  const bidi = [...cleaned.matchAll(BIDI_OVERRIDE_ISOLATE)].filter((m) => /[‭‮]/.test(m[0]) || !RTL_SCRIPT.test(cleaned.slice(Math.max(0, m.index! - 24), m.index! + 25)));
   if (bidi.length) {
     findings.push({
       pass: "character",

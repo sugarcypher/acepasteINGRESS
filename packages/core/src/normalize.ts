@@ -73,6 +73,85 @@ export function skeleton(text: string): string {
   return out.normalize("NFD").replace(/\p{M}+/gu, "").normalize("NFC");
 }
 
+// ---------- non-Latin matching views (0.9.3) ----------
+// These views exist only for matching. Nothing here is ever delivered: the text the model receives is the original.
+
+/**
+ * Arabic-script fold. Persian ی/ک and Arabic ي/ك look identical but are different code points, so a rule written
+ * with one misses text typed with the other; hamza and tā marbūṭa forms, tatweel and short-vowel marks vary the
+ * same way. The zero-width non-joiner is a real Persian character (it is not stripped from delivered text, and the
+ * character pass does not flag it between Persian letters), but it sits inside words a rule spells without it, so
+ * the matching view drops it. Rules are compiled through the same fold.
+ */
+const ARABIC_FOLD: Record<string, string> = {
+  "ي": "ی", "ى": "ی", "ئ": "ی", "ے": "ی", // ي ى ئ ے -> ی
+  "ك": "ک", // ك -> ک
+  "ة": "ه", "ۀ": "ه", // ة ۀ -> ه
+  "أ": "ا", "إ": "ا", "آ": "ا", "ٱ": "ا", // أ إ آ ٱ -> ا
+  "ؤ": "و", // ؤ -> و
+};
+export function foldArabicScript(text: string): string {
+  if (!/[؀-ۿ]/.test(text)) return text;
+  return text
+    .replace(/[ـً-ٰٟۖ-ۭ‌‍]/g, "")
+    .replace(/[يىئےكةۀأإآٱؤ]/g, (c) => ARABIC_FOLD[c] ?? c);
+}
+
+const CHO = "ㄱㄲㄴㄷㄸㄹㅁㅂㅃㅅㅆㅇㅈㅉㅊㅋㅌㅍㅎ";
+const JUNG = "ㅏㅐㅑㅒㅓㅔㅕㅖㅗㅘㅙㅚㅛㅜㅝㅞㅟㅠㅡㅢㅣ";
+const JONG = ["", "ㄱ", "ㄲ", "ㄳ", "ㄴ", "ㄵ", "ㄶ", "ㄷ", "ㄹ", "ㄺ", "ㄻ", "ㄼ", "ㄽ", "ㄾ", "ㄿ", "ㅀ", "ㅁ", "ㅂ", "ㅄ", "ㅅ", "ㅆ", "ㅇ", "ㅈ", "ㅊ", "ㅋ", "ㅌ", "ㅍ", "ㅎ"];
+const VOWEL_PAIR: Record<string, string> = { "ㅗㅏ": "ㅘ", "ㅗㅐ": "ㅙ", "ㅗㅣ": "ㅚ", "ㅜㅓ": "ㅝ", "ㅜㅔ": "ㅞ", "ㅜㅣ": "ㅟ", "ㅡㅣ": "ㅢ" };
+const FINAL_PAIR: Record<string, string> = { "ㄱㅅ": "ㄳ", "ㄴㅈ": "ㄵ", "ㄴㅎ": "ㄶ", "ㄹㄱ": "ㄺ", "ㄹㅁ": "ㄻ", "ㄹㅂ": "ㄼ", "ㄹㅅ": "ㄽ", "ㄹㅌ": "ㄾ", "ㄹㅍ": "ㄿ", "ㄹㅎ": "ㅀ", "ㅂㅅ": "ㅄ" };
+const isCons = (c: string | undefined) => !!c && c >= "ㄱ" && c <= "ㅎ";
+const isVow = (c: string | undefined) => !!c && c >= "ㅏ" && c <= "ㅣ";
+
+/**
+ * Compose loose Hangul letters into syllables: ㅁㅜㅅㅣ -> 무시, ㅇㅣㄴ -> 인, also one letter per space
+ * (ㅁ ㅜ ㅅ ㅣ). NFKC composes initial+vowel pairs but turns every consonant into an initial, so a final
+ * consonant (ㄴ in 인) never joins; this does what a Korean reader does.
+ */
+export function composeHangul(text: string): string {
+  if (!/[ㄱ-ㅣ]/.test(text)) return text;
+  const s = [...text.replace(/(?<=[ㄱ-ㅣ])[ \t　]+(?=[ㄱ-ㅣ])/g, "")];
+  let out = "";
+  for (let i = 0; i < s.length; ) {
+    const c = s[i];
+    if (isCons(c) && CHO.includes(c) && isVow(s[i + 1])) {
+      let v = s[i + 1], j = i + 2;
+      if (isVow(s[j]) && VOWEL_PAIR[v + s[j]]) { v = VOWEL_PAIR[v + s[j]]; j++; }
+      let t = "";
+      // a consonant is a final unless a vowel follows it (then it starts the next syllable)
+      if (isCons(s[j]) && !isVow(s[j + 1])) {
+        if (isCons(s[j + 1]) && FINAL_PAIR[s[j] + s[j + 1]] && !isVow(s[j + 2])) { t = FINAL_PAIR[s[j] + s[j + 1]]; j += 2; }
+        else if (JONG.includes(s[j])) { t = s[j]; j++; }
+      }
+      out += String.fromCharCode(0xac00 + (CHO.indexOf(c) * 21 + JUNG.indexOf(v)) * 28 + JONG.indexOf(t));
+      i = j;
+      continue;
+    }
+    out += c;
+    i++;
+  }
+  return out;
+}
+
+/** Each Hangul syllable reduced to its initial consonant: the shape of 초성 shorthand (이전 지시 무시 -> ㅇㅈ ㅈㅅ ㅁㅅ). */
+export function hangulInitials(text: string): string {
+  return text.replace(/[가-힣]/g, (c) => CHO[Math.floor((c.charCodeAt(0) - 0xac00) / 588)]);
+}
+
+/**
+ * Rejoin CJK spelled out with spaces (以 下 は 無 視) and runs of single Hangul syllables (무 시 하 세 요).
+ * Chinese and Japanese do not put spaces between characters, so a run of them is spacing used to break a match;
+ * Korean spaces words, so only runs of one-syllable "words" are joined.
+ */
+export function despaceCJK(text: string): string {
+  const cjk = String.raw`\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}ー`;
+  return text
+    .replace(new RegExp(`(?<=[${cjk}])[ \\t\\u3000]+(?=[${cjk}])`, "gu"), "")
+    .replace(/(?<![가-힣])[가-힣](?:[ 　][가-힣]){2,}(?![가-힣])/g, (run) => run.replace(/[ 　]/g, ""));
+}
+
 /** Variants of the text the meaning pass should score. The original is always first. */
 export function variants(text: string): Variant[] {
   const out: Variant[] = [{ name: "original", text, discount: 1 }];

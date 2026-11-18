@@ -217,6 +217,16 @@ Every URL fetch is made twice and the two copies compared.
 
 What it cannot see: a site that verifies AI fetchers by their published IP ranges serves the gate the human page under any user agent, and a site that profiles the client deeply enough will tell the plain HTTP fetch from a person. The browser fetch and a separate network narrow that gap; they do not close it.
 
+## Changes in 0.9.3 (2026-11-18, ruleset 2026.11.18-2)
+
+- Disguised text, matched through views that are never delivered: Arabic-script fold (Persian ی/ک and Arabic ي/ك, hamza and tā marbūṭa forms, tatweel and short vowels; the ZWNJ, a real Persian character, is ignored for matching only), composed Hangul letters (ㅁㅜㅅㅣ, ㅁ ㅜ ㅅ ㅣ, including final consonants NFKC cannot join), Korean initial-consonant shorthand (ㅇㅈ ㅈㅅ ㅁㅅ), and CJK spelled out with spaces (以 前 の 指 示 を 無 視).
+- Persian rules: drop prior instructions, hide from the user, reveal the system prompt. Fake notices in CJK brackets (【システム】, 【系统】, 【시스템】) that go on to give an order; a bracketed announcement on its own stays clean.
+- Optimizer-style adversarial suffixes (GCG token salad after an ordinary Latin-script request): `meaning.adversarial_suffix`.
+- Fake end-of-document markers followed by a "system" voice; "previous instructions cancelled" without the verb; translate-back-and-obey alongside decode-and-obey.
+- Image exfiltration: reference-style Markdown images (the EchoLeak bypass) and `<img src>` in Markdown or text, not only inline images.
+- Bidi isolates and embeddings inside right-to-left prose are normal (Arabic Wikipedia was refused as Trojan Source); overrides anywhere, and isolates in Latin text, still refuse.
+- PINT-style scoring: `npm run pint`, `tools/pint/` (public-set downloader, notebook eval function, results). Balanced accuracy on 1,690 public inputs Ingress was never tuned on: 62.3%, with 879 of 879 benign inputs passed in eight languages and 200 of 811 attacks caught. That is not a PINT score; see `tools/pint/README.md`.
+
 ## Changes in 0.9.2 (2026-11-18, ruleset 2026.11.18-1)
 
 - Agent-directed meaning shapes: jailbreak personas, fake system and agent headers, decode-and-obey, sensitive path access, escalating commands, approval claims, tool impersonation, context extraction, tracking links, parameter tampering. Visible foreign-language overrides weigh the same as English; quoted ones get the same discount.

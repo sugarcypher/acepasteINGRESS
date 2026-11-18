@@ -1,7 +1,7 @@
 {
   "name": "acepaste-ingress",
   "private": true,
-  "version": "0.9.2",
+  "version": "0.9.3",
   "description": "AcePaste Ingress: a security gate between internet content and AI ingestion. One engine, many frontends.",
   "workspaces": [
     "packages/*"
@@ -10,7 +10,8 @@
     "build": "npm run build -w @acepaste/ingress && npm run build -w @acepaste/ingress-mcp && npm run build -w @acepaste/ingress-http",
     "test": "npm test -w @acepaste/ingress",
     "demo": "node packages/core/dist/src/cli.js",
-    "eval": "node packages/core/dist/eval/run.js"
+    "eval": "node packages/core/dist/eval/run.js",
+    "pint": "node packages/core/dist/eval/pint.js"
   },
   "engines": {
     "node": ">=20"

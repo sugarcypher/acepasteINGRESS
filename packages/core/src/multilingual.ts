@@ -18,12 +18,15 @@
  */
 
 import type { Finding } from "./types.js";
+import { composeHangul, despaceCJK, foldArabicScript, hangulInitials } from "./normalize.js";
 
 export const MULTILINGUAL_RULESET = "multilingual-seed-v1 (unreviewed)";
 
-interface Rule { id: string; lang: string; kind: "override" | "conceal" | "extract"; re: RegExp }
+interface Rule { id: string; lang: string; kind: "override" | "conceal" | "extract"; re: RegExp; folded?: RegExp; initialsOnly?: boolean }
 
 const R = (id: string, lang: string, kind: Rule["kind"], re: RegExp): Rule => ({ id, lang, kind, re });
+/** a rule matched only against the initial-consonant view (초성 shorthand) */
+const RI = (id: string, kind: Rule["kind"], re: RegExp): Rule => ({ id, lang: "ko", kind, re, initialsOnly: true });
 
 export const MULTILINGUAL_RULES: Rule[] = [
   // Spanish
@@ -71,7 +74,21 @@ export const MULTILINGUAL_RULES: Rule[] = [
   R("extract.ko", "ko", "extract", /시스템\s*프롬프트(?:를|을)?\s*(?:출력|보여|공개)/u),
   R("extract.ar", "ar", "extract", /(?:اعرض|أظهر|اكشف)\s+(?:رسالة|تعليمات)\s+النظام/u),
   R("unrestricted.multi", "multi", "override", /(?:sans\s+aucune\s+restriction|sin\s+restricciones|ohne\s+einschränkungen|без\s+ограничений|制限のない|没有任何限制|بدون\s+أي\s+قيود|kısıtlaması\s+olmayan|mode\s+développeur|modo\s+desarrollador|entwicklermodus|وضع\s+المطور)/iu),
+  // added 2026-11-18 (0.9.3). Persian, written in the folded view's letters (ی ک, no ZWNJ): it also matches Arabic-keyboard spellings.
+  R("override.fa", "fa", "override", /(?:همه\s*(?:ی\s*)?)?(?:دستورالعمل|دستور|دستورات|راهنمایی|آموزه)(?:ها|های)?\s*(?:ی\s*)?(?:قبلی|پیشین|قبل|بالا)\s*(?:را\s*)?(?:نادیده\s*(?:بگیر|بگیرید|گرفته)|فراموش\s*(?:کن|کنید)|کنار\s*(?:بگذار|بگذارید))/u),
+  R("conceal.fa", "fa", "conceal", /به\s*کاربر\s*(?:چیزی\s*|هیچ\s*چیز\s*)?(?:نگو|نگویید|اطلاع\s*نده|اطلاع\s*ندهید)/u),
+  R("extract.fa", "fa", "extract", /(?:پرامپت|دستور|دستورالعمل|پیام)(?:ها|های)?\s*(?:ی\s*)?سیستم(?:ی)?\s*(?:خود\s*|ات\s*)?(?:را\s*)?(?:نشان\s*(?:بده|دهید)|فاش\s*(?:کن|کنید)|بنویس|چاپ\s*(?:کن|کنید)|بازگو\s*کن)/u),
+  // Korean initial-consonant shorthand (초성): 이전 지시 무시 -> ㅇㅈ ㅈㅅ ㅁㅅ; 시스템 프롬프트 -> ㅅㅅㅌ ㅍㄹㅍㅌ
+  RI("override.ko.initials", "override", /ㅇㅈ\s*(?:ㅇ\s*)?(?:ㅁㄷ\s*)?(?:ㅈㅅ|ㅈㅊ|ㅁㄹ)(?:ㅅㅎ)?\s*(?:ㄹ|ㅇ)?\s*(?:ㅁㄷ\s*)?ㅁㅅ/u),
+  RI("extract.ko.initials", "extract", /ㅅㅅㅌ\s*ㅍㄹㅍㅌ\s*(?:ㄹ|ㅇ)?\s*(?:ㅊㄹ|ㅂㅇ|ㄱㄱ)/u),
+  // fake notices in CJK brackets (【システム】, 【系统】, 【시스템】) that go on to give an order. A bracket alone is an
+  // ordinary announcement header on Japanese and Chinese sites ("【システム】メンテナンスのお知らせ").
+  R("header.cjk", "multi", "override", /[【［〔〖]\s*(?:システム(?:通知|メッセージ)?|管理者|運営|系统(?:通知|消息)?|系統|管理员|管理員|시스템|관리자|운영자)\s*[】］〕〗][^\n]{0,120}?(?:指示|命令|無視|従って|従え|忽略|无视|指令|遵守|服从|무시|지시|따르|따라)/u),
 ];
+for (const r of MULTILINGUAL_RULES) {
+  const src = foldArabicScript(r.re.source);
+  if (src !== r.re.source) r.folded = new RegExp(src, r.re.flags);
+}
 
 const KIND_LABEL: Record<Rule["kind"], string> = {
   override: "instruction to drop prior instructions",
@@ -88,10 +105,19 @@ export function scanMultilingual(text: string, hidden: boolean, where: string): 
   const views: Array<[string, string]> = [["original", text]];
   const nf = text.normalize("NFKC");
   if (nf !== text) views.push(["nfkc", nf]);
+  // matching-only views (0.9.3): Arabic-script fold, rejoined CJK spacing, composed Hangul letters
+  const folded = foldArabicScript(nf);
+  if (folded !== nf) views.push(["arabic-fold", folded]);
+  // compose before NFKC: NFKC turns loose Hangul letters into conjoining initials, which no longer compose
+  const composed = composeHangul(despaceCJK(text));
+  const joined = composed.normalize("NFKC");
+  if (joined !== nf) views.push(["cjk-rejoin", joined]);
+  // initials are compatibility letters (ㅇㅈ): taken before NFKC, which would turn them into conjoining jamo
+  const initials = /[가-힣ㄱ-ㅎ]/.test(composed) ? hangulInitials(composed) : "";
   const out: Finding[] = [];
   for (const rule of MULTILINGUAL_RULES) {
-    for (const [view, t] of views) {
-      const m = t.match(rule.re);
+    for (const [view, t] of rule.initialsOnly ? (initials ? [["hangul-initials", initials] as [string, string]] : []) : views) {
+      const m = t.match(view === "arabic-fold" && rule.folded ? rule.folded : rule.re);
       if (!m) continue;
       // two rules on the same words are one instruction
       if (out.some((f) => f.excerpt && (f.excerpt.includes(m[0].slice(0, 120)) || m[0].includes(f.excerpt)))) break;
