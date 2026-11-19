@@ -4,6 +4,39 @@ Every change bumps the patch version of all three packages. The ruleset id chang
 behavior changes; receipts carry it so verdicts are reproducible. Releases up to 0.9.6 are in the
 [README](README.md#changes-in-096-2026-11-18-ruleset-20261118-3-unchanged).
 
+## 0.9.23 (2026-11-19, ruleset 2026.11.19-1)
+
+The retrained classifier is installed.
+
+- **The n-gram classifier was retrained with ordinary text messages added** (2,198 real texts between people,
+  from the development half of the UCI SMS set; the training set is now 76,217 texts). The model shipped
+  since 0.9.16 had never seen how people text. Nothing else about the pass changed: same features, same
+  authority by kind of content, and short-text mode (0.9.19) stays in place.
+- **It was put in the repository by a person.** The automated run was not permitted to overwrite the model
+  file; the owner ran the trainer and the tests, and this release re-scores and records it.
+
+Re-scored on the sets the earlier model was scored on. Both hold-outs had been used before (the email set for
+0.9.16, and its attack rows again as texts for 0.9.19), so they are spent as hold-outs: these are comparisons
+with the earlier model on the same rows, not fresh measurements.
+
+| set | 0.9.22 | 0.9.23 |
+|---|---|---|
+| email hold-out, attacks caught | 89.4% of 3,798 | 89.6% (3,402) |
+| email hold-out, legitimate mail passed | 99.5% of 4,550 | 99.5% (4,527) |
+| message hold-out, ordinary texts refused | 3 of 2,408 | 0 of 2,408 |
+| message hold-out, attack emails sent as texts caught | 80.8% of 3,798 | 80.8% (3,068) |
+| public text sets, pooled balanced accuracy | 73.3% | 73.2% (one all-benign set could not be downloaded this time, so the pools differ slightly) |
+| built-in corpus | 90/90, 48/48, 3/3 | the same |
+| 36 real pages | 30 clean, 5 suspect, 1 unreachable | 31 clean, 5 suspect; no verdict changed |
+
+What it does not change: attacks in a language the model was not trained on (Turkish 3.3%, the multilingual
+set about a third caught), and the classifier's limits listed in `tools/classifier/README.md`.
+
+Also in `docs/ROADMAP-LOG.md`: 0.9.22 went to npm on 2026-11-19, and the "needs from a person" list is
+brought up to date.
+
+Tests: core 375 pass, proxy 8.
+
 ## 0.9.22 (2026-11-18, ruleset 2026.11.18-12)
 
 Three loose ends from the roadmap run.

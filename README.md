@@ -68,7 +68,9 @@ content suspect, never hostile, and on the visible text of pages it decides noth
 Honest numbers, each from a set scored once after the rules were fixed: 89.4% of attack emails caught with
 99.5% of legitimate mail passed; 99.9% of ordinary text messages passed; 87 of 89 ordinary images passed. And
 what is not measured is said where it applies: recall on real image attacks, adversarial audio, an official
-PINT score, AgentDojo.
+PINT score, AgentDojo. The classifier was retrained in 0.9.23 with ordinary text messages added; re-scored on
+the same rows (a second use, so a comparison rather than a fresh measurement) it catches 89.6% of the attack
+emails, passes 99.5% of the mail, and refuses none of 2,408 ordinary texts.
 
 ## Hardening
 
