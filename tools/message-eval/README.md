@@ -36,6 +36,12 @@ Hold-out halves, scored once after the rules were fixed:
 **Attacks caught 3,068 of 3,798 (80.8%); benign passed 5,301 of 5,308 (99.9%); balanced accuracy 90.3%.**
 Development halves: 81.0%, 99.9%, 90.4%.
 
+**With the retrained classifier (0.9.23, 2026-11-19),** the same hold-out rows: ordinary texts refused 0 of
+2,408; Enron bodies as texts 4 of 2,900; Phase 1 caught 1,592 (83.8%), Phase 2 1,476 (77.7%); spam texts 2 of
+366. Attacks caught 3,068 of 3,798 (80.8%); benign passed 5,304 of 5,308 (99.9%); balanced accuracy 90.4%.
+This is a second scoring of the hold-out, so it is a comparison with the table above, not a fresh
+measurement. The retraining used ordinary texts from the development half only (2,198 of them).
+
 ## How it got there (development halves)
 
 | step | ordinary texts refused | why |
@@ -53,9 +59,9 @@ Development halves: 81.0%, 99.9%, 90.4%.
   advertising from the 2000s with no link tricks. The scam-shape check is about links that hide their
   destination and requests for codes; it is tested on constructed cases (`test/messages.test.ts`), not measured
   on a present-day smishing corpus. None was found with a licence that could be checked.
-- **The classifier was not retrained.** Retraining with ordinary texts added is prepared
-  (`tools/classifier/build_training_set.py --benign`), and on the lab machine the retrained model flags 6 of
-  2,419 development texts at its own threshold. Installing a retrained model into the repository was not done
-  in this run; see `docs/ROADMAP-LOG.md`. Short-text mode is the measure that ships.
+- **The classifier was retrained afterwards, in 0.9.23.** The table above is the model that shipped with
+  0.9.19, which had never seen a text message; short-text mode was the measure that made it usable. The
+  retrained model (`tools/classifier/build_training_set.py --benign`) is installed from 0.9.23, and short-text
+  mode stays on beside it. Its numbers are in the paragraph under the table.
 - **Trust is per scan.** Every message here was read as from a stranger. A known contact (trust 2) gets the
   same rules with the default thresholds.
