@@ -42,6 +42,7 @@ export function loadPolicyFile(path: string): Partial<IngressConfig> {
   }
   if (raw.sandbox === "off" || raw.sandbox === "escalate" || raw.sandbox === "always") out.sandbox = raw.sandbox;
   if (typeof raw.cloakingCheck === "boolean") out.cloakingCheck = raw.cloakingCheck;
+  if (raw.challengedFetch === "browser-view" || raw.challengedFetch === "unreachable") out.challengedFetch = raw.challengedFetch;
   if (typeof raw.fetchStylesheets === "boolean") out.fetchStylesheets = raw.fetchStylesheets;
   return out;
 }

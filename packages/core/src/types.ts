@@ -7,9 +7,9 @@
 
 import type { NetPolicy } from "./netpolicy.js";
 
-export const ENGINE_VERSION = "0.9.24";
+export const ENGINE_VERSION = "0.9.25";
 /** bump whenever a detector's behavior changes; receipts carry it so verdicts are reproducible */
-export const RULESET_VERSION = "2026.11.19-2";
+export const RULESET_VERSION = "2026.11.19-3";
 
 /**
  * clean: delivered. suspect: refused, overridable. hostile: refused, not overridable.
@@ -85,6 +85,7 @@ export type FindingKind =
   | "acquire.unreachable"
   | "acquire.cloaking_check_incomplete"
   | "acquire.ai_agent_refused"
+  | "acquire.browser_view_used"
   // character pass
   | "unicode.tag_characters"
   | "unicode.zero_width"
@@ -364,6 +365,13 @@ export interface IngressConfig {
   humanProxy?: string;
   /** "http": the human fetch is a plain request with browser headers. "browser": a real headless Chromium loads the page. */
   humanFetch: "http" | "browser";
+  /**
+   * What to do when the site gives the AI fetcher a stand-in (an error status, a bot challenge, a block notice)
+   * and gives the browser-fingerprint fetch a page. "unreachable" (the default): nothing is delivered.
+   * "browser-view": the browser's copy is judged by every pass and delivered, with a note saying which copy it
+   * is. The second reads a page the site declined to give an AI fetcher; that is the operator's decision.
+   */
+  challengedFetch: "unreachable" | "browser-view";
   /** maximum body size accepted, bytes */
   maxBodyBytes: number;
   /** fetch timeout, milliseconds */
@@ -409,6 +417,7 @@ export const DEFAULT_CONFIG: IngressConfig = {
   ],
   cloakingJitterMs: [250, 1500],
   humanFetch: "http",
+  challengedFetch: "unreachable",
   maxBodyBytes: 5 * 1024 * 1024,
   fetchTimeoutMs: 15000,
   cacheTtlSeconds: 86400,

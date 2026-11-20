@@ -27,7 +27,7 @@ one where the action itself is the risk:
 
 | What the action does | Reply |
 |---|---|
-| Names a host on a blocklist of malware and botnet controllers (`ingress blocklist update`) | deny |
+| Names a host on a blocklist of malware and botnet controllers (downloaded and refreshed daily, see below) | deny |
 | Carries the session's marker: a random string stated at session start that has no reason to appear in any command. If it does, the context itself is being sent somewhere. Encoded forms are caught too | deny |
 | Carries a verification code the session read to a destination that came from outside content | deny |
 | Runs while you have stopped all agent actions (`ingress stop`) | deny |
@@ -39,6 +39,46 @@ what you typed, it says which source. Every question and refusal is appended to
 `~/.acepaste-ingress/state/egress-log.jsonl` with its reasons (never the command's arguments).
 
 Hosts you never want asked about: `export INGRESS_EGRESS_ALLOW_HOSTS=.github.com,registry.npmjs.org`.
+
+**The blocklists keep themselves current (0.9.25).** The free lists (Feodo Tracker, Spamhaus DROP, Emerging
+Threats) are downloaded the first time a session starts and again whenever the newest copy is more than a day
+old. The session-start hook starts the download as a separate process and does not wait for it; a failed
+download leaves the previous lists in place and is tried again after an hour. Only those three addresses are
+contacted. `ingress blocklist` shows the lists and when they were last refreshed;
+`export INGRESS_BLOCKLIST_AUTO=off` stops the automatic refresh (`ingress blocklist update` still works by hand).
+
+### A question a person must answer
+
+By default an "ask" is put to you by Claude Code's own permission prompt. That prompt is only as strong as
+the permission mode: a mode that approves prompts automatically answers it for you. To have the question
+reach a person whatever the mode:
+
+```sh
+ingress presence build                           # once: compiles the Touch ID helper on this Mac
+export INGRESS_HOOK_APPROVER=macos-presence      # in the environment Claude Code starts from
+```
+
+Now, when the gate has a question, macOS shows a dialog with the exact action and the reason (Deny is the
+default button), and after "Approve" asks for Touch ID or the login password
+(`INGRESS_PRESENCE_BIOMETRY_ONLY=1`: a fingerprint only). Then:
+
+| The person | The hook replies |
+|---|---|
+| approves | nothing: Claude Code's own permission flow carries on as usual. The hook never says "allow" |
+| declines, or does not answer in time | deny, with the reason |
+| cannot be asked (not macOS, the helper is not built, an unknown value in `INGRESS_HOOK_APPROVER`) | deny, with the reason |
+
+A person has 120 seconds to answer (`INGRESS_HOOK_APPROVER_SECONDS`, 20 to 540). **The hook's `timeout` in
+the settings must be longer than that**: a hook Claude Code has to kill has said nothing, and Claude Code
+carries on without it. `settings.example.json` gives the hook 180 seconds for this reason; a longer timeout
+costs nothing when no question is asked (the hook answers in about 0.2 seconds). `INGRESS_HOOK_APPROVER=deny`
+turns every question into a refusal without asking anyone. Each answer is appended to the egress log beside
+its question.
+
+What this was tested with: a stand-in approver, in the tests. The real dialog and Touch ID prompt cannot be
+answered by a program, so they were compiled and checked here but never answered; try one question yourself
+before relying on it. It does not stop an agent that also controls the screen and knows the login password
+(set the biometry-only option on a Mac with Touch ID).
 
 **How often it interrupts.** Replaying one long real session (1,177 tool calls: this project's own
 development, treated as having read outside content from its first minute) through the gate: 22 questions
@@ -98,7 +138,8 @@ In a session, fetch a page and look for the `<<acepaste-ingress ...>>` envelope 
   command that hides its destination in a variable or a file is judged without it. It is a check on what an
   agent visibly does, not a firewall: a machine-wide network filter is roadmap Phase 4 and is not built.
 - "Ask" is answered by you in Claude Code's own permission prompt. In a mode that auto-approves prompts, an
-  "ask" from this hook is only as strong as that mode; "deny" holds in every mode.
+  "ask" from this hook is only as strong as that mode; "deny" holds in every mode. Set
+  `INGRESS_HOOK_APPROVER=macos-presence` (above) to have every question answered by a person at the Mac.
 - Scope is judged by destination only: whether an address is one you named, one on your allowlist, or one
   that came from content. Whether an action fits the meaning of what you asked for is not judged.
 - The hook contract belongs to Claude Code and changes between releases. These were written against the

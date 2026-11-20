@@ -62,6 +62,8 @@ export function summarize(result: IngressResult, topN = 6): ResultSummary {
  *   INGRESS_CLOAKING_JITTER "min,max" milliseconds between the two fetches
  *   INGRESS_HUMAN_PROXY     HTTP(S) proxy URL for the browser-fingerprint fetch (e.g. a residential proxy)
  *   INGRESS_HUMAN_FETCH     "browser" to make that fetch in a real headless Chromium
+ *   INGRESS_CHALLENGED_FETCH "browser-view" to read the browser's copy when the site gives the AI fetcher a challenge,
+ *                           a block or an error instead of the page (default: nothing is delivered)
  */
 export function cloakingConfigFromEnv(env: Record<string, string | undefined>, honestUserAgent: string): Partial<import("./types.js").IngressConfig> {
   const cfg: Partial<import("./types.js").IngressConfig> = {};
@@ -71,5 +73,6 @@ export function cloakingConfigFromEnv(env: Record<string, string | undefined>, h
   if (j && j.length === 2 && j.every((x) => Number.isFinite(x))) cfg.cloakingJitterMs = [j[0], j[1]];
   if (env.INGRESS_HUMAN_PROXY) cfg.humanProxy = env.INGRESS_HUMAN_PROXY;
   if (env.INGRESS_HUMAN_FETCH === "browser" || env.INGRESS_HUMAN_FETCH === "http") cfg.humanFetch = env.INGRESS_HUMAN_FETCH;
+  if (env.INGRESS_CHALLENGED_FETCH === "browser-view" || env.INGRESS_CHALLENGED_FETCH === "unreachable") cfg.challengedFetch = env.INGRESS_CHALLENGED_FETCH;
   return cfg;
 }

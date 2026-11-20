@@ -38,7 +38,7 @@ import { createHash } from "node:crypto";
 import { appendFileSync, readFileSync, writeFileSync, existsSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join, normalize } from "node:path";
-import { IngressEngine, loadPolicyFile, cloakingConfigFromEnv, HONEST_USER_AGENT, checkLocalRequest, isLoopbackBind, parseScanHints, type IngressConfig, type IngressResult, type TaintReceipt } from "@acepaste/ingress";
+import { IngressEngine, loadPolicyFile, cloakingConfigFromEnv, HONEST_USER_AGENT, checkLocalRequest, isLoopbackBind, parseScanHints, startBlocklistRefresh, type IngressConfig, type IngressResult, type TaintReceipt } from "@acepaste/ingress";
 import { JsonlReceiptStore, toStored, type ReceiptStore } from "./store.js";
 
 const env = process.env;
@@ -343,3 +343,12 @@ const server = createServer(async (req, res) => {
 
 // INGRESS_HOST=127.0.0.1 keeps a local gate off the network; unset, it listens on every interface (what a hosted deployment needs)
 server.listen(PORT, HOST, () => process.stderr.write(JSON.stringify({ event: "ingress.listen", host: HOST ?? "all interfaces", port: PORT, open, sandbox: engine.config.sandbox, audit: !!env.INGRESS_RECEIPTS_FILE, localGuard }) + "\n"));
+
+// The blocklists the egress gate uses go stale. On a person's machine (a loopback bind) this service is the one
+// process that is always running, so it starts the refresh (a separate, detached process) when it starts and
+// looks again every six hours. Nothing here waits for it. INGRESS_BLOCKLIST_AUTO=off turns it off. A hosted
+// deployment gates content for others and brokers nobody's actions: it has no use for the lists.
+if (isLoopbackBind(HOST)) {
+  startBlocklistRefresh();
+  setInterval(() => startBlocklistRefresh(), 6 * 3600 * 1000).unref();
+}

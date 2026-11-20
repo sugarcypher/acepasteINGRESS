@@ -44,7 +44,7 @@ import { z } from "zod";
 import { appendFileSync, readFileSync, statSync } from "node:fs";
 import { randomBytes } from "node:crypto";
 import {
-  IngressEngine, ActionBroker, Blocklist, localPortProgram, DEFAULT_BROKER_POLICY, auditEnvironment, formatAudit, trackAudit, formatAuditChanges, reviewToolDefinitions, heldDescription, stopReason, canaryNotice, parseScanHints, CONTENT_KINDS, ASSEMBLED_LIMITS, loadInstructionFiles, macosDialogApprover, presenceApprover, denyAllApprover, loadPolicyFile, cloakingConfigFromEnv, HONEST_USER_AGENT, ENGINE_VERSION,
+  IngressEngine, ActionBroker, Blocklist, startBlocklistRefresh, localPortProgram, DEFAULT_BROKER_POLICY, auditEnvironment, formatAudit, trackAudit, formatAuditChanges, reviewToolDefinitions, heldDescription, stopReason, canaryNotice, parseScanHints, CONTENT_KINDS, ASSEMBLED_LIMITS, loadInstructionFiles, macosDialogApprover, presenceApprover, denyAllApprover, loadPolicyFile, cloakingConfigFromEnv, HONEST_USER_AGENT, ENGINE_VERSION,
   type IngressConfig, type IngressResult, type TaintReceipt, type BrokerPolicy, type Approver, type ToolHold,
 } from "@acepaste/ingress";
 
@@ -94,6 +94,8 @@ const broker = new ActionBroker({ ...(proxyCfg.policy ?? {}), readOnlyTools: [..
   // known-bad destinations (ingress blocklist update), and what really listens behind a "localhost" address
   blocklist: Blocklist.load(), portProgram: localPortProgram,
 });
+// the lists were read just above; if they are more than a day old a separate process refreshes them for the next start
+startBlocklistRefresh();
 for (const q of proxyCfg.quarantine ?? []) broker.quarantine(q);
 // one run per server session: taint cannot be cleared by the model, only by starting a new session
 const runId = `run_${randomBytes(6).toString("hex")}`;

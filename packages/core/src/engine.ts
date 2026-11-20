@@ -186,18 +186,8 @@ export class IngressEngine {
       timings.acquire = performance.now() - ta;
     }
 
-    if (opts.quarantineCheck) {
-      for (const hop of [...agentRes.redirectChain, agentRes.finalUrl]) {
-        const q = opts.quarantineCheck(hop);
-        if (q) return this.refuse(url, [{ pass: "policy", kind: "policy.denied_source", confidence: 1, severity: 1, message: `redirected to a source quarantined by your organization: ${q}`, action: "none" }], timings, t0, "text", "hostile", true);
-      }
-    }
-    if (agentRes.redirectChain.length) {
-      const hosts = new Set(agentRes.redirectChain.concat(agentRes.finalUrl).map(hostOf));
-      if (hosts.size > 2) findings.push({ pass: "policy", kind: "policy.redirect_chain", confidence: 0.4, severity: 0.3, message: `redirected through ${hosts.size} hosts: ${[...hosts].join(" -> ")}`, action: "none" });
-      const finalRule = this.domainRule(agentRes.finalUrl);
-      if (finalRule?.deny) return this.refuse(url, [{ pass: "policy", kind: "policy.denied_source", confidence: 1, severity: 1, message: `redirect target ${hostOf(agentRes.finalUrl)} is denied by policy`, action: "none" }], timings, t0, "text");
-    }
+    const hopRefusal = this.checkHops(url, agentRes, opts, timings, t0, findings);
+    if (hopRefusal) return hopRefusal;
 
     // Many sites refuse AI-assistant user agents outright. When the browser fetch got through, fetch
     // once more under the gate's own name so the page can still be read and compared.
@@ -212,6 +202,11 @@ export class IngressEngine {
     // An error page is not the page. If the site refused the AI fetcher (many block AI user agents or
     // challenge non-browsers), there is nothing to deliver and nothing to compare: unreachable, not an attack.
     if (agentRes.status >= 400) {
+      // Unless the operator chose to read the browser's copy in that case (challengedFetch: "browser-view").
+      if (this.config.challengedFetch === "browser-view" && humanRes && humanRes.status < 400) {
+        const view = await this.browserView(url, humanRes, `the site answered the AI fetcher with HTTP ${agentRes.status}`, opts, rule, findings, timings, t0);
+        if (view) return view;
+      }
       const both = humanRes ? `; the browser fetch got HTTP ${humanRes.status}` : "";
       return this.refuse(url, [{ pass: "acquire", kind: "acquire.unreachable", confidence: 0, severity: 0, message: `the site answered the AI fetcher with HTTP ${agentRes.status}${both}`, action: "none" }], timings, t0, "text", "unreachable");
     }
@@ -231,11 +226,64 @@ export class IngressEngine {
       timings.visibility = performance.now() - ts;
     }
 
+    const standIn = { agent: false };
     const result = await this.guarded(url, kind, t0, () => this.analyze({
       url, finalUrl: agentRes.finalUrl, redirectChain: agentRes.redirectChain, raw: agentRes.body, kind,
-      humanRaw: humanRes?.body, humanContentType: humanRes?.contentType, externalRules, externalColorRules, timings, t0, override: !!opts.override, extraFindings: findings, rule,
+      humanRaw: humanRes?.body, humanContentType: humanRes?.contentType, externalRules, externalColorRules, timings, t0, override: !!opts.override, extraFindings: findings, rule, standIn,
     }));
+    // the AI fetcher got a stand-in with a success status, and the operator chose to read the browser's copy then
+    if (result.tier === "unreachable" && standIn.agent && humanRes && this.config.challengedFetch === "browser-view") {
+      const view = await this.browserView(url, humanRes, "the site gave the AI fetcher a challenge, block or error page", opts, rule, findings, timings, t0);
+      if (view) return view;
+    }
     // a stand-in page (a challenge, a block notice) is a passing state of the site, like any failed fetch: not cached
+    if (result.tier !== "unreachable") this.cacheSet(url, opts, result);
+    return result;
+  }
+
+  /** Policy over where a fetch ended up: a quarantined or denied hop refuses it; a long chain is recorded. */
+  private checkHops(url: string, res: AcquireResult, opts: IngressOptions, timings: IngressResult["timings"], t0: number, findings: Finding[]): IngressResult | undefined {
+    if (opts.quarantineCheck) {
+      for (const hop of [...res.redirectChain, res.finalUrl]) {
+        const q = opts.quarantineCheck(hop);
+        if (q) return this.refuse(url, [{ pass: "policy", kind: "policy.denied_source", confidence: 1, severity: 1, message: `redirected to a source quarantined by your organization: ${q}`, action: "none" }], timings, t0, "text", "hostile", true);
+      }
+    }
+    if (res.redirectChain.length) {
+      const hosts = new Set(res.redirectChain.concat(res.finalUrl).map(hostOf));
+      if (hosts.size > 2) findings.push({ pass: "policy", kind: "policy.redirect_chain", confidence: 0.4, severity: 0.3, message: `redirected through ${hosts.size} hosts: ${[...hosts].join(" -> ")}`, action: "none" });
+      const finalRule = this.domainRule(res.finalUrl);
+      if (finalRule?.deny) return this.refuse(url, [{ pass: "policy", kind: "policy.denied_source", confidence: 1, severity: 1, message: `redirect target ${hostOf(res.finalUrl)} is denied by policy`, action: "none" }], timings, t0, "text");
+    }
+    return undefined;
+  }
+
+  /**
+   * challengedFetch: "browser-view" (off by default). The AI fetcher was given a stand-in: an error status, a
+   * bot challenge, a block notice. The browser-fingerprint fetch of the same address got a page. That copy is
+   * judged by every pass and delivered, with a note saying which copy it is. There is no second copy to compare
+   * it with, so the cloaking pass does not run. Returns undefined when the browser's copy is itself a stand-in
+   * or empty: then there is still nothing to deliver.
+   *
+   * This is the operator's choice because it reads a page the site declined to give an AI fetcher. A site that
+   * instructs only the AI fetcher never reaches here: that page is refused as cloaking before any fallback.
+   */
+  private async browserView(url: string, human: AcquireResult, why: string, opts: IngressOptions, rule: ReturnType<IngressEngine["domainRule"]>, notes: Finding[], timings: IngressResult["timings"], t0: number): Promise<IngressResult | undefined> {
+    const kind = detectKind(human.contentType, human.body, human.finalUrl);
+    const text = kind === "html" ? analyzeHtml(human.body, [], []).visibleText : human.body;
+    if (!servedWords(text).length || looksLikeInterstitial(text)) return undefined;
+    // notes about how the fetch went travel with it; the AI fetcher's own redirect chain does not describe this copy
+    const findings: Finding[] = notes.filter((f) => f.pass === "acquire");
+    const refused = this.checkHops(url, human, opts, timings, t0, findings);
+    if (refused) return refused;
+    findings.push({ pass: "acquire", kind: "acquire.browser_view_used", confidence: 0, severity: 0, message: `${why}; what follows is the copy a browser-fingerprint fetch of the same address was given, judged like any page. The two copies could not be compared`, action: "none" });
+    let externalRules: HiddenRule[] = [];
+    let externalColorRules: ColorRule[] = [];
+    if (kind === "html" && this.config.fetchStylesheets) ({ hidden: externalRules, color: externalColorRules } = await this.fetchStylesheets(human.body, human.finalUrl));
+    const result = await this.guarded(url, kind, t0, () => this.analyze({
+      url, finalUrl: human.finalUrl, redirectChain: human.redirectChain, raw: human.body, kind,
+      externalRules, externalColorRules, timings, t0, override: !!opts.override, extraFindings: findings, rule,
+    }));
     if (result.tier !== "unreachable") this.cacheSet(url, opts, result);
     return result;
   }
@@ -395,6 +443,8 @@ export class IngressEngine {
     externalRules: HiddenRule[]; externalColorRules?: ColorRule[]; timings: IngressResult["timings"]; t0: number; override: boolean; extraFindings: Finding[];
     rule: ReturnType<IngressEngine["domainRule"]>;
     source?: SourceInfo;
+    /** set by the comparison when the AI fetcher's copy turned out to be a stand-in for the page */
+    standIn?: { agent: boolean };
     /** segments already made by a caller that read something other than text (an image); `raw` is then its report */
     adapted?: { segments: TextSegment[]; findings: Finding[] };
     imageCoverage?: ImageCoverage;
@@ -462,6 +512,7 @@ export class IngressEngine {
         const told = wholesale ? this.agentOnlyShape(visibleText, humanText) : [];
         if (wholesale && !told.length && looksLikeInterstitial(visibleText)) {
           // a stand-in page is not the page: nothing to deliver, nothing to compare, and not an attack
+          if (a.standIn) a.standIn.agent = true;
           return this.refuse(a.url, [...a.extraFindings, {
             pass: "acquire", kind: "acquire.unreachable", confidence: 0, severity: 0,
             message: `the site gave the AI fetcher a challenge, block or error page instead of the page a browser gets (${cmp.agentWords} words, ${(cmp.agentOnlyShare * 100).toFixed(0)}% of them not on the browser's page)`,

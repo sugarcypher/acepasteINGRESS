@@ -22,7 +22,7 @@ async function proxy(stateDir, mode, downstream = {}, env = {}, proxyEnv = {}) {
   const client = new Client({ name: "proxy-test", version: "0" });
   await client.connect(new StdioClientTransport({
     command: process.execPath, args: [SERVER],
-    env: { ...getDefaultEnvironment(), INGRESS_PROXY_CONFIG: cfgPath, INGRESS_STATE_DIR: stateDir, INGRESS_LOG: join(stateDir, "log.jsonl"), INGRESS_APPROVER: "deny", INGRESS_SANDBOX: "off", INGRESS_CLOAKING: "0", INGRESS_VISION_HELPER: "", ...proxyEnv },
+    env: { ...getDefaultEnvironment(), INGRESS_PROXY_CONFIG: cfgPath, INGRESS_STATE_DIR: stateDir, INGRESS_LOG: join(stateDir, "log.jsonl"), INGRESS_APPROVER: "deny", INGRESS_SANDBOX: "off", INGRESS_CLOAKING: "0", INGRESS_VISION_HELPER: "", INGRESS_BLOCKLIST_AUTO: "off", ...proxyEnv },
     stderr: "ignore",
   }));
   return client;
