@@ -4,6 +4,44 @@ Every change bumps the patch version of all three packages. The ruleset id chang
 behavior changes; receipts carry it so verdicts are reproducible. Releases up to 0.9.6 are in the
 [README](README.md#changes-in-096-2026-11-18-ruleset-20261118-3-unchanged).
 
+## 0.9.24 (2026-11-19, ruleset 2026.11.19-2)
+
+A different page is not yet an attack: the cloaking check now reads what the difference says.
+
+The gate refused a search results page as hostile (score 0.85). The site had answered the AI fetcher with a
+bot challenge ("complete the following challenge to confirm this search was made by a human", HTTP 202) and
+the browser fetch with the results. 74% of the challenge page's 38 words were not on the results page, and
+until now a page that differed that much was hostile on that fact alone, whatever it said.
+
+- **What the agent-only part says now decides.** When most of the AI fetcher's page is absent from the
+  browser's copy, the passages only the AI fetcher got are read the way hidden text is read (no person sees
+  them): by the meaning rules and the classifier. If they read as instructions, the finding is scored as
+  before and the page is hostile. If they do not, the page is suspect at most (a person can override), and
+  the finding says so.
+- **A stand-in page is unreachable, not an attack.** A short page (150 words or fewer) that says what bot
+  challenges, block and rate-limit notices, error pages and "turn on JavaScript" stubs say, and carries no
+  instruction, is not the page: nothing is delivered, the tier is `unreachable`, it is not written to the
+  attack log, and it is not cached. No site is named in the rule.
+- **The same the other way round.** When the browser-fingerprint fetch is the one given a stand-in, there is
+  no browser copy to compare with: the page is judged on its own and the receipt records
+  `acquire.cloaking_check_incomplete`, as it already did when that fetch failed. A page that instructs the
+  agent is still hostile when browsers are shown a stand-in.
+- **Unchanged:** the block band (the real page plus a passage only the AI receives) is scored as before, and
+  so is a different page that carries instructions. The six earlier cloaking tests pass unmodified.
+
+Measured: the search page, fetched six times after the fix, came back clean twice (both fetches got results),
+clean with the comparison recorded as incomplete twice (the browser fetch was challenged), and unreachable
+twice (the AI fetcher was challenged); never suspect or hostile. That URL is the case the fix was written
+against, so it is a development case, not a held-out one. Corpus 90/90, 48/48, 3/3 and the 36 real pages
+(31 clean, 5 suspect) are unchanged.
+
+What this does not do: a site that serves AI fetchers a different page of plain false statements, with no
+instruction in it, is suspect, not hostile. The check judges instructions, not truth. And a short page that
+imitates a challenge is not delivered at all, which is safe but means an imitation is not reported as an
+attack unless it carries an instruction.
+
+Tests: core 381 pass (6 new), proxy 8.
+
 ## 0.9.23 (2026-11-19, ruleset 2026.11.19-1)
 
 The retrained classifier is installed.
