@@ -31,7 +31,7 @@ import type { NearbyHints } from "./nearby.js";
 
 const MAX_IMAGE_BYTES = 50_000_000;
 const MAX_AUDIO_BYTES = 200_000_000;
-import { servedWords, compareServed } from "./served.js";
+import { servedWords, compareServed, passagesOnlyIn, looksLikeInterstitial } from "./served.js";
 import { scanClassifier } from "./classifier.js";
 import { runSandbox } from "./sandbox.js";
 import {
@@ -235,7 +235,8 @@ export class IngressEngine {
       url, finalUrl: agentRes.finalUrl, redirectChain: agentRes.redirectChain, raw: agentRes.body, kind,
       humanRaw: humanRes?.body, humanContentType: humanRes?.contentType, externalRules, externalColorRules, timings, t0, override: !!opts.override, extraFindings: findings, rule,
     }));
-    this.cacheSet(url, opts, result);
+    // a stand-in page (a challenge, a block notice) is a passing state of the site, like any failed fetch: not cached
+    if (result.tier !== "unreachable") this.cacheSet(url, opts, result);
     return result;
   }
 
@@ -452,16 +453,57 @@ export class IngressEngine {
       // block of it is (the usual cloaking move: the real page plus a passage only the AI receives)
       const wholesale = cmp.agentWords >= 30 && cmp.agentOnlyShare > 0.4 && cmp.agentOnlyWords >= 15;
       const block = cmp.agentOnlyWords >= 25 && cmp.agentOnlyShare >= 0.15 && cmp.longestAgentOnlyRun >= 12;
+      let compared = true;
       if (wholesale || block) {
-        findings.push({
-          pass: "cloaking", kind: "cloaking.agent_targeted_divergence",
-          confidence: wholesale ? Math.min(0.95, 0.5 + (cmp.agentOnlyShare - 0.4)) : Math.min(0.6, 0.3 + cmp.agentOnlyShare / 2), severity: 0.9,
-          message: `${(cmp.agentOnlyShare * 100).toFixed(0)}% of the words served to an AI fetcher do not appear on the page served to a browser`,
-          excerpt: `agent-only words: ${cmp.sample}`, action: "none",
-        });
+        // A different page is not yet an attack (0.9.24). Sites hand non-browsers a bot challenge, a block
+        // notice, a lighter layout or an empty result, and a search page answered with "prove you are human"
+        // was refused as hostile. What decides is what the part only the AI fetcher got says: read it the way
+        // hidden text is read, because no person sees it.
+        const told = wholesale ? this.agentOnlyShape(visibleText, humanText) : [];
+        if (wholesale && !told.length && looksLikeInterstitial(visibleText)) {
+          // a stand-in page is not the page: nothing to deliver, nothing to compare, and not an attack
+          return this.refuse(a.url, [...a.extraFindings, {
+            pass: "acquire", kind: "acquire.unreachable", confidence: 0, severity: 0,
+            message: `the site gave the AI fetcher a challenge, block or error page instead of the page a browser gets (${cmp.agentWords} words, ${(cmp.agentOnlyShare * 100).toFixed(0)}% of them not on the browser's page)`,
+            action: "none",
+          }], timings, a.t0, a.kind, "unreachable");
+        }
+        const pct = `${(cmp.agentOnlyShare * 100).toFixed(0)}% of the words served to an AI fetcher do not appear on the page served to a browser`;
+        const blockConfidence = Math.min(0.6, 0.3 + cmp.agentOnlyShare / 2);
+        if (wholesale && !told.length && looksLikeInterstitial(humanText)) {
+          // The other way round: the browser-fingerprint fetch was the one given a stand-in, so there is no
+          // browser copy to compare with. Like a failed browser fetch, that is a gap, not evidence. (Had the
+          // agent's page carried instructions the stand-in lacks, the branch below would have taken it.)
+          findings.push({ pass: "acquire", kind: "acquire.cloaking_check_incomplete", confidence: 0, severity: 0, message: `cloaking check incomplete: the browser-fingerprint fetch was given a challenge, block or error page (${servedWords(humanText).length} words), so there was no browser copy to compare with`, action: "none" });
+          compared = false;
+        } else if (wholesale && told.length) {
+          findings.push({
+            pass: "cloaking", kind: "cloaking.agent_targeted_divergence",
+            confidence: Math.min(0.95, 0.5 + (cmp.agentOnlyShare - 0.4)), severity: 0.9,
+            message: `${pct}; the part only the AI fetcher got reads as instructions (${told.join(", ")})`,
+            excerpt: `agent-only words: ${cmp.sample}`, action: "none",
+          });
+        } else if (block) {
+          // the real page plus a passage only the AI receives: scored as before, which on its own is suspect
+          findings.push({
+            pass: "cloaking", kind: "cloaking.agent_targeted_divergence",
+            confidence: blockConfidence, severity: 0.9,
+            message: wholesale ? `${pct}; the part only the AI fetcher got does not read as instructions` : pct,
+            excerpt: `agent-only words: ${cmp.sample}`, action: "none",
+          });
+        } else {
+          // a different page that tells the agent to do nothing: a person should look, but it is not refused outright
+          findings.push({
+            pass: "cloaking", kind: "cloaking.agent_targeted_divergence",
+            confidence: Math.min(0.95, 0.5 + (cmp.agentOnlyShare - 0.4)), severity: 0.5,
+            message: `${pct}; the part only the AI fetcher got does not read as instructions`,
+            excerpt: `agent-only words: ${cmp.sample}`, action: "none",
+          });
+        }
       }
       timings.cloaking = performance.now() - tc;
-      passesRun.push("cloaking");
+      // without a browser copy the comparison answered nothing: page scripts that predict cloaking still count
+      if (compared) passesRun.push("cloaking");
     }
 
     // character pass
@@ -627,6 +669,21 @@ export class IngressEngine {
       const p = r.match.toLowerCase();
       return p.startsWith(".") ? host === p.slice(1) || host.endsWith(p) : host === p;
     });
+  }
+
+  /**
+   * What the text only the AI fetcher received reads like: the kinds of instruction or attack shape found in it,
+   * empty when it is ordinary prose. It is judged as hidden text is, since no person sees it.
+   */
+  private agentOnlyShape(agentText: string, humanText: string): string[] {
+    const only = passagesOnlyIn(agentText, humanText, 3).join("\n");
+    if (!only.trim()) return [];
+    const probe: TextSegment[] = [{ text: scanCharacters(only).cleaned, visibility: "concealed", path: "cloaking/agent-only" }];
+    const found = [
+      ...scanMeaning({ kind: "text", segments: probe, decodedPayloads: [] }),
+      ...(this.config.classifier ? scanClassifier({ visible: "", segments: probe, kind: "text" }) : []),
+    ].filter((f) => f.confidence * f.severity >= 0.25);
+    return [...new Set(found.map((f) => f.kind))];
   }
 
   private refuse(url: string, findings: Finding[], timings: IngressResult["timings"], t0: number, kind: ContentKind, tier: "hostile" | "unreachable" = "hostile", quarantine = false): IngressResult {

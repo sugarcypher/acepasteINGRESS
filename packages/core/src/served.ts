@@ -27,6 +27,44 @@ export function compareServed(agentText: string, humanText: string): { agentWord
 }
 
 /**
+ * A page that stands in for the page: a bot challenge, a block or rate-limit notice, an error page, a "turn on
+ * JavaScript" stub. Sites hand these to anything that does not look like a browser. Recognised by being short
+ * and saying what such pages say; no site is named here.
+ */
+const INTERSTITIAL = new RegExp([
+  String.raw`\bcaptcha\b`,
+  String.raw`\b(?:are you|you are|you're|i am|i'm) (?:a |not a )?(?:human|robot)\b`,
+  String.raw`\bnot a robot\b`,
+  String.raw`\bverif(?:y|ying|ication)\b[^.]{0,40}\bhuman\b`,
+  String.raw`\b(?:made|sent) by a human\b`,
+  String.raw`\bcomplete (?:the|this) (?:following )?(?:challenge|puzzle)\b`,
+  String.raw`\bsecurity (?:check|challenge)\b`,
+  String.raw`\bchecking (?:your|the) browser\b`,
+  String.raw`\bjust a moment\b`,
+  String.raw`\bunusual (?:traffic|activity)\b`,
+  String.raw`\bautomated (?:queries|requests|access|traffic)\b`,
+  String.raw`\bbots? (?:use|detected|detection)\b`,
+  String.raw`\baccess (?:is |has been |to this (?:page|site) (?:is |has been ))?(?:denied|forbidden|restricted|blocked)\b`,
+  String.raw`\b(?:you have|you've) been blocked\b`,
+  String.raw`\brequest (?:was |has been )?blocked\b`,
+  String.raw`\btoo many requests\b`,
+  String.raw`\brate limit(?:ed)?\b`,
+  String.raw`\btry again later\b`,
+  String.raw`\b(?:temporarily|currently) unavailable\b`,
+  String.raw`\b(?:page|site) (?:not found|can(?:'|no)t be (?:found|reached))\b`,
+  String.raw`\bsomething went wrong\b`,
+  String.raw`\ban error (?:has )?occurred\b`,
+  String.raw`\b(?:enable|requires?|turn on) (?:javascript|cookies)\b`,
+  String.raw`\bjavascript is (?:required|disabled|not enabled)\b`,
+].join("|"), "i");
+/** a page with more words than this is content, whatever it says about robots */
+export const INTERSTITIAL_MAX_WORDS = 150;
+
+export function looksLikeInterstitial(text: string): boolean {
+  return servedWords(text).length <= INTERSTITIAL_MAX_WORDS && INTERSTITIAL.test(text.replace(/\s+/g, " "));
+}
+
+/**
  * The passages of `text` that `reference` does not contain: runs of at least `minRun` words in a row that
  * appear nowhere in the reference. Returned as the original text of each run, for scanning.
  */
