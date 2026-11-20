@@ -27,7 +27,8 @@ import { execFileSync } from "node:child_process";
 import { join } from "node:path";
 import { stateDir } from "./changes.js";
 import { stopReason, canaryNotice, type BurstPolicy } from "./safeguards.js";
-import { ActionBroker, type SerializedRun, type ApprovalRequest, type Approver } from "./broker.js";
+import { ActionBroker, destinationsIn, type SerializedRun, type ApprovalRequest, type Approver } from "./broker.js";
+import { noteCommandStart, noteVisibleHosts, proxyEnv, proxySecret, sessionToken, type ProxyConnection } from "./egress-proxy.js";
 import { Blocklist } from "./egress.js";
 import { scanCharacters } from "./character.js";
 import { shellOutputSource, shellWrites, shellUploads } from "./shell-commands.js";
@@ -61,6 +62,13 @@ export interface HookOptions {
   provenance?: boolean;
   /** where the operating system says a file came from (default: the macOS quarantine attribute) */
   fileOrigin?: (path: string) => { agent?: string; from?: string } | undefined;
+  /**
+   * The egress proxy is on (INGRESS_EGRESS_PROXY=on): what it logged for a session since a shell command started.
+   * A command whose programs connected somewhere has outside content in its output, whatever the command looked like.
+   */
+  proxyConnections?: (session: string, toolUseId: string | undefined) => ProxyConnection[];
+  /** the egress proxy is on: its port, and the file the harness reads shell variables from (CLAUDE_ENV_FILE at session start) */
+  egressProxy?: { port: number; envFile?: string };
 }
 
 type Json = Record<string, unknown>;
@@ -113,7 +121,16 @@ async function postToolUseInner(event: Json, gate: HookGate, o: HookOptions, see
   const isMcp = name.startsWith("mcp__") && !gated.some((s) => name.startsWith(`mcp__${s}__`));
   const emit = (out: Json) => ({ hookSpecificOutput: { hookEventName: "PostToolUse", ...out } });
   const cwd = typeof event.cwd === "string" ? event.cwd : undefined;
-  const bashSource = name === "Bash" ? shellOutputSource(String(input.command ?? ""), { cwd, ownPort: o.ownPort }) : undefined;
+  // What the egress proxy saw this command's programs do. A program that connected somewhere brought outside
+  // content back, whether or not the command looked like a network command.
+  let viaProxy: ProxyConnection[] = [];
+  if (name === "Bash" && obj && o.proxyConnections) { try { viaProxy = o.proxyConnections(String(event.session_id ?? ""), typeof event.tool_use_id === "string" ? event.tool_use_id : undefined); } catch { /* the proxy's log is extra knowledge */ } }
+  const carried = [...new Set(viaProxy.filter((c) => c.decision === "allow").map((c) => c.host))];
+  const proxyNote = proxyNotes(viaProxy);
+  const bashSource = name !== "Bash" ? undefined
+    : shellOutputSource(String(input.command ?? ""), { cwd, ownPort: o.ownPort })
+      ?? (carried.length ? `shell:a program that connected to ${carried.slice(0, 3).join(", ")}${carried.length > 3 ? ` and ${carried.length - 3} more` : ""}` : undefined);
+  const noted = (out: Json | undefined): Json | undefined => (!proxyNote ? out : { hookSpecificOutput: { hookEventName: "PostToolUse", ...((out?.hookSpecificOutput as Json | undefined) ?? {}), additionalContext: proxyNote } });
 
   try {
     if (name === "WebFetch" && obj) {
@@ -147,10 +164,13 @@ async function postToolUseInner(event: Json, gate: HookGate, o: HookOptions, see
       // command output is terminal output: read as a terminal would show it, at open-channel trust
       const text = out + (err ? `\n--- stderr ---\n${err}` : "");
       seen.push({ ref: bashSource });
+      for (const h of carried) seen.push({ ref: bashSource, host: h }); // where its programs really went joins what the session has contacted
       const env = await refusal(gate, text, bashSource, { kind: "log", source: { channel: "shell command output", trust: 5 } });
       if (!env) seen.push({ ref: bashSource, text });
-      return env ? emit({ updatedToolOutput: { ...obj, stdout: env, stderr: "" } }) : undefined;
+      return noted(env ? emit({ updatedToolOutput: { ...obj, stdout: env, stderr: "" } }) : undefined);
     }
+    // nothing came back through the proxy, but it refused something: the model is told why its command failed
+    if (name === "Bash" && proxyNote) return noted(undefined);
     if (name === "Read" && obj && isTaskOutput(String(input.file_path ?? ""))) {
       const f = obj.file as Json | undefined;
       if (!f || typeof f.content !== "string") return undefined;
@@ -247,6 +267,17 @@ async function postToolUseInner(event: Json, gate: HookGate, o: HookOptions, see
     if (isMcp) return emit({ updatedMCPToolOutput: withheld(`mcp:${name}`, why) });
   }
   return undefined;
+}
+
+/** What the model is told about connections the egress proxy refused or flagged while a command ran. */
+function proxyNotes(conns: readonly ProxyConnection[]): string | undefined {
+  const refused = [...new Map(conns.filter((c) => c.decision === "refuse").map((c) => [`${c.host}:${c.port}`, c])).values()];
+  const flags = [...new Set(conns.map((c) => c.flag).filter((f): f is string => typeof f === "string"))];
+  if (!refused.length && !flags.length) return undefined;
+  const parts: string[] = [];
+  if (refused.length) parts.push(`AcePaste Ingress's egress proxy refused ${refused.length === 1 ? "a connection" : `${refused.length} connections`} a program started by this command tried to make: ${refused.slice(0, 4).map((c) => `${c.host}:${c.port} (${c.reason})`).join("; ")}. That is a refusal, not a fault: do not unset the proxy settings or reach the destination another way. Tell the person, who can name the host in their own words or put it on the allowlist.`);
+  if (flags.length) parts.push(`AcePaste Ingress's egress proxy flagged this command: ${flags.slice(0, 4).join("; ")}. Tell the person.`);
+  return parts.join("\n");
 }
 
 // ---------- UserPromptSubmit: the paste gate ----------
@@ -391,6 +422,18 @@ export function sessionStart(event: Json, o: HookOptions = {}): Json | undefined
       notes.push(canaryNotice(canary));
     } catch { /* without a marker the other checks still run */ }
   }
+  // the egress proxy: this session's shell commands are pointed at it, with a token that says whose they are
+  if (session && o.egressProxy) {
+    try {
+      const vars = proxyEnv(o.egressProxy.port, sessionToken(proxySecret(dir), session));
+      if (o.egressProxy.envFile) {
+        appendFileSync(o.egressProxy.envFile, Object.entries(vars).map(([k, v]) => `export ${k}='${v}'`).join("\n") + "\n");
+        notes.push(`Network connections made by shell commands in this session go through AcePaste Ingress's egress proxy on this machine (127.0.0.1:${o.egressProxy.port}), which decides each one by its destination. A connection it refuses fails with "403" from the proxy and the reason. That is a refusal: do not unset the proxy variables or reach the destination another way. Tell the person.`);
+      } else {
+        notes.push("AcePaste Ingress's egress proxy is turned on, but this harness gave the session-start hook no environment file (CLAUDE_ENV_FILE), so this session's shell commands are not routed through it.");
+      }
+    } catch { /* the other hooks still run */ }
+  }
   return notes.length ? { hookSpecificOutput: { hookEventName: "SessionStart", additionalContext: notes.join("\n\n") } } : undefined;
 }
 
@@ -497,6 +540,42 @@ export async function preToolUseAnswered(event: Json, approver: Approver, o: Egr
   if (answer === "approved") return undefined;
   const how = answer === "denied" ? "A person at this machine was asked and declined" : answer === "timeout" ? "A person at this machine was asked and did not answer" : `It needs a person at this machine to confirm it, and the approval prompt (${approver.name}) could not be shown`;
   return { hookSpecificOutput: { hookEventName: "PreToolUse", permissionDecision: "deny", permissionDecisionReason: `AcePaste Ingress: ${d.ask.reasons.join("; ")}. ${how}. This is refused; do not try another route. Tell the person what you wanted to do.` } };
+}
+
+/** visible ways a command steps around the proxy settings its session was given */
+const PROXY_TAMPER = /(?:^|[\s;&|(])(?:unset\s+(?:-\w+\s+)*(?:https?_proxy|all_proxy|no_proxy|node_use_env_proxy)\b|(?:export\s+)?(?:https?_proxy|all_proxy|no_proxy|node_use_env_proxy)=|env\s+(?:-\w+\s+)*-u\s*(?:https?_proxy|all_proxy)\b)|\s--no-?proxy\b|\s--proxy(?:-server)?[=\s]|\bhttps?\.proxy=/i;
+
+/**
+ * With the egress proxy on, what the pre-tool-use hook does for a shell command after the egress decision
+ * (`reply` is that decision's reply; undefined means the gate had no objection, or a person at the machine
+ * approved it through the approver):
+ *   - records when the command started, so the hook that runs after it can ask the proxy what connected meanwhile
+ *   - records the hosts the command names, when the gate had no objection: what the command starts may connect
+ *     to them. A command that was refused or put to the harness's prompt grants nothing: a prompt can be
+ *     declined, and a refused command must not open a door for the next one.
+ *   - asks, when the command visibly steps around the proxy settings, or the proxy is not running and could
+ *     not be started (`ensure`)
+ * It never rewrites the command. The session's commands were pointed at the proxy when the session started.
+ */
+export async function egressProxyBefore(event: Json, reply: Json | undefined, o: { dir?: string; now?: () => number; ensure: () => Promise<{ ok: boolean; why?: string }> }): Promise<Json | undefined> {
+  if (String(event.tool_name ?? "") !== "Bash") return reply;
+  const session = String(event.session_id ?? "");
+  if (!session) return reply;
+  const decided = ((reply?.hookSpecificOutput as Json | undefined)?.permissionDecision ?? "") as string;
+  if (decided === "deny") return reply;
+  const dir = o.dir ?? stateDir(), now = o.now?.() ?? Date.now();
+  const command = String(((event.tool_input ?? {}) as Json).command ?? "");
+  try { noteCommandStart(dir, session, typeof event.tool_use_id === "string" ? event.tool_use_id : "", now); } catch { /* best effort */ }
+  if (reply !== undefined) return reply; // already a question: it stands, and grants nothing
+  try { noteVisibleHosts(dir, session, destinationsIn({ command }).hosts, now); } catch { /* best effort */ }
+  const ask = (why: string): Json => {
+    try { appendFileSync(join(dir, "egress-log.jsonl"), JSON.stringify({ at: new Date(now).toISOString(), session, tool: "Bash", decision: "ask", reasons: [why] }) + "\n", { mode: 0o600 }); } catch { /* the question stands */ }
+    return { hookSpecificOutput: { hookEventName: "PreToolUse", permissionDecision: "ask", permissionDecisionReason: `AcePaste Ingress: ${why}.` } };
+  };
+  if (PROXY_TAMPER.test(command)) return ask("this command changes or steps around the proxy settings that send its network calls through the egress proxy");
+  const up = await o.ensure();
+  if (!up.ok) return ask(`the egress proxy is not running (${up.why ?? "unknown reason"}), so this command's network calls would fail or go unchecked`);
+  return undefined;
 }
 
 function decideEgress(event: Json, o: EgressHookOptions): { reply: Json | undefined; ask?: ApprovalRequest; dir: string } | undefined {

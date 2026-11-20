@@ -431,6 +431,17 @@ export class ActionBroker {
     return { tainted: r.sources.size > 0, sources: [...r.sources], quarantined: [...r.quarantined] };
   }
 
+  /**
+   * What this run knows about one destination, for something that sees a connection rather than an action
+   * (the egress proxy): is it on the allowlist, did the person name it, and did it first appear in outside
+   * content (and where). The same facts `classify` judges an action's destinations with.
+   */
+  hostStanding(runId: string, host: string): { allowed: boolean; typed: boolean; fromContent?: string; tainted: boolean; heardPerson: boolean } {
+    const r = this.run(runId);
+    const h = host.toLowerCase().replace(/^\[|\]$/g, "").replace(/\.$/, "");
+    return { allowed: hostAllowed(h, this.policy.allowHosts), typed: typedBy(r, h), fromContent: metIn(r, h), tainted: r.sources.size > 0, heardPerson: r.heardPerson };
+  }
+
   /** decide without asking anyone (for previews and tests) */
   classify(action: ProposedAction): { decision: ActionDecision; reasons: string[]; digest: string; canonicalArgs: string; destinations: string[]; fields: string[] } {
     const r = this.run(action.runId);
