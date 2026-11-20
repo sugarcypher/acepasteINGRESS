@@ -71,7 +71,15 @@ const engine = new IngressEngine(cfg, { log });
 
 // ---------- proxy configuration ----------
 /** what a downstream server's results are, when the operator knows: `{ "kind": "email", "trust": 4, "channel": "gmail" }` */
-interface ContentHint { kind?: string; trust?: number; channel?: string }
+interface ContentHint {
+  kind?: string; trust?: number; channel?: string;
+  /**
+   * `"viewport"`: the pictures this server (or tool) returns are captures of a page's content area, as a
+   * browser-automation tool's screenshot is. Real browser chrome and real system dialogs are never in such a
+   * picture, so one that shows an address bar or a system dialog shows something the page drew.
+   */
+  screens?: string;
+}
 interface Downstream {
   name: string; command: string; args?: string[]; env?: Record<string, string>; cwd?: string; trusted?: boolean;
   /** how to read every result from this server (the channel and how far its senders are trusted) */
@@ -332,8 +340,11 @@ async function callProxied(name: string, raw: unknown) {
   const text = items.filter((c) => c.type === "text").map((c) => c.text ?? "").join("\n");
   const pictures = items.filter((c) => c.type === "image") as Array<{ type: "image"; data?: string; mimeType?: string }>;
   const recordings = items.filter((c) => c.type === "audio") as Array<{ type: "audio"; data?: string; mimeType?: string }>;
-  // pictures (0.9.18) and recordings (0.9.22) are read; anything else cannot be, and is withheld
-  const uninspected = [...items.filter((c) => c.type !== "text" && c.type !== "image" && c.type !== "audio").map((c) => c.type), ...pictures.slice(8).map(() => "image"), ...recordings.slice(4).map(() => "audio")];
+  // The protocol has no video part: a video arrives as an embedded resource with a video media type.
+  const isVideo = (c: { type: string }) => c.type === "resource" && /^video\//i.test(String((c as { resource?: { mimeType?: string } }).resource?.mimeType ?? "")) && typeof (c as { resource?: { blob?: unknown } }).resource?.blob === "string";
+  const videos = items.filter(isVideo) as unknown as Array<{ type: "resource"; resource: { blob: string; mimeType: string; uri?: string } }>;
+  // pictures (0.9.18), recordings (0.9.22) and videos (0.9.27) are read; anything else cannot be, and is withheld
+  const uninspected = [...items.filter((c) => c.type !== "text" && c.type !== "image" && c.type !== "audio" && !isVideo(c)).map((c) => c.type), ...pictures.slice(8).map(() => "image"), ...recordings.slice(4).map(() => "audio"), ...videos.slice(2).map(() => "video")];
   if (p.server.trusted) return res;
   // Read the result as what it is. A mail or calendar server's JSON is recognised by its shape; the operator
   // can say so outright, and say how far the people who write to that channel are trusted (strangers: 4).
@@ -345,10 +356,16 @@ async function callProxied(name: string, raw: unknown) {
   // Each picture is gated on its own: text in it, codes, and what only a machine would read. One that passes is
   // handed on as it was; one that does not, or whose pixels could not be read on this machine, is withheld.
   const pictureNotes: string[] = [];
+  // When the operator has said this tool's pictures are captures of a page's content area, the drawn-interface
+  // check applies (screen.ts), and the page's address is taken from the result's own text when it states one.
+  const pageUrl = hint.screens === "viewport" ? /(?:page url|current url|\burl)\s*[:=]\s*(https?:\/\/[^\s"'<>)\]]+)/i.exec(text)?.[1] : undefined;
+  let pageHost: string | undefined;
+  try { pageHost = pageUrl ? new URL(pageUrl).hostname : undefined; } catch { pageHost = undefined; }
+  const screen = hint.screens === "viewport" ? { capture: "viewport" as const, pageHost } : undefined;
   for (const [i, pic] of pictures.slice(0, 8).entries()) {
     let why: string;
     try {
-      const ir = await engine.scanImage(Buffer.from(String(pic.data ?? ""), "base64"), { url: `tool:${name}#image${i + 1}`, source: hints.source });
+      const ir = await engine.scanImage(Buffer.from(String(pic.data ?? ""), "base64"), { url: `tool:${name}#image${i + 1}`, source: hints.source, screen });
       broker.ingest(runId, { ref: `tool:${name}#image${i + 1}`, receiptDigest: ir.receipt.digest, text: ir.tier === "clean" ? ir.delivered : undefined });
       if (ir.tier === "clean" && ir.coverage?.image?.pixels) { if (!out.isError) (out.content as unknown[]).push(pic); continue; }
       why = ir.tier !== "clean" ? `${ir.tier}: ${[...new Set(ir.findings.filter((f) => f.confidence * f.severity >= 0.05).map((f) => f.kind))].slice(0, 6).join(", ")}` : `its pixels could not be inspected: ${ir.coverage?.image?.pixelsReason ?? "unknown reason"}`;
@@ -372,6 +389,22 @@ async function callProxied(name: string, raw: unknown) {
   }
   if (audioNotes.length && !out.isError) out.content.push({ type: "text", text: `[AcePaste Ingress: ${audioNotes.join("; ")}]` });
   if (recordings.length) (out.structuredContent as Record<string, unknown>).audio = { received: recordings.length, withheld: audioNotes.length + Math.max(0, recordings.length - 4) };
+  // A video the same way: handed on only when its frames were read and nothing in it (on screen, in a code, in
+  // its subtitle track, in its sound when that could be transcribed) is refused. What is on screen and in the
+  // captions joins what the run has read.
+  const videoNotes: string[] = [];
+  for (const [i, vid] of videos.slice(0, 2).entries()) {
+    let why: string;
+    try {
+      const vr = await engine.scanVideo(Buffer.from(vid.resource.blob, "base64"), { url: `tool:${name}#video${i + 1}`, source: hints.source });
+      broker.ingest(runId, { ref: `tool:${name}#video${i + 1}`, receiptDigest: vr.receipt.digest, text: vr.tier === "clean" ? vr.delivered : undefined });
+      if (vr.tier === "clean" && vr.coverage?.video?.frames) { if (!out.isError) { (out.content as unknown[]).push(vid); if (vr.delivered.trim()) out.content.push({ type: "text", text: `[what video ${i + 1} shows as text, and how much of it was read]\n${vr.delivered}` }); } continue; }
+      why = vr.tier !== "clean" ? `${vr.tier}: ${[...new Set(vr.findings.filter((f) => f.confidence * f.severity >= 0.05).map((f) => f.kind))].slice(0, 6).join(", ")}` : `its frames could not be read: ${vr.coverage?.video?.framesReason ?? "unknown reason"}`;
+    } catch (e) { why = `it could not be read (${String((e as Error)?.message ?? e).slice(0, 120)})`; }
+    videoNotes.push(`video ${i + 1} withheld (${why})`);
+  }
+  if (videoNotes.length && !out.isError) out.content.push({ type: "text", text: `[AcePaste Ingress: ${videoNotes.join("; ")}]` });
+  if (videos.length) (out.structuredContent as Record<string, unknown>).video = { received: videos.length, withheld: videoNotes.length + Math.max(0, videos.length - 2) };
   // other non-text parts (resources) are not inspected: say so rather than pass them silently
   if (uninspected.length) (out.structuredContent as Record<string, unknown>).coverage = { text: "inspected", notInspected: uninspected };
   if (uninspected.length && !out.isError) out.content.push({ type: "text", text: `[AcePaste Ingress: ${uninspected.length} non-text part(s) (${[...new Set(uninspected)].join(", ")}) were withheld because they could not be inspected]` });

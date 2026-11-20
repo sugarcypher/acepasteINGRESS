@@ -41,6 +41,10 @@ export { adaptCaptions, parseCaptions, looksLikeCaptions, looksLikeTranscriptJso
 export type { Cue, CaptionHints } from "./captions.js";
 export { inspectAudio, readAudioTags, detectAudioFormat, commandRunner } from "./audio.js";
 export type { AudioReport, AudioRunner, AudioCoverage, AudioInspection, AudioFormat } from "./audio.js";
+export { inspectVideo, detectVideoFormat, videoHelperRunner, helperAudioExtractor, cuesToVtt, BRIEF_SECONDS } from "./video.js";
+export type { VideoReport, VideoRunner, VideoCoverage, VideoInspection, VideoFormat, VideoOptions, AudioExtractor } from "./video.js";
+export { drawnElements, screenFindings } from "./screen.js";
+export type { ScreenHints, DrawnElement } from "./screen.js";
 export { adaptNearby, parseNearby, looksLikeNearbyJson, collectNearby, parseDnsSdBrowse, parseBluetoothProfile, parseLpstatPrinters } from "./nearby.js";
 export type { NearbyRecord, NearbyHints } from "./nearby.js";
 export { adaptShortcut, summarizeShortcut, looksLikeShortcut, parsePlistXml } from "./shortcuts.js";

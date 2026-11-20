@@ -29,6 +29,7 @@ import { readImageMeta, type ImageMeta } from "./image-meta.js";
 import { judgeQrPayload, type QrVerdict } from "./qr.js";
 import { hostsMentioned } from "./egress.js";
 import { passagesOnlyIn } from "./served.js";
+import { screenFindings, type ScreenHints } from "./screen.js";
 import type { Finding, TextSegment } from "./types.js";
 
 export interface VisionLine { text: string; conf: number; x: number; y: number; w: number; h: number }
@@ -40,6 +41,8 @@ export interface VisionReport {
   full: VisionLine[];
   variants: Array<{ name: string; kind: "scale" | "smooth" | "contrast" | "alpha" | "frame"; lines: VisionLine[] }>;
   barcodes: Array<{ symbology: string; payload: string; variant: string }>;
+  /** rectangles seen in the picture as shown (helper version 2 on): the frames of windows, dialogs and panels */
+  rects?: Array<{ x: number; y: number; w: number; h: number; conf?: number }>;
   notes: string[];
   ms?: number;
 }
@@ -70,25 +73,25 @@ export interface ImageInspection {
 
 // ---------- comparing readings ----------
 
-const norm = (s: string) => s.toLowerCase().normalize("NFKD").replace(/[^\p{L}\p{N}]+/gu, " ").trim();
-function trigrams(s: string): Set<string> {
+export const norm = (s: string) => s.toLowerCase().normalize("NFKD").replace(/[^\p{L}\p{N}]+/gu, " ").trim();
+export function trigrams(s: string): Set<string> {
   const t = ` ${norm(s)} `, out = new Set<string>();
   for (let i = 0; i + 3 <= t.length; i++) out.add(t.slice(i, i + 3));
   return out;
 }
 /** share of a line's character trigrams that occur in a reference text: 1 means the reference contains the line */
-function containment(line: string, ref: Set<string>): number {
+export function containment(line: string, ref: Set<string>): number {
   const g = trigrams(line);
   if (!g.size) return 1;
   let hit = 0;
   for (const x of g) if (ref.has(x)) hit++;
   return hit / g.size;
 }
-const similar = (a: string, b: string) => { const ga = trigrams(a), gb = trigrams(b); return Math.min(containment(a, gb), containment(b, ga)); };
-const wordy = (s: string) => (norm(s).match(/\p{L}{2,}/gu) ?? []).length;
+export const similar = (a: string, b: string) => { const ga = trigrams(a), gb = trigrams(b); return Math.min(containment(a, gb), containment(b, ga)); };
+export const wordy = (s: string) => (norm(s).match(/\p{L}{2,}/gu) ?? []).length;
 const letters = (s: string) => (s.match(/\p{L}/gu) ?? []).length;
 const textOf = (lines: readonly VisionLine[]) => lines.map((l) => l.text).join("\n");
-const enough = (lines: readonly string[]) => { const t = lines.join(" "); return wordy(t) >= 3 && letters(t) >= 12; };
+export const enough = (lines: readonly string[]) => { const t = lines.join(" "); return wordy(t) >= 3 && letters(t) >= 12; };
 /**
  * Does a token look like a word someone wrote? Letters only, in one casing (lower, UPPER or Capitalised), and for
  * Latin letters at least four of them with a vowel. Scripts without case or spaces count from two characters.
@@ -104,7 +107,7 @@ function wordlike(tok: string): boolean {
  * images: a dense screenshot resized without smoothing is read as "ICD 1CU QuE Fin war: 4' 1CBOWD TOU IC0", with
  * full confidence, by every kernel. Those are scraps of digits. Words built to be read come out as words.
  */
-function sentence(lines: readonly string[]): boolean {
+export function sentence(lines: readonly string[]): boolean {
   const toks = lines.join(" ").split(/\s+/).map((t) => t.replace(/^[\p{P}\p{S}]+|[\p{P}\p{S}]+$/gu, "")).filter((t) => /[\p{L}\p{N}]/u.test(t));
   const words = toks.filter(wordlike).length;
   // a scrap: letters and digits run together, or casing no writer uses (QuE). Short words (all, the, and) are neither.
@@ -251,6 +254,36 @@ export interface InspectOptions {
    * an image, a canvas, an overlay. That is how a fake dialog or a fake message is painted into a real window.
    */
   sourceText?: string;
+  /** how the picture was taken, when the caller knows: a capture of a page's content area holds no real browser chrome (see screen.ts) */
+  screen?: ScreenHints;
+}
+
+/**
+ * The codes read in a picture or in a video's frames: a finding and (for a code that carries words) a concealed
+ * segment for each, and one visible line saying the codes are there. `beside` is the text shown with the code,
+ * for the check that the words name one place and the code goes to another. `root` is "image" or "video".
+ */
+export function judgeCodes(barcodes: ReadonlyArray<{ symbology: string; payload: string; at?: string }>, beside: string, root: "image" | "video"): { codes: ImageInspection["codes"]; findings: Finding[]; segments: TextSegment[] } {
+  const codes: ImageInspection["codes"] = [];
+  const findings: Finding[] = [];
+  const segments: TextSegment[] = [];
+  const add = (f: Omit<Finding, "pass" | "action">) => findings.push({ pass: "channel", action: "none", ...f });
+  for (const c of barcodes.slice(0, 20)) {
+    const verdict = judgeQrPayload(c.payload);
+    codes.push({ symbology: c.symbology, payload: c.payload, verdict });
+    const what = `${c.symbology} code ${c.at ? `(on screen at ${c.at}) ` : ""}${verdict.summary}${verdict.notes.length ? ` (${verdict.notes.join("; ")})` : ""}`;
+    if (verdict.action) add({ kind: "image.code_action", confidence: 0.3 + verdict.risk * 0.4, severity: 0.4 + verdict.risk * 0.4, message: `following this ${what}`, inHidden: true });
+    else add({ kind: "image.code_payload", confidence: verdict.notes.length ? 0.25 + verdict.risk * 0.3 : 0.05, severity: verdict.notes.length ? 0.5 : 0.2, message: `this ${what}${verdict.url ? ". Open it only through the gate" : ""}`, inHidden: true });
+    if (verdict.text) segments.push({ text: verdict.text, visibility: "concealed", path: `${root}/code:${verdict.kind}` });
+    // the words beside a code say one thing; the code says another
+    const named = hostsMentioned(beside, 20);
+    if (verdict.host && named.length && !named.some((n) => verdict.host === n || verdict.host!.endsWith(`.${n}`) || n.endsWith(`.${verdict.host}`))) {
+      add({ kind: "image.caption_mismatch", confidence: 0.45, severity: 0.6, message: `the words beside the code name ${named[0]}, and the code goes to ${verdict.host}`, inHidden: true });
+    }
+  }
+  // a line for the reader, so the delivered text says a code is there without carrying its payload as an instruction
+  if (codes.length) segments.push({ text: codes.map((c) => `[${c.symbology} code: ${c.verdict.summary}]`).join("\n"), visibility: "visible", path: `${root}/codes` });
+  return { codes, findings, segments };
 }
 
 export async function inspectImage(bytes: Uint8Array, opts: InspectOptions = {}): Promise<ImageInspection> {
@@ -346,22 +379,12 @@ export async function inspectImage(bytes: Uint8Array, opts: InspectOptions = {})
       add({ kind: "image.later_frame_text", confidence: 0.12, severity: 0.4, message: `${wordy(frameLines.map((f) => f.text).join(" "))} words appear only in later frames (${[...new Set(frameLines.map((f) => f.frame))].slice(0, 3).join(", ")}): a still view shows the first frame only`, inHidden: true });
     }
 
+    // interface elements drawn into the picture (a browser window, a system dialog): see screen.ts
+    findings.push(...screenFindings(vision.full, vision.rects, opts.screen));
+
     // codes: the payload is for the machine
-    for (const c of vision.barcodes.slice(0, 20)) {
-      const verdict = judgeQrPayload(c.payload);
-      codes.push({ symbology: c.symbology, payload: c.payload, verdict });
-      const what = `${c.symbology} code ${verdict.summary}${verdict.notes.length ? ` (${verdict.notes.join("; ")})` : ""}`;
-      if (verdict.action) add({ kind: "image.code_action", confidence: 0.3 + verdict.risk * 0.4, severity: 0.4 + verdict.risk * 0.4, message: `following this ${what}`, inHidden: true });
-      else add({ kind: "image.code_payload", confidence: verdict.notes.length ? 0.25 + verdict.risk * 0.3 : 0.05, severity: verdict.notes.length ? 0.5 : 0.2, message: `this ${what}${verdict.url ? ". Open it only through the gate" : ""}`, inHidden: true });
-      if (verdict.text) segments.push({ text: verdict.text, visibility: "concealed", path: `image/code:${verdict.kind}` });
-      // the words beside a code say one thing; the code says another
-      const named = hostsMentioned(`${opts.caption ?? ""} ${shown}`, 20);
-      if (verdict.host && named.length && !named.some((n) => verdict.host === n || verdict.host!.endsWith(`.${n}`) || n.endsWith(`.${verdict.host}`))) {
-        add({ kind: "image.caption_mismatch", confidence: 0.45, severity: 0.6, message: `the words beside the code name ${named[0]}, and the code goes to ${verdict.host}`, inHidden: true });
-      }
-    }
-    // a line for the reader, so the delivered text says a code is there without carrying its payload as an instruction
-    if (codes.length) segments.push({ text: codes.map((c) => `[${c.symbology} code: ${c.verdict.summary}]`).join("\n"), visibility: "visible", path: "image/codes" });
+    const judged = judgeCodes(vision.barcodes, `${opts.caption ?? ""} ${shown}`, "image");
+    codes.push(...judged.codes); findings.push(...judged.findings); segments.push(...judged.segments);
   } else {
     add({ kind: "image.pixels_not_inspected", confidence: 0.1, severity: 0.2, message: `the picture itself was not read: ${coverage.pixelsReason}. Text in it, codes, and the resizing, contrast and transparency checks were not run` });
     segments.push({ text: `[image, ${meta.format}${meta.width ? ` ${meta.width}x${meta.height}` : ""}: its pixels were not inspected (${coverage.pixelsReason})]`, visibility: "visible", path: "image/note" });

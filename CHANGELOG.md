@@ -4,6 +4,68 @@ Every change bumps the patch version of all three packages. The ruleset id chang
 behavior changes; receipts carry it so verdicts are reproducible. Releases up to 0.9.6 are in the
 [README](README.md#changes-in-096-2026-11-18-ruleset-20261118-3-unchanged).
 
+## 0.9.27 (2026-11-20, ruleset 2026.11.20-1)
+
+Gap closure, milestone 4: video, and interface elements drawn into a page. Details in `docs/VIDEO.md` and
+`docs/IMAGES.md`.
+
+**Video** (`engine.scanVideo`, `ingress --video <file>`, `POST /v1/scan-video`, and videos in MCP tool
+results). A model is handed frames somebody sampled; a viewer saw the video once, at its speed.
+
+- The helper (`ingress-vision --video`, AVFoundation and Vision, no ffmpeg) looks at every frame as a small
+  grey thumbnail to find where the picture changes, then reads the text and codes in the frames that matter:
+  every frame of a short clip; for a long one, each picture put in between two frames of the same scene (with
+  the frame before and after it), a share of the other short-lived pictures, the frame after each cut, and a
+  regular grid. At most 240 frames and the first 600 seconds. It lists the subtitle and audio tracks and reads
+  3GPP and WebVTT subtitle tracks and the file's tags.
+- **Text on screen for under a third of a second** is concealed content (`video.brief_frame_text`): refused
+  when it reads as instructions, recorded without changing the verdict when it is ordinary words. A line is
+  brief only when frames that were read right before and right after it do not have it.
+- Codes in frames are judged like codes in a picture, with the time they are on screen. Subtitle tracks, and a
+  captions file given beside the video, go through the caption reader. The sound goes through `scanAudio` when
+  a transcriber is configured; the captions are then compared with what was said and shown.
+- **A partial read is never silent.** `coverage.video` says how long the video is, how much was examined, how
+  many frames there are and how many were read, and whether the sound was transcribed. Findings
+  `video.partly_read` and `video.frames_not_read` mark a gap. The MCP proxy withholds a video it could not read.
+- A camera frame is a picture and goes through `scanImage`; no camera reader was built.
+
+**Interface elements drawn into a page** (`screen.ts`): a browser window (an address bar naming another site
+over a sign-in form) or a system dialog painted inside a page. A drawn window and a real one are the same
+pixels, so this counts only when the caller says the picture is a capture of a page's content area
+(`screen: { capture: "viewport", pageHost? }`; `"screens": "viewport"` for a server or tool in the MCP proxy;
+`--capture=viewport`), where real browser chrome never appears. Alone it reaches suspect at most, and only
+when the drawn address bar names a different site than the page is on, or a drawn system dialog asks for a
+password. It never reaches hostile without other evidence. The Claude Code hooks do not apply it: they cannot
+know how a picture was taken.
+
+Measured (every refusal or finding below is a false alarm; development and hold-out halves were split by a
+hash before anything was read, and each hold-out was scored once):
+
+| what | development | hold-out |
+|---|---|---|
+| ordinary videos, watchable size (NASA library) | 28 of 28 clean | **35 of 35 clean** |
+| the same library at 320 pixels wide | 33 of 33 clean | **42 of 42 clean** |
+| drawn-interface check on ordinary screens (ScreenSpot-v2) | fired on 0 of 386 | **fired on 0 of 361** |
+
+- The first cut of the brief-text rule recorded brief text in 12 of 28 ordinary development clips (none
+  refused): it took "where the picture changed" as evidence of how long words were shown, and movement changes
+  the picture. The rule that replaced it is the one above; it records brief text in 2 of 28 development clips
+  and 1 of 35 hold-out clips.
+- The drawn-interface check never fired on the development screens, so it was not tuned. That measures false
+  alarms only.
+- **Not measured:** recall on real video attacks or on real pages that draw a window (no set was found whose
+  licence and contents could be checked). The positive cases are the clips and the picture the helper writes
+  (`ingress vision selftest`, now 17 checks). The videos are edited footage from one publisher; the sound was
+  not transcribed in these runs; subtitle tracks were not exercised on real video.
+
+Limits: macOS only; MP4, MOV and M4V (WebM, Matroska and AVI are reported as not read); text in a frame is
+read as shown (the faint-text and resizing checks are not run per frame); in a long video, small text over
+moving footage can fall between the frames read; closed-caption tracks are noted and not read. A helper built
+by an earlier version cannot read video: run `ingress vision build` again.
+
+Tests: core 417 pass (15 new), proxy 9 (1 new). Corpus 90/90, 48/48, 3/3. Verdicts on pictures can change only
+where a caller declares a viewport capture.
+
 ## 0.9.26 (2026-11-20, ruleset 2026.11.19-3 unchanged)
 
 Gap closure, milestone 3: where programs an agent runs actually connect. The egress hook reads a command, not

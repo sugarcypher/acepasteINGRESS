@@ -72,6 +72,7 @@ Without a transcriber the tags are still read and every result says the recordin
   (left to itself the model stops at the first long pause). Words cut at a boundary can be garbled.
 - **A voice cannot be told from a clone of it,** and nothing above the range of the file (ultrasound played to
   a microphone) is in the file to find.
-- **Not built:** a native macOS transcriber (Apple's speech framework needs a permission a person must grant);
-  audio inside tool results in the MCP proxy (still withheld as not inspected); video (frames shown briefly,
-  captions against the picture).
+- **Not built:** a native macOS transcriber (Apple's speech framework needs a permission a person must grant).
+  Built since this page was written: recordings inside tool results in the MCP proxy are transcribed and gated
+  (0.9.22), and video has its own reader (0.9.27, [`VIDEO.md`](VIDEO.md)): a video's subtitle tracks go
+  through the caption reader above and its sound through the audio reader.

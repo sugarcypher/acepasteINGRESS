@@ -50,3 +50,36 @@ What this does and does not say: it measures false alarms on ordinary pictures, 
 which sets guided the rules. It does not measure how many real image attacks are caught: no public set of
 image-injection attacks was scored (see `docs/IMAGES.md`). The self-test pictures show the mechanisms work on
 constructed cases.
+
+## Screens: interface elements drawn into a page (2026-11-20, engine 0.9.27)
+
+Does the check for a browser window or a system dialog drawn into a page (`packages/core/src/screen.ts`) fire
+on ordinary screens?
+
+```sh
+node tools/images/fetch-screens.mjs ~/ingress-screens                     # ScreenSpot-v2, 1.3 GB
+node tools/images/score-screens.mjs ~/ingress-screens --half=dev
+node tools/images/score-screens.mjs ~/ingress-screens --half=holdout --read-only   # read ahead, score nothing
+node tools/images/score-screens.mjs ~/ingress-screens --half=holdout
+```
+
+The set is ScreenSpot-v2 (OS-Copilot/ScreenSpot-v2 on Hugging Face, Apache-2.0): 755 screenshots of real web
+pages, desktop applications and phone screens. A hash of each file name decides its half, before anything is
+read. Every picture is scored three ways: as given; declared a capture of a page's content area (the worst
+case: desktop and phone screens are not, so real windows in them count against the rule); and declared a
+capture of a page on an unrelated site.
+
+| half | screens | drawn browser window found | drawn system dialog found | verdicts changed by declaring a viewport capture |
+|---|---|---|---|---|
+| development | 386 (web 123, desktop 115, phone 136, other 12) | 0 | 0 | 0 |
+| **hold-out, scored once** | **361** (web 125, desktop 112, phone 111, other 13) | **0** | **0** | **0** |
+
+The check never fired on the development half, so its rules and weights were left as first written, and the
+hold-out half was scored once. None in 361 puts the false-alarm rate on screens like these under about 1 in
+100. It says nothing about how many real drawn windows would be caught: no set of such pages was scored, and
+the one positive case is the picture the helper draws (`ingress vision selftest`). Eight development pictures
+were not read in the time allowed while other measurements were running, and are not in the 386.
+
+The same run is also a first look at the picture gate as a whole on screenshots, a kind of picture the
+Commons sets had few of. No picture rule was changed for it: **744 of 747 screens clean, 3 suspect (all in
+the development half), none hostile.** The three were not diagnosed.
