@@ -123,20 +123,47 @@ printf '{"tool_name":"Bash","tool_input":{"command":"curl -s https://example.com
 
 In a session, fetch a page and look for the `<<acepaste-ingress ...>>` envelope around the result.
 
+## Where programs really connect (the egress proxy, optional)
+
+The egress gate above reads a command, not the program it starts. With `INGRESS_EGRESS_PROXY=on` in front of
+the three hook commands (session-start, pre-tool-use, post-tool-use), this session's shell commands are
+pointed at a proxy on this machine that decides each connection by its destination:
+
+```json
+{ "type": "command", "command": "INGRESS_EGRESS_PROXY=on ingress hook session-start", "timeout": 20 }
+```
+
+- A host on a blocklist, an address on this machine or a private network, and a host the session met only in
+  outside content that no command names, are refused. The model is told why and not to go around it.
+- Hosts you typed, hosts on `INGRESS_EGRESS_ALLOW_HOSTS`, and hosts named in a command the gate had no
+  objection to, pass. Everything else passes and is logged (`ingress egress-proxy log`), or is refused in
+  strict mode.
+- A command whose programs connected anywhere has its output gated as outside content.
+- Commands are not rewritten. The session-start hook writes the proxy variables to the file Claude Code reads
+  shell variables from, so it applies to sessions started after you turn it on. Give that hook a timeout of
+  20 seconds: the first one starts the proxy.
+- A command that visibly steps around the proxy (`unset HTTPS_PROXY`, `--noproxy`) is put to you.
+
+A program that ignores proxy settings is not seen by the proxy. `ingress run -- <command>` (macOS) runs one
+command so that the proxy is its only way out. What all of this does and does not cover, what was measured,
+and every setting: [`docs/EGRESS.md`](../../docs/EGRESS.md).
+
 ## Limits
 
 - Hooks see what the harness shows them. A tool whose output shape this hook does not know (a new built-in
   tool) is not gated; MCP tools always are.
 - A shell command is gated when it visibly reaches the network. A local program that makes network calls of
-  its own (`./fetch-data`, `make sync`) is not recognised. Background-task output files are gated however
-  they were produced.
+  its own (`./fetch-data`, `make sync`) is not recognised, unless the egress proxy is on (below): then any
+  command whose programs connected somewhere through it has its output gated. Background-task output files
+  are gated however they were produced.
 - Pictures the agent reads from disk, and pictures in MCP results, are gated (0.9.18; see `docs/IMAGES.md`):
   both the file as it is and the resized copy the harness hands the model. A refused picture is replaced by a
   blank one with the reason beside it. Reading pixels needs the vision helper (`ingress vision build`, macOS);
   without it pictures pass, and the model is told they were not checked. Audio is not inspected.
 - The egress gate reads the command, not the program. `python upload.py` sends whatever the script sends; a
-  command that hides its destination in a variable or a file is judged without it. It is a check on what an
-  agent visibly does, not a firewall: a machine-wide network filter is roadmap Phase 4 and is not built.
+  command that hides its destination in a variable or a file is judged without it. The egress proxy (below,
+  0.9.26, off by default) checks where such a program actually connects, and `ingress run` confines one
+  command to that proxy. Neither is a firewall: a machine-wide network filter is roadmap Phase 4 and is not built.
 - "Ask" is answered by you in Claude Code's own permission prompt. In a mode that auto-approves prompts, an
   "ask" from this hook is only as strong as that mode; "deny" holds in every mode. Set
   `INGRESS_HOOK_APPROVER=macos-presence` (above) to have every question answered by a person at the Mac.
@@ -146,4 +173,6 @@ In a session, fetch a page and look for the `<<acepaste-ingress ...>>` envelope 
   hooks reference on 2026-11-18: `prompt` and the `<pasted_content id="…">` markers for `UserPromptSubmit`,
   `compact_summary` for `PostCompact`, `source: "compact"` for `SessionStart`, and
   `hookSpecificOutput.updatedToolOutput` / `updatedMCPToolOutput` for `PostToolUse`. If a hook seems to do
-  nothing after an update, check those names first.
+  nothing after an update, check those names first. The egress proxy part was written against the reference
+  on 2026-11-20 (Claude Code 2.1.329): `CLAUDE_ENV_FILE` for `SessionStart`, and `tool_use_id` in the
+  `PreToolUse` and `PostToolUse` events.

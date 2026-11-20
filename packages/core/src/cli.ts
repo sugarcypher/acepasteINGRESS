@@ -21,7 +21,8 @@ import { trackAudit, confirmAuditArea, formatAuditChanges, AUDIT_NEEDS_CONFIRMAT
 import { confirmServerTools, describeServerTools } from "./tooldefs.js";
 import { BaselineStore } from "./changes.js";
 import { engageStop, clearStop, stopReason } from "./safeguards.js";
-import { postToolUse, preToolUse, preToolUseAnswered, userPromptSubmit, preCompact, postCompact, sessionStart, remoteGate, type HookGate } from "./agent-hooks.js";
+import { postToolUse, preToolUse, preToolUseAnswered, egressProxyBefore, userPromptSubmit, preCompact, postCompact, sessionStart, remoteGate, type HookGate } from "./agent-hooks.js";
+import { startEgressProxy, egressProxyOptionsFromEnv, egressProxyOn, ensureEgressProxy, proxyHealth, proxySecret, sessionToken, sessionOfToken, proxyEnv, commandStart, connectionsSince, sandboxUsable, runSandboxed } from "./egress-proxy.js";
 import type { Approver } from "./broker.js";
 import { Blocklist } from "./egress.js";
 import { updateBlocklists, blocklistsRefreshedAt, startBlocklistRefresh } from "./blocklist-update.js";
@@ -53,6 +54,8 @@ async function main() {
   if (args[0] === "hook") return hookCommand(args[1], await chunksIn());
   if (args[0] === "tools") return toolsCommand(args.slice(1));
   if (args[0] === "blocklist") return blocklistCommand(args.slice(1));
+  if (args[0] === "egress-proxy") return egressProxyCommand(args.slice(1));
+  if (args[0] === "run") return runCommand(args.slice(1));
   if (args[0] === "provenance") return provenanceCommand(args.slice(1));
   if (args[0] === "vision") return visionCommand(args.slice(1));
   // ingress presence [build|check]: the helper that asks macOS to confirm a person is at the machine (Touch ID or password)
@@ -215,6 +218,79 @@ async function main() {
 main().catch((e) => { console.error(e); process.exit(1); });
 
 /**
+ *   ingress egress-proxy               run the egress proxy on 127.0.0.1 (see egress-proxy.ts and docs/EGRESS.md)
+ *   ingress egress-proxy status        is it running
+ *   ingress egress-proxy env [name]    the variables that point a shell at it, for a session called <name>
+ *   ingress egress-proxy log [n]       the last n connections it decided (host, port, bytes, decision; never content)
+ * Settings: INGRESS_EGRESS_PROXY_PORT (8788), INGRESS_EGRESS_PROXY_MODE=strict, INGRESS_EGRESS_ALLOW_HOSTS,
+ * INGRESS_EGRESS_PROXY_ALLOW_PRIVATE, INGRESS_EGRESS_PROXY_PORTS, INGRESS_EGRESS_PROXY_APPROVER=macos-presence.
+ */
+async function egressProxyCommand(a: string[]) {
+  const o = egressProxyOptionsFromEnv();
+  const port = o.port ?? 8788;
+  if (a[0] === "status") {
+    const s = await proxyHealth(port);
+    console.log(s === "ours" ? `running on 127.0.0.1:${port}` : s === "other" ? `port ${port} answers, but not as this installation's egress proxy` : `not running (port ${port})`);
+    if (s !== "ours") process.exitCode = 1;
+    return;
+  }
+  if (a[0] === "env") {
+    const name = a[1] ?? `shell-${process.ppid}`;
+    for (const [k, v] of Object.entries(proxyEnv(port, sessionToken(proxySecret(), name)))) console.log(`export ${k}='${v}'`);
+    return;
+  }
+  if (a[0] === "log") {
+    const n = Math.max(1, Math.min(1000, Number(a[1]) || 30));
+    let lines: string[] = [];
+    try { lines = readFileSync(join(stateDir(), "egress-proxy", "connections.jsonl"), "utf8").trim().split("\n").slice(-n); } catch { /* nothing logged yet */ }
+    for (const l of lines) {
+      try { const e = JSON.parse(l) as Record<string, unknown>; console.log([e.at, e.decision, `${e.host}:${e.port}`, e.closed ? `up ${e.up} down ${e.down} bytes` : e.reason, e.flag ? `FLAG ${e.flag}` : ""].filter(Boolean).join("  ")); } catch { /* skip */ }
+    }
+    if (!lines.length) console.log("no connections logged");
+    return;
+  }
+  // a host known only from outside content: refused, unless a person at this Mac is asked (Touch ID or password)
+  if ((process.env.INGRESS_EGRESS_PROXY_APPROVER ?? "") === "macos-presence" && process.platform === "darwin" && existsSync(presenceHelperPath())) {
+    o.approver = presenceApprover(macosDialogApprover({ timeoutSec: 60 }), { biometryOnly: process.env.INGRESS_PRESENCE_BIOMETRY_ONLY === "1" });
+    o.policy = { ...o.policy, contentHosts: "ask" };
+  }
+  // started on demand by a hook: leave after twelve hours with no connection (a hook starts it again when needed)
+  if (a.includes("--idle-exit")) { o.idleExitMs = 12 * 3600 * 1000; o.onIdle = () => process.exit(0); }
+  try {
+    const p = await startEgressProxy(o);
+    process.stderr.write(JSON.stringify({ event: "ingress.egress-proxy.listen", host: "127.0.0.1", port: p.port, mode: o.policy?.mode ?? "log", approver: o.approver?.name ?? "none" }) + "\n");
+  } catch (e) {
+    console.error(`ingress egress-proxy: could not listen on 127.0.0.1:${port} (${(e as Error).message})`);
+    process.exit(1);
+  }
+}
+
+/**
+ *   ingress run [--loopback=allow] -- <command> [args...]    run a command with its network confined to the egress proxy
+ *   ingress run [--loopback=allow] -c '<shell script>'       the same for a line of shell
+ * macOS only (sandbox-exec). The command and everything it starts can open network connections only to the
+ * proxy; with --loopback=allow, also to other ports on this machine (a test suite and its own server), except
+ * the name-service ports. Inside an agent session whose commands are already pointed at the proxy, the
+ * session's token is used, so the proxy judges the connections with what that session has read.
+ */
+async function runCommand(a: string[]) {
+  const loopback = a.includes("--loopback=allow") ? "allow" as const : "proxy-only" as const;
+  const sep = a.indexOf("--"), c = a.indexOf("-c");
+  const argv = c >= 0 && (sep < 0 || c < sep) ? [process.env.SHELL || "/bin/sh", "-c", a[c + 1] ?? ""] : sep >= 0 ? a.slice(sep + 1) : [];
+  if (!argv.length || (c >= 0 && !a[c + 1])) { console.error("usage: ingress run [--loopback=allow] -- <command> [args...]   |   ingress run [--loopback=allow] -c '<shell script>'"); process.exit(2); }
+  const usable = sandboxUsable();
+  if (!usable.ok) { console.error(`ingress run: ${usable.why}.`); process.exit(126); }
+  const port = egressProxyOptionsFromEnv().port ?? 8788;
+  const up = await ensureEgressProxy({ port });
+  if (!up.ok) { console.error(`ingress run: the egress proxy is not running (${up.why}). Nothing was run.`); process.exit(126); }
+  const secret = proxySecret();
+  // the token this shell was given at session start, if it is one of ours; else a session of its own
+  const given = (process.env.INGRESS_EGRESS_PROXY_URL ?? "").match(/^http:\/\/[^:@/]*:([^@/]+)@/)?.[1];
+  const token = given && sessionOfToken(secret, given) ? given : sessionToken(secret, `run-${process.pid}-${Date.now().toString(36)}`);
+  process.exit(runSandboxed(argv, { proxyPort: port, token, loopback }));
+}
+
+/**
  *   ingress hook <event>     reply to an agent harness hook: the event's JSON on stdin, the reply on stdout
  *       events: pre-tool-use, post-tool-use, user-prompt-submit, pre-compact, post-compact, session-start
  *   The engine runs in this process unless INGRESS_HOOK_SERVICE names a running Ingress service
@@ -250,12 +326,15 @@ async function hookCommand(event: string | undefined, stdin: string) {
     // INGRESS_EGRESS_ALLOW_HOSTS: comma-separated hosts data may go to without a question (".example.com" covers subdomains)
     case "pre-tool-use": {
       const egress = { ownPort, allowHosts: (process.env.INGRESS_EGRESS_ALLOW_HOSTS ?? "").split(",").map((s) => s.trim()).filter(Boolean) };
+      // INGRESS_EGRESS_PROXY=on: after the decision, a shell command's start and the hosts it names are noted for
+      // the egress proxy, and the proxy is started if it is not running. The command is never rewritten.
+      const proxied = (reply: Record<string, unknown> | undefined) => (egressProxyOn() ? egressProxyBefore(input, reply, { ensure: () => ensureEgressProxy({ port: egressProxyOptionsFromEnv().port }) }) : Promise.resolve(reply));
       // INGRESS_HOOK_APPROVER: who answers when the gate has a question. Unset: the harness's own prompt (which a
       // mode that approves prompts automatically answers for the person). "macos-presence": a person at this Mac,
       // through a system dialog showing the action and then Touch ID or the login password. "deny": nobody; every
       // question is a refusal. Anything else is a mistake in the settings and is treated as "deny", not ignored.
       const who = (process.env.INGRESS_HOOK_APPROVER ?? "").trim();
-      if (!who) return out(preToolUse(input, egress));
+      if (!who) return out(await proxied(preToolUse(input, egress)));
       // INGRESS_HOOK_APPROVER_SECONDS: how long a person has to answer (default 120, 20 to 540). The hook's timeout
       // in the harness settings must be longer than this, or the harness kills the hook and carries on without it.
       const budget = Math.max(20, Math.min(540, Number(process.env.INGRESS_HOOK_APPROVER_SECONDS) || 120));
@@ -264,19 +343,33 @@ async function hookCommand(event: string | undefined, stdin: string) {
         : process.platform !== "darwin" ? cannot("macos-presence needs macOS")
         : !existsSync(presenceHelperPath()) ? cannot("the presence helper is not built (ingress presence build)")
         : presenceApprover(macosDialogApprover({ timeoutSec: Math.round(budget * 0.6) }), { biometryOnly: process.env.INGRESS_PRESENCE_BIOMETRY_ONLY === "1" });
-      const reply = await preToolUseAnswered(input, approver, { ...egress, answerWithinMs: budget * 1000 });
+      const reply = await proxied(await preToolUseAnswered(input, approver, { ...egress, answerWithinMs: budget * 1000 }));
       // The answer is written, then the process ends at once: a dialog nobody answered may still be on the
       // screen, and waiting for it would hold the hook past the harness's timeout (which would count as no answer).
       if (reply !== undefined) await new Promise<void>((done) => process.stdout.write(JSON.stringify(reply) + "\n", () => done()));
       process.exit(0);
     }
-    case "post-tool-use": return out(await postToolUse(input, gate, { ownPort }));
+    case "post-tool-use": {
+      // with the egress proxy on: what it carried or refused for this session since the command started
+      const proxyConnections = !egressProxyOn() ? undefined : (session: string, toolUseId: string | undefined) => {
+        const since = commandStart(stateDir(), session, toolUseId);
+        return since === undefined ? [] : connectionsSince(stateDir(), session, since - 250);
+      };
+      return out(await postToolUse(input, gate, { ownPort, ...(proxyConnections ? { proxyConnections } : {}) }));
+    }
     case "user-prompt-submit": return out(await userPromptSubmit(input, gate));
     case "pre-compact": process.stdout.write(preCompact() + "\n"); return;
     case "post-compact": await postCompact(input, gate); return;
     case "session-start":
       // stale blocklists are refreshed by a separate process; the reply does not wait for it
       startBlocklistRefresh();
+      // INGRESS_EGRESS_PROXY=on: the proxy is started if need be, and the session's shell commands are pointed at
+      // it through the file the harness reads variables from (CLAUDE_ENV_FILE, which only this hook is given)
+      if (egressProxyOn()) {
+        const port = egressProxyOptionsFromEnv().port ?? 8788;
+        await ensureEgressProxy({ port });
+        return out(sessionStart(input, { marker: process.env.INGRESS_SESSION_MARKER !== "0", egressProxy: { port, envFile: process.env.CLAUDE_ENV_FILE || undefined } }));
+      }
       return out(sessionStart(input, { marker: process.env.INGRESS_SESSION_MARKER !== "0" }));
     default: console.error("usage: ingress hook pre-tool-use|post-tool-use|user-prompt-submit|pre-compact|post-compact|session-start   (event JSON on stdin)"); process.exit(2);
   }

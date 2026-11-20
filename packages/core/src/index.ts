@@ -54,6 +54,13 @@ export { oneTimeCodes, carriesCode, credentialsLeaving, hostsMentioned, Blocklis
 export type { PeripheralEgress } from "./egress.js";
 export { updateBlocklists, blocklistsRefreshedAt, blocklistRefreshDue, claimBlocklistRefresh, startBlocklistRefresh, BLOCKLIST_MAX_AGE_MS, BLOCKLIST_RETRY_MS } from "./blocklist-update.js";
 export type { FeedOutcome, RefreshStart } from "./blocklist-update.js";
+export {
+  startEgressProxy, decideConnection, egressProxyOptionsFromEnv, egressProxyOn, ensureEgressProxy, proxyHealth, proxySecret, sessionToken, sessionOfToken, proxyEnv,
+  noteVisibleHosts, isVisibleHost, noteCommandStart, commandStart, connectionsSince, sandboxProfile, sandboxSecrets, sandboxUsable, runSandboxed,
+  EGRESS_PROXY_PORT, DEFAULT_PROXY_POLICY, VISIBLE_HOST_TTL_MS,
+} from "./egress-proxy.js";
+export type { EgressProxyOptions, RunningEgressProxy, ProxyPolicy, ProxyConnection, ConnectionDecision } from "./egress-proxy.js";
+export { egressProxyBefore } from "./agent-hooks.js";
 export { StreamScanner, scanStream } from "./stream.js";
 export type { StreamOptions, StreamStep, StreamSummary } from "./stream.js";
 export { runSandbox, DEFAULT_SCRIPT_HOSTS } from "./sandbox.js";

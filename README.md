@@ -58,6 +58,7 @@ in [`CHANGELOG.md`](CHANGELOG.md), and what was planned against what was built i
 | Nearby devices | Bonjour, Bluetooth and printer names as lowest-trust content; lookalikes of devices you know | `nearby.ts`, `ingress nearby` |
 | Shortcuts | reads private data + takes outside input + can send out; code it runs | `shortcuts.ts`, `ingress shortcut <file>` |
 | What goes out | blocklisted hosts, verification codes, credentials, uploads, printers and removable drives, tunnels behind localhost, a session marker that must never leave | `egress.ts`, `broker.ts` |
+| Where programs an agent runs connect (optional) | a local proxy that decides each connection by destination and logs host, port and bytes; `ingress run` confines one command to it (macOS) | `egress-proxy.ts`, [`docs/EGRESS.md`](docs/EGRESS.md) |
 | The agent's own files | provenance marks on what an agent wrote after reading outside content; downloaded files gated on read; MCP tool definitions fingerprinted | `provenance.ts`, `tooldefs.ts` |
 | A coding agent's session | six hooks: before a tool runs, after it returns, on a pasted prompt, around compaction, at session start | [`integrations/claude-code`](integrations/claude-code/README.md) |
 | Approvals | a dialog showing the exact action; optionally Touch ID or the login password, confirmed by macOS | `approvers.ts`, `INGRESS_APPROVER=macos-presence` |

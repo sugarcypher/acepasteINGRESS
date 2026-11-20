@@ -4,6 +4,56 @@ Every change bumps the patch version of all three packages. The ruleset id chang
 behavior changes; receipts carry it so verdicts are reproducible. Releases up to 0.9.6 are in the
 [README](README.md#changes-in-096-2026-11-18-ruleset-20261118-3-unchanged).
 
+## 0.9.26 (2026-11-20, ruleset 2026.11.19-3 unchanged)
+
+Gap closure, milestone 3: where programs an agent runs actually connect. The egress hook reads a command, not
+the program it starts (`python upload.py` sends whatever the script sends), and a machine-wide filter needs a
+network extension Apple licenses. This is the part that needs no licence. All of it is off by default.
+Everything is in `docs/EGRESS.md`.
+
+- **The egress proxy** (`ingress egress-proxy`, or `INGRESS_EGRESS_PROXY=on` for the loopback HTTP service):
+  an HTTP proxy on 127.0.0.1 for `CONNECT` and plain HTTP. It sees a host and a port and counts bytes; TLS is
+  not opened and nothing sent is read. Each client carries a token made for one agent session (no token, no
+  service), so a connection is judged with what that session has read. Refused: blocklisted hosts and
+  addresses; this machine, private networks and metadata addresses; ports other than 80 and 443; anything
+  while the stop switch is on; and a host the session met only in outside content that no command names.
+  Carried: allowlisted hosts, hosts the person typed, hosts named in a command the gate had no objection to.
+  Everything else is carried and logged, or refused in strict mode. A name that will be refused is never
+  looked up. A host known only from content can be put to a person at the Mac instead
+  (`INGRESS_EGRESS_PROXY_APPROVER=macos-presence`). Every connection is logged with host, port, bytes each
+  way and the reason; a large upload after outside content was read is flagged.
+- **The hooks use it** (`INGRESS_EGRESS_PROXY=on` on the hook commands). Session start writes the proxy
+  variables to the file Claude Code reads shell variables from, so the session's commands run through the
+  proxy without being rewritten. Before a shell command the hook notes its start and the hosts it names,
+  makes sure the proxy is up, and asks when the command visibly steps around the proxy settings.
+- **Output of a program that reached the network is outside content.** After a shell command, the hook asks
+  the proxy what the session connected to while it ran. If anything, the output is gated like `curl` output
+  and the hosts join what the session has contacted. Refused connections are explained to the model.
+- **`ingress run -- <command>`** (macOS): runs a command under `sandbox-exec` so that its own network can
+  reach only the proxy. Found by experiment: name lookups fail inside (they go to a system service over a
+  local socket, which the profile denies), so there is no name-service channel in the default profile; with
+  `--loopback=allow` the local ports 53, 853 and 5353 stay denied, because a resolver on this machine would
+  otherwise carry data out (the Mac this was built on has one). The token secret and the local service's keys
+  cannot be read from inside. It refuses to start inside another sandbox and says why.
+
+What it is not, in short: a firewall. It covers shell commands of sessions pointed at it and what is run with
+`ingress run`; it sees names, not content; an allowed host can relay; without the wrapper a program can
+ignore it.
+
+Different from the plan, and not done:
+
+- The hooks set the session's variables instead of rewriting each command. Claude Code checks permission
+  rules against a rewritten command (so rules like `Bash(npm test:*)` stop matching) and in auto mode can
+  deny it, because the safety review saw the original.
+- For the same reason the hook does not put every command in the sandbox (`INGRESS_EGRESS_SANDBOX` is not
+  built). `ingress run` is used by name.
+- `ingress run` allows only the proxy's port by default; other local ports need `--loopback=allow`.
+- Not tried: git, pip and npm through the proxy (curl and Node were), and a real agent session with the proxy
+  turned on. The presence prompt for a connection is tested with a stand-in. Linux has no wrapper.
+
+Tests: core 402 pass (10 new: every decision path, an end-to-end run against local servers, the hooks, and
+the sandbox on this Mac), proxy 8. Corpus 90/90, 48/48, 3/3. No content verdict can change.
+
 ## 0.9.25 (2026-11-19, ruleset 2026.11.19-3)
 
 Gap closure, milestone 1 (the plan is in `docs/ROADMAP-LOG.md`): three places where the gate was installed

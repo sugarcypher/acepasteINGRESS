@@ -38,7 +38,7 @@ import { createHash } from "node:crypto";
 import { appendFileSync, readFileSync, writeFileSync, existsSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join, normalize } from "node:path";
-import { IngressEngine, loadPolicyFile, cloakingConfigFromEnv, HONEST_USER_AGENT, checkLocalRequest, isLoopbackBind, parseScanHints, startBlocklistRefresh, type IngressConfig, type IngressResult, type TaintReceipt } from "@acepaste/ingress";
+import { IngressEngine, loadPolicyFile, cloakingConfigFromEnv, HONEST_USER_AGENT, checkLocalRequest, isLoopbackBind, parseScanHints, startBlocklistRefresh, startEgressProxy, egressProxyOptionsFromEnv, egressProxyOn, type IngressConfig, type IngressResult, type TaintReceipt } from "@acepaste/ingress";
 import { JsonlReceiptStore, toStored, type ReceiptStore } from "./store.js";
 
 const env = process.env;
@@ -351,4 +351,13 @@ server.listen(PORT, HOST, () => process.stderr.write(JSON.stringify({ event: "in
 if (isLoopbackBind(HOST)) {
   startBlocklistRefresh();
   setInterval(() => startBlocklistRefresh(), 6 * 3600 * 1000).unref();
+}
+
+// INGRESS_EGRESS_PROXY=on, on a person's machine: this service also runs the egress proxy (127.0.0.1 only, its
+// own port, INGRESS_EGRESS_PROXY_PORT, default 8788), so it is up before any agent session starts. The hooks
+// start one themselves when none is running; this is the always-on way. See docs/EGRESS.md.
+if (isLoopbackBind(HOST) && egressProxyOn(env)) {
+  startEgressProxy(egressProxyOptionsFromEnv(env))
+    .then((p) => process.stderr.write(JSON.stringify({ event: "ingress.egress-proxy.listen", host: "127.0.0.1", port: p.port }) + "\n"))
+    .catch((e) => process.stderr.write(JSON.stringify({ event: "ingress.egress-proxy.failed", reason: String((e as Error).message ?? e) }) + "\n"));
 }
