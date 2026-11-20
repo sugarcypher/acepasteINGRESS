@@ -1,7 +1,7 @@
 {
   "name": "acepaste-ingress",
   "private": true,
-  "version": "0.9.24",
+  "version": "0.9.25",
   "description": "AcePaste Ingress: a security gate between internet content and AI ingestion. One engine, many frontends.",
   "workspaces": [
     "packages/*"

@@ -21,11 +21,14 @@ import { trackAudit, confirmAuditArea, formatAuditChanges, AUDIT_NEEDS_CONFIRMAT
 import { confirmServerTools, describeServerTools } from "./tooldefs.js";
 import { BaselineStore } from "./changes.js";
 import { engageStop, clearStop, stopReason } from "./safeguards.js";
-import { postToolUse, preToolUse, userPromptSubmit, preCompact, postCompact, sessionStart, remoteGate, type HookGate } from "./agent-hooks.js";
-import { Blocklist, BLOCKLIST_FEEDS } from "./egress.js";
+import { postToolUse, preToolUse, preToolUseAnswered, userPromptSubmit, preCompact, postCompact, sessionStart, remoteGate, type HookGate } from "./agent-hooks.js";
+import type { Approver } from "./broker.js";
+import { Blocklist } from "./egress.js";
+import { updateBlocklists, blocklistsRefreshedAt, startBlocklistRefresh } from "./blocklist-update.js";
 import { ProvenanceLedger, describeMark, downloadOrigin } from "./provenance.js";
 import { buildVisionHelper, buildNativeHelper, visionHelperPath, visionHelperProblem } from "./image.js";
-import { presenceHelperPath } from "./approvers.js";
+import { presenceHelperPath, presenceApprover } from "./approvers.js";
+import { existsSync } from "node:fs";
 import { collectNearby } from "./nearby.js";
 import { execFileSync } from "node:child_process";
 import { mkdtempSync, rmSync } from "node:fs";
@@ -245,12 +248,36 @@ async function hookCommand(event: string | undefined, stdin: string) {
   switch (event) {
     // the egress gate needs no engine: it judges the action with what the session has already read.
     // INGRESS_EGRESS_ALLOW_HOSTS: comma-separated hosts data may go to without a question (".example.com" covers subdomains)
-    case "pre-tool-use": return out(preToolUse(input, { ownPort, allowHosts: (process.env.INGRESS_EGRESS_ALLOW_HOSTS ?? "").split(",").map((s) => s.trim()).filter(Boolean) }));
+    case "pre-tool-use": {
+      const egress = { ownPort, allowHosts: (process.env.INGRESS_EGRESS_ALLOW_HOSTS ?? "").split(",").map((s) => s.trim()).filter(Boolean) };
+      // INGRESS_HOOK_APPROVER: who answers when the gate has a question. Unset: the harness's own prompt (which a
+      // mode that approves prompts automatically answers for the person). "macos-presence": a person at this Mac,
+      // through a system dialog showing the action and then Touch ID or the login password. "deny": nobody; every
+      // question is a refusal. Anything else is a mistake in the settings and is treated as "deny", not ignored.
+      const who = (process.env.INGRESS_HOOK_APPROVER ?? "").trim();
+      if (!who) return out(preToolUse(input, egress));
+      // INGRESS_HOOK_APPROVER_SECONDS: how long a person has to answer (default 120, 20 to 540). The hook's timeout
+      // in the harness settings must be longer than this, or the harness kills the hook and carries on without it.
+      const budget = Math.max(20, Math.min(540, Number(process.env.INGRESS_HOOK_APPROVER_SECONDS) || 120));
+      const cannot = (why: string): Approver => ({ name: who, request: async () => { throw new Error(why); } });
+      const approver: Approver = who !== "macos-presence" ? cannot(who === "deny" ? "no approver" : `unknown approver ${who}`)
+        : process.platform !== "darwin" ? cannot("macos-presence needs macOS")
+        : !existsSync(presenceHelperPath()) ? cannot("the presence helper is not built (ingress presence build)")
+        : presenceApprover(macosDialogApprover({ timeoutSec: Math.round(budget * 0.6) }), { biometryOnly: process.env.INGRESS_PRESENCE_BIOMETRY_ONLY === "1" });
+      const reply = await preToolUseAnswered(input, approver, { ...egress, answerWithinMs: budget * 1000 });
+      // The answer is written, then the process ends at once: a dialog nobody answered may still be on the
+      // screen, and waiting for it would hold the hook past the harness's timeout (which would count as no answer).
+      if (reply !== undefined) await new Promise<void>((done) => process.stdout.write(JSON.stringify(reply) + "\n", () => done()));
+      process.exit(0);
+    }
     case "post-tool-use": return out(await postToolUse(input, gate, { ownPort }));
     case "user-prompt-submit": return out(await userPromptSubmit(input, gate));
     case "pre-compact": process.stdout.write(preCompact() + "\n"); return;
     case "post-compact": await postCompact(input, gate); return;
-    case "session-start": return out(sessionStart(input, { marker: process.env.INGRESS_SESSION_MARKER !== "0" }));
+    case "session-start":
+      // stale blocklists are refreshed by a separate process; the reply does not wait for it
+      startBlocklistRefresh();
+      return out(sessionStart(input, { marker: process.env.INGRESS_SESSION_MARKER !== "0" }));
     default: console.error("usage: ingress hook pre-tool-use|post-tool-use|user-prompt-submit|pre-compact|post-compact|session-start   (event JSON on stdin)"); process.exit(2);
   }
 }
@@ -335,28 +362,19 @@ async function provenanceCommand(a: string[]) {
  *   ingress blocklist check <host>    is this host or address on a list?
  * Lists are plain text files in <state>/blocklists; add your own there, one host, address or IPv4 range per line.
  * The broker and the egress hook refuse any action whose arguments name a listed destination.
+ * The downloaded lists refresh themselves once a day (see blocklist-update.ts); INGRESS_BLOCKLIST_AUTO=off stops that.
  */
 async function blocklistCommand(a: string[]) {
   const dir = join(stateDir(), "blocklists");
   if (a[0] === "update") {
-    mkdirSync(dir, { recursive: true, mode: 0o700 });
-    let failed = 0;
-    for (const f of BLOCKLIST_FEEDS) {
-      try {
-        const res = await fetch(f.url, { signal: AbortSignal.timeout(30_000), redirect: "follow", headers: { "user-agent": HONEST_USER_AGENT } });
-        if (!res.ok) throw new Error(`HTTP ${res.status}`);
-        const text = await res.text();
-        if (text.length > 50_000_000) throw new Error("larger than 50 MB");
-        // a list is kept only if it parses as one: a block page or an error page saved as a list would silently protect nothing
-        const n = new Blocklist().add(text, f.name);
-        if (n < 5) throw new Error(`only ${n} entries parsed; keeping the previous copy`);
-        const p = join(dir, `${f.name}.txt`);
-        writeFileSync(`${p}.tmp`, `# ${f.what}\n# from ${f.url} on ${new Date().toISOString()} (${f.terms})\n${text}`, { mode: 0o600 });
-        renameSync(`${p}.tmp`, p);
-        console.log(`${f.name}: ${n} entries (${f.what})`);
-      } catch (e) { failed++; console.error(`${f.name}: not updated (${(e as Error).message ?? e})`); }
+    const quiet = a.includes("--quiet"); // how the background refresh runs it: nothing to print to
+    const outcomes = await updateBlocklists(dir);
+    for (const f of outcomes) {
+      if (quiet) continue;
+      if (f.error) console.error(`${f.name}: not updated (${f.error})`);
+      else console.log(`${f.name}: ${f.entries} entries (${f.what})`);
     }
-    if (failed) process.exitCode = 1;
+    if (outcomes.some((f) => f.error)) process.exitCode = 1;
     return;
   }
   const b = Blocklist.load(dir);
@@ -367,8 +385,11 @@ async function blocklistCommand(a: string[]) {
     if (hit) process.exitCode = 1;
     return;
   }
-  if (!b.size) { console.log(`no blocklists in ${dir}\nrun: ingress blocklist update`); return; }
-  console.log(`${b.size} entries in ${dir}\n${b.sources.map((s) => `  ${s}`).join("\n")}`);
+  const auto = /^(off|0|false|no)$/i.test(process.env.INGRESS_BLOCKLIST_AUTO ?? "") ? "automatic refresh is off (INGRESS_BLOCKLIST_AUTO)" : "refreshed automatically once a day";
+  if (!b.size) { console.log(`no blocklists in ${dir}\nrun: ingress blocklist update (${auto})`); return; }
+  const at = blocklistsRefreshedAt(dir);
+  const when = at === undefined ? "the free lists have not been downloaded" : `last refreshed ${new Date(at).toISOString().slice(0, 16).replace("T", " ")} UTC (${Math.max(0, Math.round((Date.now() - at) / 3_600_000))} hours ago)`;
+  console.log(`${b.size} entries in ${dir}\n${b.sources.map((s) => `  ${s}`).join("\n")}\n${when}; ${auto}`);
 }
 
 /**

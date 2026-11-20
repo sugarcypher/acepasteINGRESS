@@ -23,6 +23,25 @@ be tested without the listed need), **not built** (with the reason).
 | 0.9.22 | 8 (follow-up) | Recordings in MCP tool results are transcribed and gated; a screenshot can be compared with the page's own text; stale README numbers corrected | done | Published state: 0.9.21 went to npm on 2026-11-18, 0.9.22 on 2026-11-19 |
 | 0.9.23 | 0 (follow-up) | Retrained n-gram classifier installed (ordinary text messages added to training); re-scored | done, with limits | Installed by the owner, not by the automated run. Ordinary texts refused 3 to 0 of 2,408; email attacks caught 89.4% to 89.6%; everything else unchanged. Both hold-outs were already used, so these are comparisons, not fresh measurements. Not changed: other languages (Turkish 3.3%) |
 | 0.9.24 | 2 (cloaking check, false alarm) | The cloaking check reads what the agent-only part says: instructions are hostile as before, a different page without them is suspect at most, and a bot challenge, block notice or error page served to either fetcher is `unreachable` or a recorded gap, not an attack | done, with limits | Found on the owner's public refusal log: a search results page refused as hostile because the site challenged the AI fetcher. After the fix that page is clean or unreachable, never refused (a development case, not a held-out one). Corpus and the 36 real pages unchanged. Not judged: a different page of false statements with no instruction in it (suspect, not hostile) |
+| 0.9.25 | gap closure 1 | Blocklists refresh themselves daily in a detached process (session-start hook, MCP proxy, local HTTP service); a hook question can be put to a person through a dialog and Touch ID (`INGRESS_HOOK_APPROVER=macos-presence`); a challenged fetch can fall back to the browser's copy (`INGRESS_CHALLENGED_FETCH=browser-view`, off by default) | done, with limits | The fallback was planned as the default and shipped as the operator's choice: it reads a page the site declined to give an AI fetcher. The approval prompt is tested with a stand-in; nobody has answered a real one. Corpus unchanged; 36 real pages 30 clean, 5 suspect, 1 network error on its site |
+
+## Gap closure (started 2026-11-19)
+
+After the roadmap, the owner asked for every remaining gap to be closed. The order, and where each stands:
+
+| # | milestone | status |
+|---|---|---|
+| 1 | Quick wins: blocklist self-refresh, challenged-fetch fallback, hook questions answered by a person | **done in 0.9.25**, with two limits: the fallback is opt-in (see the 0.9.25 row), and the real approval prompt has not been answered by anyone |
+| 2 | Multilingual learned pass (the n-gram classifier catches 3.3% of Turkish and 32.4% of mixed-language attacks) | lab work in progress on the lab drive; installing a model file into the repository is the owner's step, as in 0.9.23 |
+| 3 | Egress for programs the agent runs: a local destination-checking proxy plus an opt-in sandbox wrapper, as the substitute for the machine-wide filter that needs Apple's entitlement | not started |
+| 4 | Video (sampled frames, briefly shown frames, captions against the picture) and fake interface elements by appearance | not started |
+| 5 | Measurements on real attacks: pictures, audio, chat-native and scam texts, from sets whose licence can be checked | not started |
+| 6 | A notification reader for macOS, a mail route (IMAP proxy or mailbox scanner), offline sharing of refused-destination fingerprints | not started |
+| 7 | This Mac: a transcriber for recordings, the Touch ID approval tried by the owner | not started |
+
+Needs the owner, and cannot be closed from here: an AgentDojo score (a model API key and a budget), an official
+PINT score (only Lakera can produce one), the abuse.ch host lists (a free account key), a true machine-wide
+filter (Apple's Network Extension entitlement), and a new npm token after 2026-11-24.
 
 ## What was not built at all
 
@@ -43,7 +62,7 @@ Items that cannot be finished from this machine, and exactly what each needs. Fi
 | item | needs |
 |---|---|
 | Publishing to npm | Done from 0.9.21 on, with an access token the owner created for it (valid for a few days). After that: a new token, or two-factor approval with `npm publish -w packages/core && npm publish -w packages/mcp -w packages/http` run from the repository in a regular Terminal |
-| Turning the hooks on, on the author's Mac | Done on 2026-11-19 with the owner's yes: the service runs 0.9.22 and the six hooks of `integrations/claude-code` are in the Claude Code settings. Moving to a later version there is the owner's step again |
+| Turning the hooks on, on the author's Mac | Done on 2026-11-19 with the owner's yes: the six hooks of `integrations/claude-code` are in the Claude Code settings (replacing the one-off Python hook), and the service and the MCP proxy run the current published version. Moving to a later version: the owner allowed the assistant to run one locked script that installs a published version and restarts the service; the script itself can only be changed by the owner |
 | Phase 4, machine-wide egress | An Apple Developer ID with the Network Extension entitlement, and notarization |
 | An AgentDojo score (Phase 3 proof) | A model API key (Anthropic or OpenAI) and a budget for the runs; the suite drives a live model through its tasks |
 | Malware host lists from abuse.ch (URLhaus, ThreatFox) | A free abuse.ch account key; save the lists into `~/.acepaste-ingress/state/blocklists/` |
@@ -51,6 +70,7 @@ Items that cannot be finished from this machine, and exactly what each needs. Fi
 | A score on real image attacks | A set of image-injection attacks someone is entitled to share; none was found that could be checked without reading the attacks |
 | Installing a retrained classifier | Done in 0.9.23: the owner ran the trainer with its output in the repository and the tests. The same holds for the next one: `python tools/classifier/train.py <work> --out packages/core/src/classifier-model.ts`, then `npm test` (the parity test checks it) and re-scoring. The automated run was not permitted to overwrite the model file, which is a fair line: a generated 0.7 MB file that changes what a security gate refuses should be put there by someone who can be asked why |
 | Transcribing audio on this Mac | A Python environment with `torch transformers scipy numpy` and `INGRESS_AUDIO_TRANSCRIBER` pointing at `tools/audio/transcribe.py` (one exists on the lab drive). A native transcriber on Apple's speech framework would need you to grant Speech Recognition permission when it first runs |
-| Trying the presence approval | You: `ingress presence build`, set `INGRESS_APPROVER=macos-presence` for the MCP server, and approve one action with your finger. It was compiled and checked here, never answered |
+| Trying the presence approval | You: `ingress presence build`, set `INGRESS_APPROVER=macos-presence` for the MCP server or `INGRESS_HOOK_APPROVER=macos-presence` for the Claude Code hooks (0.9.25), and approve one action with your finger. It was compiled and checked here, never answered |
 | An official PINT score | Only Lakera can produce one: email `opensource@lakera.ai` with `tools/pint/ingress_pint.py`, or request the dataset for research from `support@lakera.ai` |
-| Turning the hooks on | They ship in the repo only. To use them: publish, `npm install -g @acepaste/ingress`, and merge `integrations/claude-code/settings.example.json` into `~/.claude/settings.json` (replacing the `ingress-route` Python hook there) |
+| Turning the hooks on, on any other machine | They are in the published package since 0.9.21: `npm install -g @acepaste/ingress`, then merge `integrations/claude-code/settings.example.json` into `~/.claude/settings.json` (see `integrations/claude-code/README.md`) |
+| Publishing after 2026-11-24 | The access token the owner created expires then: a new token, or the two-factor route in the first row |

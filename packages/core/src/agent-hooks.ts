@@ -27,7 +27,7 @@ import { execFileSync } from "node:child_process";
 import { join } from "node:path";
 import { stateDir } from "./changes.js";
 import { stopReason, canaryNotice, type BurstPolicy } from "./safeguards.js";
-import { ActionBroker, type SerializedRun } from "./broker.js";
+import { ActionBroker, type SerializedRun, type ApprovalRequest, type Approver } from "./broker.js";
 import { Blocklist } from "./egress.js";
 import { scanCharacters } from "./character.js";
 import { shellOutputSource, shellWrites, shellUploads } from "./shell-commands.js";
@@ -462,6 +462,44 @@ export interface EgressHookOptions extends HookOptions {
 }
 
 export function preToolUse(event: Json, o: EgressHookOptions = {}): Json | undefined {
+  return decideEgress(event, o)?.reply;
+}
+
+/**
+ * The same decision, with every "ask" put to a person through `approver` before the hook answers
+ * (INGRESS_HOOK_APPROVER=macos-presence). The harness's "ask" is a prompt the harness may answer for the
+ * person: a mode that approves prompts automatically turns it into "allow". With an approver, the question
+ * goes to a channel the model cannot drive (the exact action in a system dialog, then Touch ID or the login
+ * password), and only then does the hook answer:
+ *   approved   nothing. The harness's own permission flow carries on as if this hook had no opinion.
+ *              The hook never says "allow": a person's yes to this question is not a yes to the harness's.
+ *   anything else (declined, nobody answered, the approver could not run)   "deny", with the reason.
+ * The outcome is appended to the egress log beside the question (never the arguments).
+ *
+ * `answerWithinMs`: the hook answers "deny" itself when the person has not answered by then. It must be shorter
+ * than the timeout the harness gives the hook: a hook the harness has to kill has said nothing, and the
+ * harness would carry on without it.
+ */
+export async function preToolUseAnswered(event: Json, approver: Approver, o: EgressHookOptions & { answerWithinMs?: number } = {}): Promise<Json | undefined> {
+  const d = decideEgress(event, o);
+  if (!d?.ask) return d?.reply;
+  let answer: "approved" | "denied" | "timeout" | "unavailable";
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    const asked = approver.request(d.ask);
+    answer = o.answerWithinMs === undefined ? await asked : await Promise.race([asked, new Promise<"timeout">((resolve) => { timer = setTimeout(() => resolve("timeout"), o.answerWithinMs); })]);
+  } catch { answer = "unavailable"; }
+  finally { if (timer) clearTimeout(timer); }
+  if (answer !== "approved" && answer !== "denied" && answer !== "timeout") answer = "unavailable";
+  try {
+    appendFileSync(join(d.dir, "egress-log.jsonl"), JSON.stringify({ at: new Date(o.now?.() ?? Date.now()).toISOString(), session: d.ask.runId, tool: d.ask.tool, decision: "ask", answer, approver: approver.name, action: d.ask.digest }) + "\n", { mode: 0o600 });
+  } catch { /* the answer stands whether or not it could be recorded */ }
+  if (answer === "approved") return undefined;
+  const how = answer === "denied" ? "A person at this machine was asked and declined" : answer === "timeout" ? "A person at this machine was asked and did not answer" : `It needs a person at this machine to confirm it, and the approval prompt (${approver.name}) could not be shown`;
+  return { hookSpecificOutput: { hookEventName: "PreToolUse", permissionDecision: "deny", permissionDecisionReason: `AcePaste Ingress: ${d.ask.reasons.join("; ")}. ${how}. This is refused; do not try another route. Tell the person what you wanted to do.` } };
+}
+
+function decideEgress(event: Json, o: EgressHookOptions): { reply: Json | undefined; ask?: ApprovalRequest; dir: string } | undefined {
   const name = String(event.tool_name ?? "");
   const action = asAction(name, (event.tool_input ?? {}) as Json);
   const session = String(event.session_id ?? "");
@@ -487,10 +525,14 @@ export function preToolUse(event: Json, o: EgressHookOptions = {}): Json | undef
     } catch { /* the decision stands whether or not it could be recorded */ }
   }
   const say = (permissionDecision: "ask" | "deny") => ({ hookSpecificOutput: { hookEventName: "PreToolUse", permissionDecision, permissionDecisionReason: `AcePaste Ingress: ${c.reasons.join("; ")}.${permissionDecision === "deny" ? " This is refused, not a question; do not try another route. Tell the person what you wanted to do." : ""}` } });
-  if (c.decision === "deny") return say("deny");
+  if (c.decision === "deny") return { reply: say("deny"), dir };
   // counted as having run: if the person declines at the prompt the count is one too high, which errs toward asking
-  try { broker.noteRan({ runId: session, tool: action.tool, args: action.args }); saveRun(dir, session, broker.exportRun(session)); } catch { /* best effort */ }
-  return c.decision === "require_approval" ? say("ask") : undefined;
+  let sources: string[] = [];
+  try { broker.noteRan({ runId: session, tool: action.tool, args: action.args }); const run = broker.exportRun(session); sources = run.sources; saveRun(dir, session, run); } catch { /* best effort */ }
+  if (c.decision !== "require_approval") return { reply: undefined, dir };
+  // what a person would be shown if the question goes to them directly: the harness's tool name and exactly what will run
+  const ask: ApprovalRequest = { id: c.digest.slice(0, 16), runId: session, tool: name, canonicalArgs: c.canonicalArgs, digest: c.digest, reasons: c.reasons, destinations: c.destinations, fields: c.fields, sources, createdAt: o.now?.() ?? Date.now(), expiresAt: (o.now?.() ?? Date.now()) + 300_000 };
+  return { reply: say("ask"), ask, dir };
 }
 
 // ---------- a gate that talks to the local service ----------

@@ -4,6 +4,56 @@ Every change bumps the patch version of all three packages. The ruleset id chang
 behavior changes; receipts carry it so verdicts are reproducible. Releases up to 0.9.6 are in the
 [README](README.md#changes-in-096-2026-11-18-ruleset-20261118-3-unchanged).
 
+## 0.9.25 (2026-11-19, ruleset 2026.11.19-3)
+
+Gap closure, milestone 1 (the plan is in `docs/ROADMAP-LOG.md`): three places where the gate was installed
+but weaker than it looked.
+
+- **The blocklists keep themselves current.** `ingress blocklist update` had to be run by hand, so a newly
+  installed gate had an empty list (the author's Mac did when its hooks were first turned on). Now the free lists are downloaded when
+  none exists and again when the newest copy is more than a day old. The session-start hook, the MCP proxy
+  and the HTTP service (on a loopback bind; it looks again every six hours) start the same update command as
+  a separate, detached process and carry on: no hook reply waits for it and no tool call can fail because of
+  it. A lock file created exclusively lets one of several sessions start it, and holds off a retry for an
+  hour. A download that does not parse as a list still leaves the previous copy in place. Only the three feed
+  addresses are contacted. `ingress blocklist` says when the lists were last refreshed;
+  `INGRESS_BLOCKLIST_AUTO=off` turns the automatic refresh off. Measured once on this machine in a throwaway
+  state folder: the hook replied in 0.35 seconds and the three lists (2,342 entries) were there two seconds later.
+- **A hook question that a person must answer** (`INGRESS_HOOK_APPROVER=macos-presence`). The egress hook's
+  "ask" goes to the harness's permission prompt, and a mode that approves prompts automatically answers it for
+  the person. With the approver set, a question is shown in a macOS dialog with the exact action and the
+  reason, then confirmed with Touch ID or the login password, before the hook answers. Approved: the hook
+  says nothing and the harness's own permission flow carries on (it never says "allow"). Declined, not
+  answered, or unable to ask (not macOS, helper not built, an unknown approver name): "deny" with the reason.
+  The hook answers by its own deadline (`INGRESS_HOOK_APPROVER_SECONDS`, default 120) because a hook the
+  harness has to kill counts as no answer; `settings.example.json` now gives the hook 180 seconds. Each
+  answer is appended to the egress log beside its question, never with the arguments.
+  `INGRESS_HOOK_APPROVER=deny` refuses every question without asking.
+- **A challenged fetch can fall back to the browser's copy, if you choose** (`INGRESS_CHALLENGED_FETCH=browser-view`,
+  or `challengedFetch` in the config or policy file; **off by default**). Since 0.9.24 a page whose site gives
+  the AI fetcher a bot challenge, a block notice or an error is `unreachable`. With the option on, when the
+  browser-fingerprint fetch of the same address got a real page, that copy is judged by every pass and
+  delivered, with the weightless note `acquire.browser_view_used` saying which copy it is. Its redirect chain
+  goes through the same policy checks; the cloaking pass does not run (there is nothing to compare with); a
+  browser copy that is itself a stand-in, or empty, is still `unreachable`. A page that instructs only the AI
+  fetcher is refused as cloaking before the fallback is considered.
+
+  It was planned as the default and shipped as a choice. Delivering that copy means reading a page the site
+  declined to give an AI fetcher, by presenting as a browser. The gate already makes that second fetch, but
+  only to compare; handing its result to the agent is a different act, and for some sites it is one their
+  terms do not permit. That decision belongs to whoever runs the gate.
+
+Measured: corpus 90/90, 48/48, 3/3, unchanged. The 36 real pages: 30 clean, 5 suspect, 1 unreachable; the
+unreachable one is a network error on its site today (the installed 0.9.24 gets the same), not a verdict
+change. The search page that prompted 0.9.24, fetched three times each way: clean every time, once through
+the fallback with the note on the receipt.
+
+Not tested: the real approval prompt. The dialog and the Touch ID sheet cannot be answered by a program, so
+the approver path is tested with a stand-in and the command line's refusals with no helper present. Someone
+at the machine should answer one question before relying on it.
+
+Tests: core 392 pass (11 new), proxy 8.
+
 ## 0.9.24 (2026-11-19, ruleset 2026.11.19-2)
 
 A different page is not yet an attack: the cloaking check now reads what the difference says.

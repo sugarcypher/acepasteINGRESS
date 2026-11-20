@@ -3,7 +3,7 @@
     "PreToolUse": [
       {
         "matcher": "Bash|Write|Edit|MultiEdit|NotebookEdit|WebFetch|mcp__.*",
-        "hooks": [{ "type": "command", "command": "ingress hook pre-tool-use", "timeout": 15 }]
+        "hooks": [{ "type": "command", "command": "ingress hook pre-tool-use", "timeout": 180 }]
       }
     ],
     "PostToolUse": [
