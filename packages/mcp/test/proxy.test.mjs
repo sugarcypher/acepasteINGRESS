@@ -150,6 +150,40 @@ test("a recording in a tool result is gated: withheld when it cannot be transcri
   } finally { await c.close(); }
 });
 
+test("a video in a tool result is gated: withheld when its frames cannot be read or show something hostile, handed on with what it shows when clean", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "ingress-proxy-"));
+  // no helper on this machine (the test's state folder has none): the text is delivered, the video is withheld, and the result says why
+  let c = await proxy(dir, "clean");
+  try {
+    const res = await c.callTool({ name: "fake__clip", arguments: {} });
+    assert.match(textOf(res), /One new screen recording/);
+    assert.match(textOf(res), /video 1 withheld \(its frames could not be read: /);
+    assert.equal(res.content.filter((x) => x.type === "resource").length, 0);
+    assert.deepEqual(res.structuredContent.video, { received: 1, withheld: 1 });
+    assert.equal(res.structuredContent.coverage, undefined, "a video is no longer an uninspected part");
+  } finally { await c.close(); }
+  // with the helper built (macOS): an ordinary clip is handed on with the text it shows; one with two frames of
+  // instructions between ordinary pictures is withheld
+  const helper = join(here, "..", "..", "core", ".build", "ingress-vision");
+  if (process.platform !== "darwin" || !existsSync(helper)) return;
+  const made = spawnSync(helper, ["--make-fixtures", join(dir, "clips")], { timeout: 180_000 });
+  if (made.status !== 0 || !existsSync(join(dir, "clips", "video-plain.mp4"))) return; // a helper built before video support
+  c = await proxy(dir, "clean", {}, { FAKE_VIDEO: join(dir, "clips", "video-plain.mp4") }, { INGRESS_VISION_HELPER: helper, INGRESS_AUDIO_TRANSCRIBER: "" });
+  try {
+    const res = await c.callTool({ name: "fake__clip", arguments: {} });
+    assert.equal(res.content.filter((x) => x.type === "resource").length, 1, textOf(res));
+    assert.match(textOf(res), /Quarterly results/);
+    assert.deepEqual(res.structuredContent.video, { received: 1, withheld: 0 });
+  } finally { await c.close(); }
+  c = await proxy(dir, "clean", {}, { FAKE_VIDEO: join(dir, "clips", "video-brief-frames.mp4") }, { INGRESS_VISION_HELPER: helper, INGRESS_AUDIO_TRANSCRIBER: "" });
+  try {
+    const res = await c.callTool({ name: "fake__clip", arguments: {} });
+    assert.match(textOf(res), /video 1 withheld \((?:suspect|hostile): [^)]*video\.brief_frame_text/);
+    assert.equal(res.content.filter((x) => x.type === "resource").length, 0);
+    assert.ok(!textOf(res).includes("saved passwords"), "what the hidden frames say is not passed on");
+  } finally { await c.close(); }
+});
+
 test("the run's marker rides with delivered content, and an action that carries it out is refused", async () => {
   const dir = mkdtempSync(join(tmpdir(), "ingress-proxy-"));
   const c = await proxy(dir, "clean");

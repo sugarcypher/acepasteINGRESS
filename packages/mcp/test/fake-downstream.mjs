@@ -7,6 +7,7 @@ import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { ListToolsRequestSchema, CallToolRequestSchema } from "@modelcontextprotocol/sdk/types.js";
 import { deflateSync } from "node:zlib";
+import { readFileSync } from "node:fs";
 
 const mode = process.env.FAKE_MODE ?? "clean";
 const num = { type: "object", properties: { a: { type: "number" }, b: { type: "number" } }, required: ["a", "b"] };
@@ -62,6 +63,11 @@ const recording = () => {
   return Buffer.concat([head, body]).toString("base64");
 };
 
+// a clip tool: a line of text and a video, which the protocol carries as an embedded resource. FAKE_VIDEO names
+// a real file; without it the bytes only look like an MP4 from their first box.
+tools.push({ name: "clip", description: "Fetch the newest screen recording.", inputSchema: { type: "object", properties: {} } });
+const clip = () => (process.env.FAKE_VIDEO ? readFileSync(process.env.FAKE_VIDEO) : Buffer.concat([Buffer.from("\x00\x00\x00\x18ftypmp42\x00\x00\x00\x00mp42isom", "latin1"), Buffer.alloc(64)])).toString("base64");
+
 const server = new Server({ name: "fake-downstream", version: "0.0.0" }, { capabilities: { tools: {} } });
 server.setRequestHandler(ListToolsRequestSchema, async () => ({ tools }));
 server.setRequestHandler(CallToolRequestSchema, async (req) => {
@@ -70,6 +76,7 @@ server.setRequestHandler(CallToolRequestSchema, async (req) => {
   if (req.params.name === "add") return { content: [{ type: "text", text: String(Number(a.a) + Number(a.b)) }] };
   if (req.params.name === "list_messages") return { content: [{ type: "text", text: inbox() }] };
   if (req.params.name === "voicemail") return { content: [{ type: "text", text: "One new voicemail, 12 seconds." }, { type: "audio", data: recording(), mimeType: "audio/wav" }] };
+  if (req.params.name === "clip") return { content: [{ type: "text", text: "One new screen recording, 2 seconds." }, { type: "resource", resource: { uri: "file:///recordings/latest.mp4", mimeType: "video/mp4", blob: clip() } }] };
   if (req.params.name === "chart") return { content: [{ type: "text", text: "Sales chart for the third quarter." }, { type: "image", data: picture(), mimeType: "image/png" }] };
   return { content: [{ type: "text", text: "uploaded" }] };
 });

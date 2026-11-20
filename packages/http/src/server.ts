@@ -6,7 +6,12 @@
  *   POST /v1/scan    { content, source?, contentType?, override?,
  *                      kind?, trust?, channel?, sender? }         -> IngressResult   (kind: the channel, e.g. "log"; trust: 1-6)
  *   POST /v1/scan-image { image (base64), caption?, source?,
- *                      override?, trust?, channel?, sender? }     -> IngressResult   (coverage.image says whether the pixels were read)
+ *                      override?, trust?, channel?, sender?,
+ *                      capture?, pageHost? }                      -> IngressResult   (coverage.image says whether the pixels were read;
+ *                                                                    capture: "viewport" for a capture of a page's content area)
+ *   POST /v1/scan-video { video (base64, up to about 45 MB), captions?,
+ *                      source?, override?, trust?, channel?,
+ *                      sender?, maxSeconds?, maxFrames? }         -> IngressResult   (coverage.video says how much was read)
  *   POST /v1/verify  { receipt }                                 -> { digestOk, signatureOk, signatureAlg, keyId }
  *   GET  /v1/feed                 recent non-clean verdicts, anonymized (public)
  *   GET  /v1/receipts             the caller's own receipts, searchable (audit plane)
@@ -44,6 +49,8 @@ import { JsonlReceiptStore, toStored, type ReceiptStore } from "./store.js";
 const env = process.env;
 const PORT = Number(env.PORT ?? 8787);
 const MAX_BODY = 6 * 1024 * 1024;
+/** POST /v1/scan-video carries the file as base64: about 45 MB of video */
+const MAX_VIDEO_BODY = 64 * 1024 * 1024;
 const PUBLIC_DIR = join(dirname(fileURLToPath(import.meta.url)), "..", "public");
 
 // ---------- config ----------
@@ -188,9 +195,9 @@ function sendFile(res: ServerResponse, name: string) {
   res.writeHead(200, { "content-type": "text/html; charset=utf-8", "content-length": body.length, "cache-control": "public, max-age=60", "x-content-type-options": "nosniff" });
   res.end(body);
 }
-async function readJson(req: IncomingMessage): Promise<any> {
+async function readJson(req: IncomingMessage, limit: number = MAX_BODY): Promise<any> {
   const chunks: Buffer[] = []; let total = 0;
-  for await (const c of req) { total += (c as Buffer).length; if (total > MAX_BODY) throw new Error("body too large"); chunks.push(c as Buffer); }
+  for await (const c of req) { total += (c as Buffer).length; if (total > limit) throw new Error("body too large"); chunks.push(c as Buffer); }
   const text = Buffer.concat(chunks).toString("utf8");
   return text ? JSON.parse(text) : {};
 }
@@ -306,7 +313,8 @@ const server = createServer(async (req, res) => {
     // scan / fetch consume the quota
     const m = meter.take(a.key, a.info);
     if (!m.ok) return send(res, 429, { error: m.reason }, { "retry-after": String(m.retryAfter) });
-    const body = await readJson(req);
+    // a video is the one body that is routinely larger than a page: its own, higher limit, on its own route only
+    const body = await readJson(req, path === "/v1/scan-video" ? MAX_VIDEO_BODY : MAX_BODY);
 
     if (path === "/v1/fetch") {
       if (typeof body.url !== "string") return send(res, 400, { error: "url required" });
@@ -329,9 +337,25 @@ const server = createServer(async (req, res) => {
       // vision helper on the machine this service runs on (macOS); elsewhere the file's metadata and structure are
       // checked and the result's coverage says the picture itself was not read.
       if (typeof body.image !== "string" || !body.image) return send(res, 400, { error: "image (base64) required" });
-      const r = await engine.scanImage(Buffer.from(body.image, "base64"), { url: typeof body.source === "string" ? body.source : undefined, caption: typeof body.caption === "string" ? body.caption.slice(0, 2000) : undefined, override: body.override === true, quarantined: quarantinedFor(a.info.name, typeof body.source === "string" ? body.source : undefined), source: parseScanHints(body).source });
+      const r = await engine.scanImage(Buffer.from(body.image, "base64"), { url: typeof body.source === "string" ? body.source : undefined, caption: typeof body.caption === "string" ? body.caption.slice(0, 2000) : undefined, override: body.override === true, quarantined: quarantinedFor(a.info.name, typeof body.source === "string" ? body.source : undefined), source: parseScanHints(body).source,
+        // capture: "viewport" says the picture is a capture of a page's content area (a browser tool's screenshot); pageHost: the site that page is on
+        screen: body.capture === "viewport" || body.capture === "window" ? { capture: body.capture, pageHost: typeof body.pageHost === "string" ? body.pageHost.slice(0, 253) : undefined } : undefined });
       record(a.info.name, r);
       log({ event: "ingress.usage", key: a.info.name, op: "scan-image", tier: r.tier, ms: Date.now() - started, usage: meter.usage(a.key) });
+      return send(res, r.tier === "clean" || r.overridden ? 200 : 422, r);
+    }
+    if (path === "/v1/scan-video") {
+      // { video: base64, captions?, source?, override?, trust?, channel?, sender?, maxSeconds?, maxFrames? }. Reading the
+      // frames needs the vision helper on the machine this service runs on (macOS); elsewhere the result's
+      // coverage says the frames were not read. coverage.video says how much of the video was read.
+      if (typeof body.video !== "string" || !body.video) return send(res, 400, { error: "video (base64) required" });
+      const r = await engine.scanVideo(Buffer.from(body.video, "base64"), {
+        url: typeof body.source === "string" ? body.source : undefined, captions: typeof body.captions === "string" ? body.captions.slice(0, 2_000_000) : undefined, override: body.override === true,
+        quarantined: quarantinedFor(a.info.name, typeof body.source === "string" ? body.source : undefined), source: parseScanHints(body).source,
+        maxSeconds: typeof body.maxSeconds === "number" ? body.maxSeconds : undefined, maxFrames: typeof body.maxFrames === "number" ? body.maxFrames : undefined,
+      });
+      record(a.info.name, r);
+      log({ event: "ingress.usage", key: a.info.name, op: "scan-video", tier: r.tier, ms: Date.now() - started, usage: meter.usage(a.key) });
       return send(res, r.tier === "clean" || r.overridden ? 200 : 422, r);
     }
     return send(res, 404, { error: "not found" });

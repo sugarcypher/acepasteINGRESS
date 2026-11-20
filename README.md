@@ -39,7 +39,7 @@ Against the bundled corpus (`npm run eval`): **90/90 attacks refused** (70 outri
 
 The corpus covers: Unicode tag characters, zero-width binary channels, bidi overrides, variation-selector and entity smuggling, full-width/mathematical/homoglyph look-alikes across seven scripts, base64 (short, split, chunked), base32, hex, octal, quoted-printable, percent-encoding; CSS hiding by `display`/`visibility`/`opacity`/`clip-path`/`transform`/`scale`/`translate`/`inset`/`font` shorthand/custom-property indirection/off-screen offsets; collapsed `details`, `noscript`, `iframe srcdoc`, SVG text, `title`/`alt`/`meta` carriers; role tokens for six model families, tool-call shapes, EchoLeak images, webhook exfiltration; paraphrased, spaced, dotted, leet, reversed, and rot13 instructions; agent-targeted cloaking and webdriver-keyed render divergence; credential-stealing install scripts, pipe-to-shell commands hidden or base64-encoded, npx-from-URL in markdown comments, environment variables piped to a remote host. Benign cases include multilingual text (Persian, Arabic, Hebrew, Hindi, CJK, Coptic), emoji ZWJ sequences, legitimate accessibility markup, analytics snippets, minified bundles, security articles, fiction, runbooks, support macros, API JSON, ordinary package manifests, native-module install scripts, and the rustup and Homebrew install lines.
 
-## Beyond web pages (0.9.7 to 0.9.21)
+## Beyond web pages (0.9.7 to 0.9.27)
 
 The same question, asked of every channel an agent reads: what does the machine get that a person was not
 shown? Each row has its own measurements and its own stated limits; the full record, release by release, is
@@ -54,6 +54,8 @@ in [`CHANGELOG.md`](CHANGELOG.md), and what was planned against what was built i
 | Notifications | payload fields a banner does not show; an alarm in the system's voice sent by a website | `messages.ts` |
 | Images and QR codes | text that appears only after resizing, too faint to see, under transparency, in later frames, in metadata; what following a code would do | `image.ts`, [`docs/IMAGES.md`](docs/IMAGES.md) |
 | Captions, transcripts, audio | cues nobody can read, captions nobody said, speaking to the notetaker, speech too quiet to hear | `captions.ts`, `audio.ts`, [`docs/AUDIO-CAPTIONS.md`](docs/AUDIO-CAPTIONS.md) |
+| Video | text and codes on screen for a fraction of a second, subtitle tracks, the file's tags, the sound; how many frames were read and how many were not | `video.ts`, `ingress --video <file>`, [`docs/VIDEO.md`](docs/VIDEO.md) |
+| Screens | a browser window or a system dialog drawn inside a page, when the picture is known to be a capture of the page's content area | `screen.ts`, [`docs/IMAGES.md`](docs/IMAGES.md) |
 | Terminal output and logs | control codes that hide text or act on the machine; streaming with cut and retract | `terminal.ts`, `stream.ts` |
 | Nearby devices | Bonjour, Bluetooth and printer names as lowest-trust content; lookalikes of devices you know | `nearby.ts`, `ingress nearby` |
 | Shortcuts | reads private data + takes outside input + can send out; code it runs | `shortcuts.ts`, `ingress shortcut <file>` |

@@ -159,7 +159,14 @@ and every setting: [`docs/EGRESS.md`](../../docs/EGRESS.md).
 - Pictures the agent reads from disk, and pictures in MCP results, are gated (0.9.18; see `docs/IMAGES.md`):
   both the file as it is and the resized copy the harness hands the model. A refused picture is replaced by a
   blank one with the reason beside it. Reading pixels needs the vision helper (`ingress vision build`, macOS);
-  without it pictures pass, and the model is told they were not checked. Audio is not inspected.
+  without it pictures pass, and the model is told they were not checked. Audio and video are not inspected by
+  these hooks: the harness does not hand either to a hook as content. The MCP proxy gates recordings (0.9.22)
+  and videos (0.9.27) in tool results, and `ingress --video <file>` gates a file (`docs/VIDEO.md`).
+- A screenshot from a browser tool is a capture of the page's content area, where real browser chrome never
+  appears. The hooks cannot know which pictures are such captures, so the check for a browser window or a
+  system dialog drawn into a page (0.9.27, `docs/IMAGES.md`) runs only where the caller says so: the MCP
+  proxy's `"screens": "viewport"` setting for a server or tool, `ingress --image <file> --capture=viewport`,
+  or `capture` in `POST /v1/scan-image`.
 - The egress gate reads the command, not the program. `python upload.py` sends whatever the script sends; a
   command that hides its destination in a variable or a file is judged without it. The egress proxy (below,
   0.9.26, off by default) checks where such a program actually connects, and `ingress run` confines one

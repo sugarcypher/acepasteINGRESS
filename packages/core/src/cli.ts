@@ -112,12 +112,29 @@ async function main() {
     if (r.tier !== "clean") process.exitCode = 1;
     return;
   }
+  // ingress --video <file>: gate a video (text and codes on screen and how long they are shown, subtitle tracks, tags, sound)
+  if (flag("video")) {
+    const file = args.find((x) => !x.startsWith("--"));
+    if (!file) { console.error("usage: ingress --video <file> [--json] [--captions=file.vtt] [--max-seconds=600] [--max-frames=240]"); process.exit(2); }
+    const engine = new IngressEngine({ ...(opt("policy") ? loadPolicyFile(opt("policy")!) : {}), sandbox: "off" });
+    const r = await engine.scanVideo(readFileSync(file), { url: `file:${file}`, captions: opt("captions") ? readFileSync(opt("captions")!, "utf8") : undefined, maxSeconds: opt("max-seconds") ? Number(opt("max-seconds")) : undefined, maxFrames: opt("max-frames") ? Number(opt("max-frames")) : undefined, override: flag("override") });
+    if (flag("json")) console.log(JSON.stringify(r, null, 2));
+    else {
+      console.log(r.envelope);
+      const c = r.coverage?.video;
+      if (c && !c.frames) console.error(`\nnote: the video's frames were not read (${c.framesReason}).`);
+      else if (c) console.error(`\ncoverage: ${Math.round(c.examinedSeconds ?? 0)} of ${Math.round(c.seconds ?? 0)} seconds examined; ${c.framesRead} of ${c.framesTotal} frames read for text (${c.sampling}); sound ${c.audio}${c.audioReason ? ` (${c.audioReason})` : ""}; ${c.subtitleCues} caption cue(s)`);
+    }
+    if (r.tier !== "clean") process.exitCode = 1;
+    return;
+  }
   // ingress --image <file>: gate a picture (text in it, codes, what only a machine would read)
   if (flag("image")) {
     const file = args.find((x) => !x.startsWith("--"));
-    if (!file) { console.error("usage: ingress --image <file> [--json] [--caption=words shown beside it]"); process.exit(2); }
+    if (!file) { console.error("usage: ingress --image <file> [--json] [--caption=words shown beside it] [--capture=viewport [--page-host=example.com]]   (--capture=viewport: the picture is a capture of a page's content area, as a browser tool's screenshot is)"); process.exit(2); }
     const engine = new IngressEngine({ ...(opt("policy") ? loadPolicyFile(opt("policy")!) : {}), sandbox: "off" });
-    const r = await engine.scanImage(readFileSync(file), { url: `file:${file}`, caption: opt("caption"), override: flag("override") });
+    const capture = opt("capture");
+    const r = await engine.scanImage(readFileSync(file), { url: `file:${file}`, caption: opt("caption"), override: flag("override"), screen: capture === "viewport" || capture === "window" ? { capture, pageHost: opt("page-host") } : undefined });
     if (flag("json")) console.log(JSON.stringify(r, null, 2));
     else {
       console.log(r.envelope);
@@ -391,7 +408,8 @@ async function visionCommand(a: string[]) {
     if (problem) { console.error(problem); process.exit(1); }
     const dir = mkdtempSync(join(tmpdir(), "ingress-vision-selftest-"));
     try {
-      execFileSync(visionHelperPath(), ["--make-fixtures", dir], { timeout: 120_000 });
+      try { execFileSync(visionHelperPath(), ["--make-fixtures", dir], { timeout: 180_000 }); } catch { /* an older helper writes the pictures and not the clips; the checks below say what is missing */ }
+      if (!existsSync(join(dir, "video-plain.mp4")) || !existsSync(join(dir, "screen-drawn-window.png"))) { console.error("the vision helper on this machine was built by an earlier version and cannot write the video and screen tests (run: ingress vision build)"); process.exit(1); }
       const engine = new IngressEngine({ sandbox: "off" }, { log: () => {} });
       const expect: Record<string, { refused: boolean; kind?: string }> = {
         "plain.png": { refused: false }, "no-text.png": { refused: false }, "qr-link.png": { refused: false },
@@ -404,9 +422,36 @@ async function visionCommand(a: string[]) {
         const r = await engine.scanImage(readFileSync(join(dir, name)), { url: `selftest:${name}` });
         const ok = (r.tier !== "clean") === want.refused && (!want.kind || r.findings.some((f) => f.kind === want.kind));
         if (!ok) bad++;
-        console.log(`${ok ? "ok  " : "FAIL"} ${name.padEnd(20)} ${r.tier}${want.kind ? ` (${want.kind})` : ""}`);
+        console.log(`${ok ? "ok  " : "FAIL"} ${name.padEnd(24)} ${r.tier}${want.kind ? ` (${want.kind})` : ""}`);
       }
-      if (bad) { console.error(`${bad} of ${Object.keys(expect).length} checks failed on this machine`); process.exitCode = 1; }
+      // a browser window drawn into a page: counts only when the picture is known to be a capture of a page's content area
+      const drawn = readFileSync(join(dir, "screen-drawn-window.png"));
+      const screens: Array<[string, Uint8Array, Parameters<IngressEngine["scanImage"]>[1], boolean, string?]> = [
+        ["screen-drawn-window.png", drawn, { screen: { capture: "viewport", pageHost: "templates.example.org" } }, true, "image.drawn_browser_window"],
+        ["screen-drawn-window.png", drawn, {}, false],
+        ["screen-plain-form.png", readFileSync(join(dir, "screen-plain-form.png")), { screen: { capture: "viewport", pageHost: "templates.example.org" } }, false],
+      ];
+      for (const [name, bytes, o, refused, kind] of screens) {
+        const r = await engine.scanImage(bytes, { url: `selftest:${name}`, ...o });
+        const ok = (r.tier !== "clean") === refused && (!kind || r.findings.some((f) => f.kind === kind));
+        if (!ok) bad++;
+        console.log(`${ok ? "ok  " : "FAIL"} ${name.padEnd(24)} ${r.tier}${kind ? ` (${kind})` : ""}${o?.screen ? "" : "  [nothing said about how it was taken]"}`);
+      }
+      // clips: the same words are refused when shown for a fifteenth of a second, in a code, and in a cue nobody can read
+      const clips: Record<string, { refused: boolean; kind?: string }> = {
+        "video-plain.mp4": { refused: false }, "video-no-text.mp4": { refused: false },
+        "video-brief-frames.mp4": { refused: true, kind: "video.brief_frame_text" }, "video-code.mp4": { refused: true, kind: "image.code_payload" },
+        "video-subtitles.mov": { refused: true, kind: "captions.unreadable_cue" },
+      };
+      for (const [name, want] of Object.entries(clips)) {
+        const r = await engine.scanVideo(readFileSync(join(dir, name)), { url: `selftest:${name}`, transcriber: false });
+        const read = r.coverage?.video?.frames === true;
+        const ok = read && (r.tier !== "clean") === want.refused && (!want.kind || r.findings.some((f) => f.kind === want.kind));
+        if (!ok) bad++;
+        console.log(`${ok ? "ok  " : "FAIL"} ${name.padEnd(24)} ${r.tier}${want.kind ? ` (${want.kind})` : ""}${read ? "" : `  [frames not read: ${r.coverage?.video?.framesReason}]`}`);
+      }
+      const checks = Object.keys(expect).length + screens.length + Object.keys(clips).length;
+      if (bad) { console.error(`${bad} of ${checks} checks failed on this machine`); process.exitCode = 1; }
     } finally { try { rmSync(dir, { recursive: true, force: true }); } catch { /* temp folder */ } }
     return;
   }

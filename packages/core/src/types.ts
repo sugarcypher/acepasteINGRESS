@@ -7,9 +7,9 @@
 
 import type { NetPolicy } from "./netpolicy.js";
 
-export const ENGINE_VERSION = "0.9.26";
+export const ENGINE_VERSION = "0.9.27";
 /** bump whenever a detector's behavior changes; receipts carry it so verdicts are reproducible */
-export const RULESET_VERSION = "2026.11.19-3";
+export const RULESET_VERSION = "2026.11.20-1";
 
 /**
  * clean: delivered. suspect: refused, overridable. hostile: refused, not overridable.
@@ -22,7 +22,7 @@ export type Tier = "clean" | "suspect" | "hostile" | "unreachable";
  * What the content is. The first five are document formats; the rest are channels, each with its own adapter
  * that turns the channel's structure into segments the passes read (see docs/ROADMAP.md, shared foundations).
  */
-export type ContentKind = "html" | "markdown" | "json" | "text" | "javascript" | "log" | "email" | "calendar" | "message" | "notification" | "nearby" | "automation" | "captions" | "image" | "audio";
+export type ContentKind = "html" | "markdown" | "json" | "text" | "javascript" | "log" | "email" | "calendar" | "message" | "notification" | "nearby" | "automation" | "captions" | "image" | "audio" | "video";
 
 /**
  * Who could have written the content. Lower is more trusted. It never makes a verdict more lenient than the
@@ -43,7 +43,7 @@ export interface SourceInfo {
   trust?: TrustLevel;
 }
 
-export const CONTENT_KINDS: readonly ContentKind[] = ["html", "markdown", "json", "text", "javascript", "log", "email", "calendar", "message", "notification", "nearby", "automation", "captions", "image", "audio"];
+export const CONTENT_KINDS: readonly ContentKind[] = ["html", "markdown", "json", "text", "javascript", "log", "email", "calendar", "message", "notification", "nearby", "automation", "captions", "image", "audio", "video"];
 
 /** Read a content kind and source from untyped input (an HTTP body, tool arguments). Unknown values are dropped, never guessed. */
 export function parseScanHints(o: { kind?: unknown; trust?: unknown; channel?: unknown; sender?: unknown }): { kind?: ContentKind; source?: SourceInfo } {
@@ -155,6 +155,13 @@ export type FindingKind =
   | "image.code_action"
   | "image.caption_mismatch"
   | "image.pixels_not_inspected"
+  | "image.drawn_browser_window"
+  | "image.drawn_system_dialog"
+  // channel structure: video
+  | "video.brief_frame_text"
+  | "video.metadata_text"
+  | "video.frames_not_read"
+  | "video.partly_read"
   // learned pass
   | "classifier.injection_likely"
   // script pass
@@ -340,7 +347,7 @@ export interface IngressResult {
   /** timing in milliseconds per pass, for the speed budget */
   timings: Partial<Record<PassName | "total", number>>;
   /** what was inspected, and what was not (code languages, units skipped). Unknown is not clean. */
-  coverage?: { code?: import("./codepass.js").CodeCoverage; image?: import("./image.js").ImageCoverage; audio?: import("./audio.js").AudioCoverage };
+  coverage?: { code?: import("./codepass.js").CodeCoverage; image?: import("./image.js").ImageCoverage; audio?: import("./audio.js").AudioCoverage; video?: import("./video.js").VideoCoverage };
 }
 
 export interface IngressConfig {
