@@ -26,7 +26,7 @@ export { adaptEmail, parseEmail, looksLikeEmailJson, looksLikeRawEmail } from ".
 export type { EmailPart } from "./email.js";
 export { adaptCalendar, parseIcs, looksLikeCalendarJson } from "./calendar.js";
 export { passagesOnlyIn } from "./served.js";
-export { classifyText, scanClassifier, classifierInfo } from "./classifier.js";
+export { classifyText, scanClassifier, classifierInfo, withoutProtectiveNotices } from "./classifier.js";
 export { CLASSIFIER_MODEL } from "./classifier-model.js";
 export { shellTokens, shellInvocations, shellOutputSource, shellWrites, shellUploads } from "./shell-commands.js";
 export { inspectImage, helperRunner, visionHelperPath, visionHelperProblem, visionHelperSource, buildVisionHelper, buildNativeHelper } from "./image.js";
@@ -52,7 +52,7 @@ export type { ShortcutSummary, ShortcutAction } from "./shortcuts.js";
 export { ProvenanceLedger, describeMark, downloadOrigin } from "./provenance.js";
 export type { ProvenanceMark } from "./provenance.js";
 export type { ShellGateOptions } from "./shell-commands.js";
-export { postToolUse, preToolUse, preToolUseAnswered, localPortProgram, userPromptSubmit, preCompact, postCompact, sessionStart, remoteGate, withheld, PASTE_OVERRIDE } from "./agent-hooks.js";
+export { postToolUse, preToolUse, preToolUseAnswered, localPortProgram, userPromptSubmit, preCompact, postCompact, sessionStart, remoteGate, withheld, PASTE_OVERRIDE, parseLabelSuspect, labelledServer, LABEL_SUSPECT_ENV, LABEL_SUSPECT_MARK } from "./agent-hooks.js";
 export type { HookGate, HookOptions, EgressHookOptions } from "./agent-hooks.js";
 export { oneTimeCodes, carriesCode, credentialsLeaving, hostsMentioned, Blocklist, BLOCKLIST_FEEDS, peripheralEgress, loopbackPorts, isForwarder, HomeCalls } from "./egress.js";
 export type { PeripheralEgress } from "./egress.js";

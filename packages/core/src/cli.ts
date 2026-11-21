@@ -21,7 +21,7 @@ import { trackAudit, confirmAuditArea, formatAuditChanges, AUDIT_NEEDS_CONFIRMAT
 import { confirmServerTools, describeServerTools } from "./tooldefs.js";
 import { BaselineStore } from "./changes.js";
 import { engageStop, clearStop, stopReason } from "./safeguards.js";
-import { postToolUse, preToolUse, preToolUseAnswered, egressProxyBefore, userPromptSubmit, preCompact, postCompact, sessionStart, remoteGate, type HookGate } from "./agent-hooks.js";
+import { postToolUse, preToolUse, preToolUseAnswered, egressProxyBefore, userPromptSubmit, preCompact, postCompact, sessionStart, remoteGate, parseLabelSuspect, LABEL_SUSPECT_ENV, type HookGate } from "./agent-hooks.js";
 import { startEgressProxy, egressProxyOptionsFromEnv, egressProxyOn, ensureEgressProxy, proxyHealth, proxySecret, sessionToken, sessionOfToken, proxyEnv, commandStart, connectionsSince, sandboxUsable, runSandboxed } from "./egress-proxy.js";
 import type { Approver } from "./broker.js";
 import { Blocklist } from "./egress.js";
@@ -372,7 +372,11 @@ async function hookCommand(event: string | undefined, stdin: string) {
         const since = commandStart(stateDir(), session, toolUseId);
         return since === undefined ? [] : connectionsSince(stateDir(), session, since - 250);
       };
-      return out(await postToolUse(input, gate, { ownPort, ...(proxyConnections ? { proxyConnections } : {}) }));
+      // INGRESS_HOOK_LABEL_SUSPECT: the developer setting. Tool servers a person named ("server" or
+      // "server__tool", comma-separated): a suspect result of theirs is delivered with a label, not withheld.
+      // Unset: every suspect result is withheld. Hostile is refused either way.
+      const labelSuspect = parseLabelSuspect(process.env[LABEL_SUSPECT_ENV]);
+      return out(await postToolUse(input, gate, { ownPort, ...(proxyConnections ? { proxyConnections } : {}), ...(labelSuspect.length ? { labelSuspect } : {}) }));
     }
     case "user-prompt-submit": return out(await userPromptSubmit(input, gate));
     case "pre-compact": process.stdout.write(preCompact() + "\n"); return;

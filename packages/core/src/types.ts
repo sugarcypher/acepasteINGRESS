@@ -7,9 +7,9 @@
 
 import type { NetPolicy } from "./netpolicy.js";
 
-export const ENGINE_VERSION = "0.9.27";
+export const ENGINE_VERSION = "0.9.28";
 /** bump whenever a detector's behavior changes; receipts carry it so verdicts are reproducible */
-export const RULESET_VERSION = "2026.11.20-1";
+export const RULESET_VERSION = "2026.11.21-1";
 
 /**
  * clean: delivered. suspect: refused, overridable. hostile: refused, not overridable.
@@ -164,6 +164,7 @@ export type FindingKind =
   | "video.partly_read"
   // learned pass
   | "classifier.injection_likely"
+  | "classifier.notice_set_aside"
   // script pass
   | "script.obfuscation"
   | "script.runtime_codegen"
