@@ -4,6 +4,59 @@ Every change bumps the patch version of all three packages. The ruleset id chang
 behavior changes; receipts carry it so verdicts are reproducible. Releases up to 0.9.6 are in the
 [README](README.md#changes-in-096-2026-11-18-ruleset-20261118-3-unchanged).
 
+## 0.9.29 (2026-11-21, ruleset 2026.11.21-2)
+
+The jailbreak personas by name: refused wherever they are named, and no longer mistaken for ordinary words.
+
+A Hugging Face dataset search was refused as suspect on 2026-11-20 (and again when rerun on 0.9.28, at the
+same score). One of the four datasets it listed has a card whose summary line names techniques in brackets,
+the DAN persona first. The owner's decision: that verdict stands. Naming one of these personas is refused
+wherever it stands; what was wrong was everything else the rule also caught.
+
+- **DAN, STAN, AIM and DUDE are refused wherever they are named as the persona**: as an order, in a list of
+  technique names, in a citation, in quotation marks, in a code block. Until now a mention inside a code
+  block was discounted below the line and passed, and several ways of naming them matched no rule at all (a
+  quoted "you are DAN", "the DUDE jailbreak"). Refused as suspect in text a person can see, so a person can
+  still ask for it; hidden from a person it is hostile, as before.
+- **Where "a person can ask for it" holds, and where it does not.** It holds for text a person sees: a search
+  listing or a card's text from a tool, a paper, an article. It does not hold for a Hugging Face dataset page
+  fetched as a web page: both pages tried are hostile, in 0.9.28 and here, because the page carries the card
+  and the dataset's sample rows (attack prompts) in an attribute nobody is shown, and other rules fire there
+  as well as these. Nothing in this release changes that.
+- **A persona acronym that is only a word is not a persona.** The old rule took any of the four in capitals
+  followed within 80 characters by "mode", "version", a version number or "anything", and "mode" also
+  matched the start of "model" and "modern". Refused before and clean now: a statistics text about a STAN
+  model, the AIM market and version 4 of its rule book, "the AIM of this section ... modern", a changelog
+  line thanking DAN for release 2.1, a greeting to DUDE, Turkish place names in capitals (ANKARA'DAN, "from
+  Ankara"; PAKİSTAN, which ends in an acronym).
+- **What counts as the persona.** DAN: its spelled-out name; or DAN in capitals with a version number right
+  after it, with a persona word after it in the same sentence (mode, jailbreak, persona, prompt, anything,
+  stands for), with "jailbreak", "persona" or "role-play" before it, or with the model told to be it. STAN,
+  AIM, DUDE: their spelled-out names (for DUDE, which is not an acronym, its prompt's own line about doing
+  "anything and everything at the same time"); or the acronym with "jailbreak" or "persona" in the sentence,
+  with the model told to be one, or introduced the way their prompts do it ("an AI called", "a character
+  named", "take on the role of", "respond as"). A bare STAN, AIM or DUDE near "mode" or a number is not
+  enough: nothing in the word tells the persona from the modelling language or the stock market, and "a
+  market called AIM" is not an introduction.
+- **"Mode" in other languages.** Turkish (modu, modunda), Spanish, Portuguese and Italian (modo) and German
+  (Modus) count as the word; and Turkish "you are a model called DAN" counts as the model told to be it. The
+  old rule caught three such Turkish attacks only because "mode" matched the start of "modelsin".
+
+Measured against 0.9.28, row by row on the public text sets (6,636 rows): no attack lost, one Turkish attack
+gained (19 of 550, from 18); seven benign Turkish chat rows are now refused, each of which names DAN beside
+the word "jailbreak" (refused by this rule as intended; they are why that set's benign score goes from 99.8%
+to 98.2%); one Turkish false alarm removed. Jailbreaks 79.9%, prompt injection 89.1%, email hold-out 89.6%
+and 99.5%, corpus 90/90, 48/48, 3/3, and the 36 real pages (30 clean, 5 suspect, 1 unreachable) are
+unchanged. Tests: core 430 (4 new), proxy 9, none failing. Development cases: the rule was written against
+these sets. The evidence for STAN, AIM and DUDE is thin: the public sets hold one attack that names AIM
+(refused before and now), one that names DUDE (missed by the rules before, refused by them now; the
+classifier caught it in both) and none that names STAN. The rest is sentences written for the tests.
+
+What this costs, by the owner's choice: text that only discusses these personas (a security article, a
+dataset card, a question about what DAN is) is refused until a person asks for it. Not done: a person or
+product written DAN in capitals beside "mode", "prompt" or "anything", or after "called" or "named", is
+still taken for the persona.
+
 ## 0.9.28 (2026-11-21, ruleset 2026.11.21-1)
 
 A warning against instructions is not an instruction: a tool server's own protective notice is no longer
