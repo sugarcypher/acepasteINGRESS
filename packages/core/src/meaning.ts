@@ -117,6 +117,12 @@ const INSTRUCTION_SHAPES: Array<[RegExp, number, string]> = [
  * the dotenv README, Wikipedia's Kernel panic article, the sudoers man page and 23 of 27 everyday developer
  * sentences. Topic words now either sit behind IMPERATIVE or count as weak evidence.
  */
+/** the named jailbreak personas: refused wherever they stand, with no allowance for quotation or a code block (see their rules) */
+const DAN_PERSONA = "DAN persona";
+const OTHER_PERSONA = "STAN, AIM or DUDE persona";
+const ALWAYS_REFUSED = new Set([DAN_PERSONA, OTHER_PERSONA]);
+/** "mode" as a word of its own, in English and where the same prompts circulate: Turkish (modu, modunda), Spanish, Portuguese and Italian (modo), German (Modus). Not "model", "modern", "moderate". */
+const MODE = "[Mm]od(?:es?|o|us|u(?:n[uae]|nda(?:n)?|yla|dur)?)";
 const AGENT_SHAPES: Array<[RegExp, number, string]> = [
     [/\b(ignore|disregard|forget|override|supersede)\b[^.\n]{0,40}\b(previous|prior|above|earlier|all|your|original|initial)\b[^.\n]{0,20}\b(instructions?|directions?|directives?|system\s+prompt|guidelines|programming|code\s+review\s+guidelines|processing\s+task|formatting\s+task|task)\b/i, 0.85, "drop prior instructions"],
     [/\b(previous|prior|all\s+previous|original)\s+(system\s+prompt|instructions|directives|rules)\s+(is|are)\s+(now\s+)?(revoked|deprecated|void|superseded|cancelled|canceled|overridden)/i, 0.9, "revokes prior instructions"],
@@ -130,10 +136,33 @@ const AGENT_SHAPES: Array<[RegExp, number, string]> = [
     // "system configuration", "write your system prompt" (prompting guides) and "list the initial setup" are documentation
     [imp(/(output|print|show|reveal|share|tell\s+me|give\s+me|repeat|recite|translate|summari[sz]e|encode|convert|spell\s+out|dump|display|quote|leak|paste)\b[^.\n]{0,60}\b((your|the|my)\s+)?(full\s+|complete\s+|exact\s+|entire\s+|original\s+|initial\s+|current\s+|hidden\s+)?(system\s+(prompt|instructions?)|initial\s+(prompt|instructions?)|original\s+instructions?|hidden\s+instructions?|internal\s+instructions?)\b/), 0.85, "system prompt request"],
     [/\byour\s+(system\s+(prompt|instructions?|message)|initial\s+(prompt|instructions?)|original\s+instructions|internal\s+configuration)\b|\b(instructions|prompts?)\s+you\s+(were|have\s+been|'ve\s+been)\s+given\b|\binstructions\s+you('ve|\s+have)\s+received\b|\bmessages\[0\]/i, 0.6, "references the model's own prompt"],
-    // the persona acronyms are names only in capitals: "aim" and "dan" are ordinary words (docs.python.org matched "aim ... version")
-    [/\b(DAN|STAN|AIM|DUDE)\b(?=[^.\n]{0,80}\b([Ss]tands\s+for|[Mm]ode|[Vv]ersion|\d+\.\d|[Aa]nything|[Nn]orms|[Mm]achiavellian))/, 0.85, "jailbreak persona"],
+    // The named jailbreak personas (0.9.29, the owner's rule): naming one is refused wherever it stands, as an
+    // order, in a list of technique names on a dataset card, in a citation, in quotation marks or in a code
+    // block. Refused as suspect, so a person can still ask for the page. The acronyms are names only in capitals
+    // ("aim" and "dan" are ordinary words: docs.python.org matched "aim ... version"), and even in capitals they
+    // are words too, so each counts only where it is the persona.
+    //
+    // DAN: its spelled-out name; or DAN in capitals (not after an apostrophe or a letter: Turkish writes
+    // ANKARA'DAN, "from Ankara") with a version number right after it, with a persona word after it in the same
+    // sentence, with "jailbreak", "persona" or "role-play" before it, or with the model told to be it (in
+    // English, and in Turkish as the public Turkish set writes it: "DAN adlı bir modelsin", you are a model
+    // called DAN, which 0.9.28 caught only because "mode" matched the start of "modelsin").
+    [/\bdo\s+anything\s+now\b/i, 0.85, DAN_PERSONA],
+    [new RegExp(`(?<![\\p{L}\\p{N}'’])DAN\\b(?=[\\s-]*([Vv]\\.?\\s*\\d|[Vv]ersion\\s+\\d|\\d+\\.\\d)|[^.\\n]{0,80}\\b([Ss]tands\\s+for|${MODE}|[Aa]nything|[Jj]ailbreak\\w*|[Pp]ersonas?|[Pp]rompts?)\\b)|\\b([Jj]ailbreak\\w*|[Pp]ersonas?|[Rr]ole-?play\\w*)\\b[^.\\n]{0,80}(?<![\\p{L}\\p{N}'’])DAN\\b|\\b([Yy]ou\\s+are|[Yy]ou're|[Aa]ct(ing)?\\s+as|[Pp]retend(ing)?\\s+to\\s+be|[Bb]ecome|[Cc]alled|[Nn]amed)\\s+(now\\s+)?DAN\\b|(?<![\\p{L}\\p{N}'’])DAN\\b[^.\\n]{0,40}\\b(modelsin|asistans[ıi]n|botsun|karaktersin|zekas[ıi]n|olarak\\s+davran\\p{L}*|gibi\\s+davran\\p{L}*|rol[üu]n\\p{L}*)(?!\\p{L})`, "u"), 0.85, DAN_PERSONA],
+    // STAN, AIM, DUDE: their spelled-out names; or the acronym with "jailbreak" or "persona" in the same sentence,
+    // or with the model told to be one. A bare acronym near "mode", "version" or a number is NOT enough for
+    // these three, which is what 0.9.28 and earlier took: the Stan modelling language ("the STAN model": "mode"
+    // also matched the start of "model" and "modern"), the AIM stock market and its rule-book versions, "the AIM
+    // of this section", a greeting. Nothing in the word itself tells the persona from those.
+    // (DUDE is not an acronym; its prompt's own line, "can do anything and everything at the same time", is its name spelled out)
+    [/\bstrive\s+to\s+avoid\s+norms\b|\balways\s+intelligent\s+and\s+machiavellian\b|\bdo\s+anything\s+and\s+everything\s+at\s+the\s+same\s+time\b/i, 0.85, OTHER_PERSONA],
+    // how their prompts introduce them: "an AI called X", "a character named X", "take on the role of X", "respond as X".
+    // The noun before "called" matters: "a market called AIM" and "a language called STAN" are not introductions.
+    [/\b([Cc]haracter|[Pp]ersona|[Cc]hatbot|[Bb]ot|[Aa]ssistant|[Aa]lter\s+ego|AI(\s+model)?)\s+(named|called|known\s+as)\s+(STAN|AIM|DUDE)\b|\b(([Tt]ake|[Aa]ssume|[Pp]lay|[Aa]dopt)(\s+on)?\s+the\s+(role|part)\s+of|[Rr]espond(ing)?\s+as|[Aa]nswer(ing)?\s+as|[Rr]ole-?play(ing)?\s+as|[Ss]tay(ing)?\s+as)\s+(STAN|AIM|DUDE)\b|\bDUDE\b(?=[^.\n]{0,80}\b(can\s+do\s+anything|anything\s+and\s+everything)\b)/, 0.85, OTHER_PERSONA],
+    // (not after a letter or an apostrophe: PAKİSTAN and KAZAKİSTAN end in the acronym, and İ is no word character to \b)
+    [/(?<![\p{L}\p{N}'’])(STAN|AIM|DUDE)\b(?=[^.\n]{0,80}\b([Aa]void\s+[Nn]orms|[Mm]achiavellian|[Jj]ailbreak\w*|[Pp]ersonas?)\b)|\b([Jj]ailbreak\w*|[Pp]ersonas?)\b[^.\n]{0,80}(?<![\p{L}\p{N}'’])(STAN|AIM|DUDE)\b|\b([Yy]ou\s+are|[Yy]ou're|[Aa]ct(ing)?\s+as|[Pp]retend(ing)?\s+to\s+be|[Bb]ecome)\s+(now\s+)?(STAN|AIM|DUDE)\b/u, 0.85, OTHER_PERSONA],
     // "Developer Mode is enabled" is a Windows setting the os docs need for symlinks; "free version" is pricing
-    [/\bdo\s+anything\s+now\b|\bdeveloper\s+mode\s+(output|response)s?\b|\b(enable|activate|enter)\s+developer\s+mode\b[^.\n]{0,60}\b(you|your|chatgpt|gpt|ai|assistant|model|claude)\b|\bjailbreak(ed)?\s+mode\b|\b(evil|unrestricted|unfiltered|uncensored)[-\s]?(gpt|ai|assistant|bot|chatbot|response|machine|version\s+of\s+(you|yourself))\b|\bfreed\s+from\s+the\s+(typical\s+)?confines\b|\bmongo\s+tom\b/i, 0.85, "jailbreak persona"],
+    [/\bdeveloper\s+mode\s+(output|response)s?\b|\b(enable|activate|enter)\s+developer\s+mode\b[^.\n]{0,60}\b(you|your|chatgpt|gpt|ai|assistant|model|claude)\b|\bjailbreak(ed)?\s+mode\b|\b(evil|unrestricted|unfiltered|uncensored)[-\s]?(gpt|ai|assistant|bot|chatbot|response|machine|version\s+of\s+(you|yourself))\b|\bfreed\s+from\s+the\s+(typical\s+)?confines\b|\bmongo\s+tom\b/i, 0.85, "jailbreak persona"],
     // "no restrictions" alone is ordinary prose (the Python tutorial); the safety, ethical or content qualifier is the tell
     [/\b(no|without(\s+any)?|zero|free\s+of)\s+(safety|ethical|content|moral)\s+(restrictions|guardrails|limitations|filters?|guidelines|constraints|polic(y|ies)|measures)\b|(?<!\b(?:if|as\s+long\s+as|so\s+long\s+as|when|whenever|unless|provided|assuming|while|because|since|once|where|that)\s+)\byou\s+(now\s+)?(have|operate\s+with|are\s+under|are\s+bound\s+by)\s+no\s+(restrictions|limitations|limits|rules|guidelines|filters|guardrails)\b(?!\s+(on|in|over|about|for|regarding|around|with|to|as|preventing|stopping|blocking|against)\b)|\b(safety|content)\s+(filters?|guidelines|guardrails|module|classifiers?)\s+(are|is|have\s+been|has\s+been)\s+(now\s+)?(temporarily\s+)?(disabled|suspended|removed|bypassed|corrupted|lifted|deprecated)\b|\b(disable|remove|bypass|turn\s+off|lift|ignore)\s+(all\s+(of\s+)?)?your\s+(safety|content|ethical)\s+(filters?|guidelines|measures|classifiers?|restrictions|checks?|module|guardrails)/i, 0.85, "safety removal"],
     // bracketed headers that claim a speaker or an authority. Log levels ([CRITICAL]), forum ranks ([Admin]), chat exports
@@ -285,7 +314,7 @@ function isQuotedOrAttributed(text: string, match: string): boolean {
  * or "like" in a request are not quotation. Payload shapes (commands, paths, parameters) are never discounted:
  * an attack hands its payload over in quotes.
  */
-const UNDISCOUNTED = new Set(["destructive or escalating command", "parameter tampering", "sensitive path", "decode and obey", "fake system or agent header", "fake system message", "tool impersonation", "approval or privilege claim"]);
+const UNDISCOUNTED = new Set([...ALWAYS_REFUSED, "destructive or escalating command", "parameter tampering", "sensitive path", "decode and obey", "fake system or agent header", "fake system message", "tool impersonation", "approval or privilege claim"]);
 function isQuotedStrict(text: string, match: string, label: string): boolean {
   if (UNDISCOUNTED.has(label)) return false;
   const idx = text.indexOf(match);
@@ -352,8 +381,10 @@ function scoreText(text: string, hidden: boolean, where: string, findings: Findi
     const visibleFactor = asHidden ? 1 : n >= 2 || strong ? 0.75 : 0.55;
     const severity = asHidden ? 0.9 : n >= 2 || strong ? 0.6 : 0.45;
     // visible text that quotes or attributes an instruction (news, fiction, training material) is not issuing it
-    const quotedFactor = !asHidden && (AGENT_LABELS.has(best.label) ? isQuotedStrict(text, best.match, best.label) : isQuotedOrAttributed(text, best.match)) ? 0.55 : 1;
-    const conf = Math.min(0.98, (best.weight * visibleFactor + boost + Math.min(0.15, (n - 1) * 0.05)) * best.discount * codeFactor * quotedFactor);
+    // ...except where the text names one of the jailbreak personas: that is refused wherever it stands, quoted or in a code block
+    const namesDan = hits.some((h) => ALWAYS_REFUSED.has(h.label));
+    const quotedFactor = !namesDan && !asHidden && (AGENT_LABELS.has(best.label) ? isQuotedStrict(text, best.match, best.label) : isQuotedOrAttributed(text, best.match)) ? 0.55 : 1;
+    const conf = Math.min(0.98, (best.weight * visibleFactor + boost + Math.min(0.15, (n - 1) * 0.05)) * best.discount * (namesDan ? 1 : codeFactor) * quotedFactor);
     findings.push({
       pass: "meaning", kind: n >= 3 || /system\s+prompt/i.test(best.match) ? "meaning.system_prompt_imitation" : "meaning.instruction_shaped",
       confidence: conf, severity,
