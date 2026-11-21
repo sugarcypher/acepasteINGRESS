@@ -431,9 +431,15 @@ function scoreText(text: string, hidden: boolean, where: string, findings: Findi
   // tokens are symbol-laced as a matter of course, and four ordinary emails in three thousand were refused for it.
   // In those channels a visible suffix is weak evidence: it counts beside something else, never alone.
   if (!inCode) {
-    const sfx = adversarialSuffix(text);
+    // In JSON the visible text is its values joined, and the suffix test read the last value as a suffix on the
+    // values before it: a short ordinary value with a few symbols in it, last in a document, was refused (55 of
+    // 4,615 benign public texts, as the last value after thirty rows). A suffix is appended to a prompt, so in
+    // JSON each value is tested as a text of its own, wherever it stands (0.9.30). And values are option names,
+    // identifiers and placeholders as a matter of course (a compiler's message catalogue has thousands that end
+    // in three of them), so in JSON a visible suffix is weak evidence, as in a message or a log.
+    const sfx = !hidden && valueTexts ? valueTexts.map(adversarialSuffix).find((x) => x) ?? null : adversarialSuffix(text);
     if (sfx) findings.push({
-      pass: "meaning", kind: "meaning.adversarial_suffix", confidence: hidden ? 0.7 : SUFFIX_WEAK.has(channelKind) ? 0.3 : 0.55, severity: 0.6,
+      pass: "meaning", kind: "meaning.adversarial_suffix", confidence: hidden ? 0.7 : SUFFIX_WEAK.has(channelKind) || valueTexts ? 0.3 : 0.55, severity: 0.6,
       message: `optimizer-style adversarial suffix: ${sfx.weird} of the last ${sfx.tokens} tokens are symbol-laced fragments after ordinary prose (GCG-style jailbreak)`,
       excerpt: sfx.tail.slice(-120), location: where, inHidden: hidden, action: "neutralized",
     });
@@ -514,10 +520,12 @@ function adversarialSuffix(text: string): { tail: string; tokens: number; weird:
 const SUFFIX_WEAK = new Set(["email", "log", "calendar", "message", "notification"]);
 /** the kind of the content being scanned; set for the duration of one scanMeaning call (the pass is synchronous) */
 let channelKind = "";
+/** in JSON, the delivered values one by one: what the suffix test reads in place of the joined text (same lifetime) */
+let valueTexts: string[] | undefined;
 
 export function scanMeaning(input: MeaningInput): Finding[] {
   channelKind = input.kind ?? "";
-  try { return scanMeaningInner(input); } finally { channelKind = ""; }
+  try { return scanMeaningInner(input); } finally { channelKind = ""; valueTexts = undefined; }
 }
 
 function scanMeaningInner(input: MeaningInput): Finding[] {
@@ -531,6 +539,7 @@ function scanMeaningInner(input: MeaningInput): Finding[] {
   // code blocks are scored separately with the documentation discount
   const codeBlocks = [...(visibleRaw.match(FENCED) ?? []), ...delivered.filter(inPre).map((s) => s.text)];
   const visible = visibleRaw.replace(FENCED, " ");
+  valueTexts = input.kind === "json" && delivered.length > 1 ? delivered.map((s) => s.text) : undefined;
   if (visible.trim()) {
     scoreText(visible, false, "visible text", findings);
     // a foreign-language article quoting the phrase is reporting it, the same discount English gets

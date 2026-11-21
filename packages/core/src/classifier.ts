@@ -209,6 +209,88 @@ export function withoutProtectiveNotices(text: string): { text: string; setAside
   return setAside ? { text: out + text.slice(from), setAside } : { text, setAside: 0 };
 }
 
+/**
+ * Values read one by one (0.9.30). The learned pass scores a text as one bag of words, so what a text holds is
+ * averaged: an attack that scores 0.99 alone scored 0.61 beside three ordinary database rows and 0.08 beside
+ * thirty. Of 550 public attack texts that only this pass catches as a lone row of a database result, 125 were
+ * still refused with thirty ordinary rows around them. A table is not one text. Each value in it was written
+ * by whoever filled that field, and one of them is all an attacker needs.
+ *
+ * So where the text is JSON (a JSON document, a tool result that carries JSON as text, JSON printed by a
+ * command, one JSON value per line), every string value of some length is also scored as a text of its own:
+ * its opening, the rest in windows, the allowance for what it quotes. Nothing is taken away: the whole text is
+ * still scored as before, at its own line.
+ */
+const JSON_DEPTH = 3;
+/**
+ * Every value is one more chance to be wrong, and a table has thousands. So a value is held to a stricter line
+ * than a lone text (0.85): 0.9 for a value of 60 characters and nine words or more, the size and the line
+ * hidden text is judged by; and 0.95 for a shorter one, which must still have 20 characters and four different
+ * words (three words and some numbers give a bag of words nothing to judge, see scanClassifier).
+ * Measured: of 10,796 ordinary long values in the JSON files of this repository's dependencies, five are over
+ * 0.9, all compiler messages in French; of 13,478 short ones, four are over 0.95; of 2,508 ordinary short text
+ * messages, none. Of the public attack texts the rules miss, 616 of 1,565 long ones and 29 of 173 short ones
+ * are over their lines.
+ */
+const VALUE_LINE = 0.9, SHORT_VALUE_LINE = 0.95;
+/** scripts written without spaces: a sentence is one "word" */
+const UNSPACED = /[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Thai}]/gu;
+const longValue = (t: string): boolean => t.length >= 60 && (t.split(/\s+/).length >= 9 || (t.match(UNSPACED) ?? []).length >= 30);
+const shortValue = (t: string): boolean => t.length >= 20 && new Set(t.toLowerCase().match(/\p{L}{2,}/gu) ?? []).size >= MIN_LOG_WORDS;
+
+function parsed(text: string): { doc: unknown } | undefined {
+  if (!/^[\[{]/.test(text)) return undefined;
+  try { return { doc: JSON.parse(text) }; } catch { return undefined; }
+}
+
+/**
+ * The string values (and keys) of JSON text, or undefined when the text is not JSON. Tried in turn: the whole
+ * text; what lies between its first and last bracket (a line of prose before the data), with the text around
+ * it returned as values too; one value per line. A value that is itself JSON text, with or without a tool
+ * server's notice around it, is returned as it is and opened the same way. Opening JSON never takes text out
+ * of what is read: only a tool server's exact notice is left out, as everywhere in this pass.
+ */
+export function jsonValues(text: string, depth = 0): string[] | undefined {
+  const t = text.trim();
+  if (t.length < 2) return undefined;
+  let docs: unknown[] | undefined;
+  // what stands before and after the data, when the data is only part of the text: values like any other, so
+  // that nothing a text holds goes unread for having a pair of brackets after it
+  let before = "", after = "";
+  const whole = parsed(t);
+  if (whole) docs = [whole.doc];
+  if (!docs) {
+    const first = t.search(/[\[{]/), last = Math.max(t.lastIndexOf("]"), t.lastIndexOf("}"));
+    const inner = first >= 0 && last > first && (first > 0 || last < t.length - 1) ? parsed(t.slice(first, last + 1)) : undefined;
+    if (inner) { docs = [inner.doc]; before = t.slice(0, first).trim(); after = t.slice(last + 1).trim(); }
+  }
+  if (!docs) {
+    const lines = t.split("\n").map((l) => l.trim()).filter(Boolean);
+    if (lines.length >= 2 && lines.every((l) => /^[\[{]/.test(l))) {
+      const each = lines.map((l) => parsed(l));
+      if (each.every((x) => x)) docs = each.map((x) => x!.doc);
+    }
+  }
+  if (!docs) return undefined;
+  const out: string[] = before ? [before] : [];
+  const walk = (v: unknown, d: number) => {
+    if (d > 64) return;
+    if (typeof v === "string") {
+      // a value that is JSON text is read both ways: as the text it is, and value by value. Otherwise an
+      // attack cut into an array of short strings inside one field would be read as neither.
+      const mayBeJson = /[\[{]/.test(v);
+      const bare = mayBeJson ? withoutProtectiveNotices(v).text.trim() : v;
+      out.push(bare);
+      const inner = mayBeJson && depth < JSON_DEPTH ? jsonValues(bare, depth + 1) : undefined;
+      if (inner) out.push(...inner);
+    } else if (Array.isArray(v)) for (const x of v) walk(x, d + 1);
+    else if (v && typeof v === "object") for (const [k, x] of Object.entries(v)) { out.push(k); walk(x, d + 1); }
+  };
+  for (const d of docs) walk(d, 0);
+  if (after) out.push(after);
+  return out;
+}
+
 export interface ClassifierInput {
   /** the text that would be delivered */
   visible: string;
@@ -254,16 +336,39 @@ export function scanClassifier(input: ClassifierInput): Finding[] {
   /** recorded on the receipt, deciding nothing */
   const note = (p: number, where: string): Finding => ({ pass: "classifier", kind: "classifier.injection_likely", confidence: 0, severity: 0, message: `resembles an injection or jailbreak attempt (learned classifier, ${(p * 100).toFixed(0)}%); not decisive for visible ${authority} text`, location: where, action: "none" });
 
+  /** a text's score as a lone text gets it: its opening, then the rest in overlapping windows */
+  const read = (text: string): { p: number; pastOpening: boolean } => {
+    const cps = Array.from(text);
+    let p = visibleScore(cps.slice(0, maxChars).join("")), pastOpening = false;
+    for (let s = STEP, n = 0; s < cps.length - 200 && n < MAX_WINDOWS && cps.length > maxChars; s += STEP, n++) {
+      const q = visibleScore(cps.slice(s, s + WINDOW).join(""));
+      if (q > p) { p = q; pastOpening = true; }
+    }
+    return { p, pastOpening };
+  };
   const visible = judged.text.trim();
   if (visible.length >= 20) {
-    const cps = Array.from(visible);
-    let best = visibleScore(cps.slice(0, maxChars).join("")), where = "visible text";
-    // the rest of a long text, in overlapping windows
-    for (let s = STEP, n = 0; s < cps.length - 200 && n < MAX_WINDOWS && cps.length > maxChars; s += STEP, n++) {
-      const p = visibleScore(cps.slice(s, s + WINDOW).join(""));
-      if (p > best) { best = p; where = "visible text (past the opening)"; }
+    const whole = read(visible);
+    let best = whole.p, where = whole.pastOpening ? "visible text (past the opening)" : "visible text";
+    // JSON: each value is also read as a text of its own (see jsonValues). Only where this pass may decide.
+    let value: { p: number; at: number } | undefined, values = 0;
+    if (authority === "text" && !tooFewWords) {
+      const sources = input.kind === "json" ? input.segments.filter((s) => s.visibility === "visible").map((s) => withoutProtectiveNotices(s.text).text) : [judged.text];
+      for (const src of sources) {
+        const opened = jsonValues(src);
+        // a JSON document's own values are pieces as they stand; other text is a piece only when it is JSON
+        for (const v of opened ?? (input.kind === "json" && sources.length > 1 ? [src] : [])) {
+          const t = v.trim();
+          const at = longValue(t) ? VALUE_LINE : shortValue(t) ? SHORT_VALUE_LINE : 0;
+          if (!at) continue;
+          values++;
+          const p = read(t).p;
+          if (p >= at && p > (value?.p ?? 0)) value = { p, at };
+        }
+      }
     }
     if (best >= line) out.push(finding(best, line, where, false));
+    else if (value) out.push(finding(value.p, value.at, `one value in the data, read by itself (${values} read)`, false));
     else if (best >= Math.max(threshold, 0.9)) out.push(note(best, where));
   }
   // Hidden text, piece by piece: a hidden passage that reads like an attack is the strongest thing this pass

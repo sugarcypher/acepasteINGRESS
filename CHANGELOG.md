@@ -4,6 +4,80 @@ Every change bumps the patch version of all three packages. The ruleset id chang
 behavior changes; receipts carry it so verdicts are reproducible. Releases up to 0.9.6 are in the
 [README](README.md#changes-in-096-2026-11-18-ruleset-20261118-3-unchanged).
 
+## 0.9.30 (2026-11-21, ruleset 2026.11.21-3)
+
+One attacking row among ordinary rows: the learned pass now reads the values of a table one by one.
+
+The learned pass scores a text as one bag of words, so whatever a text holds is averaged. An attack that
+scores 0.99 alone scored 0.61 beside three ordinary database rows and 0.08 beside thirty, and the result was
+delivered. Measured on the 2,021 public attack texts, each put in as one row of a database result: 773 were
+refused as the only row, 348 with thirty ordinary rows around it. The loss was all in this pass (the rules
+do not dilute): of the 709 attacks only it catches, 126 were still refused among thirty rows.
+
+- **Each value in JSON is also read as a text of its own.** Where the text is JSON (a JSON document, a tool
+  result that carries JSON as text with or without a tool server's notice around it, JSON a command printed,
+  one JSON object per line, JSON after a line of prose), every string value is scored by itself, the way a
+  lone text is: its opening, the rest in windows, the allowance for what it quotes. The whole text is still
+  scored as before. Among thirty rows, 870 of the 2,021 are now refused (348 before), and 642 of the 709 that
+  only this pass catches (126 before). From ten rows up the number is the same for a hundred, and the same
+  whether the row stands first, in the middle or last (as the only row: 877).
+- **Opening JSON takes nothing out of what is read.** Text before or after the data is a value like any
+  other, and a value that is itself JSON text is read both as the text it is and value by value. So a pair of
+  brackets after an attack, a reply format inside it, or the attack written as a JSON string of its own, in
+  one field among thirty rows, is refused like the attack itself.
+- **A value is held to a stricter line than a lone text**, because a table has thousands of them and each is
+  a chance to be wrong: 0.9 for a value of 60 characters and nine words or more (a lone text: 0.85), and 0.95
+  for a shorter one, which must still have 20 characters and four different words. A value with next to no
+  words in it is not read by itself at all (0.9.28: three words and some numbers decide nothing).
+- **Still one finding, still never hostile from this pass alone.** Twenty attacking rows give one finding and
+  a suspect verdict a person can override, as one does.
+- **In JSON a value is no longer read as a suffix on the values before it.** The visible text of a JSON
+  document is its values joined, and the rule for optimizer-made suffixes looked at the end of that: an
+  ordinary last value with a few identifiers in it was refused. Found by this release's measurements: 64 of
+  4,615 benign public texts were refused when they were the last value after thirty rows (10 now), and three
+  results real sessions were given (from Notion, Supabase and Google Drive) are rated suspect for it when
+  0.9.29 scans them again. In JSON
+  each value is now tested as a text of its own, wherever it stands, and a suffix found there is weak
+  evidence, as it already is in a message or a log: it counts beside something else, not alone. A JSON
+  document that is a single value is judged as before.
+
+What it costs, measured:
+
+- Benign public texts as one row among thirty: in a database result 9 of 4,615 are refused (8 before), all
+  nine of them texts that are refused when scanned alone; in a JSON document 10 (8 before), nine of them
+  refused alone.
+- Every tool result 51 real sessions on this machine were given and kept, 8,269 different ones (command
+  output and tool servers, 301 Supabase results among them): four change verdict. Three are the false alarms
+  above, now clean. One is newly refused, and it is a false alarm: a test script printed JSON and then a
+  closing status line ("PASS ... all verified"), which the learned pass rates at 0.92. The same line is
+  refused today when it is a command's whole output; until now the JSON before it averaged it away.
+- Time: a megabyte of long values (6,500 rows) takes about 1.15 seconds to scan, 0.65 before. Every value is
+  one more reading, and there is no cap on how many are read, because a cap is a row to hide behind.
+- The 200 JSON files under 400 kB in this repository's dependencies: as a tool result 3 are refused (8
+  before); printed by a command 3 are refused (1 before). The two new ones are TypeScript's catalogue of
+  compiler messages in French, where the learned pass rates messages about "une instruction" at 0.98 (the
+  model reads other languages poorly, which is the multilingual item on the roadmap), and a test fixture
+  made of odd addresses.
+- The public sets, the email hold-out, the corpus and the 36 real pages are unchanged.
+
+Not done:
+
+- 67 of the 709 are still missed among rows: values too short to be read alone, or scoring between a lone
+  text's line and a value's.
+- An attack split across several short fields, or across the short strings of an array, is still averaged
+  away.
+- A suffix made by an optimizer, in one value of several, is found wherever it stands but no longer refuses
+  alone (until now it was refused when it was the last value, and missed anywhere else). The alternative,
+  each value tested at full strength, was measured: it newly refuses seven catalogues of compiler messages
+  among the 200 JSON files and makes one hostile.
+- Rows that are not JSON are read as before: CSV, a table drawn in text, a markdown table.
+- JSON longer than the hook's one-megabyte chunk is cut before it is parsed, and a cut piece is not opened.
+- **A tool result that opens like markdown is read as a document, and in a document the learned pass decides
+  nothing.** The hook names no kind for a tool result, so the engine guesses: the same reworded attack is
+  refused as a plain sentence and delivered under a heading, in a list, or after a bold label. This is
+  older than this release and larger than what it fixes. It is the owner's decision, because judging tool
+  results as plain text will refuse documents that discuss prompts.
+
 ## 0.9.29 (2026-11-21, ruleset 2026.11.21-2)
 
 The jailbreak personas by name: refused wherever they are named, and no longer mistaken for ordinary words.

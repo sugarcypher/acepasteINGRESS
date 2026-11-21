@@ -7,9 +7,9 @@
 
 import type { NetPolicy } from "./netpolicy.js";
 
-export const ENGINE_VERSION = "0.9.29";
+export const ENGINE_VERSION = "0.9.30";
 /** bump whenever a detector's behavior changes; receipts carry it so verdicts are reproducible */
-export const RULESET_VERSION = "2026.11.21-2";
+export const RULESET_VERSION = "2026.11.21-3";
 
 /**
  * clean: delivered. suspect: refused, overridable. hostile: refused, not overridable.

@@ -26,7 +26,7 @@ export { adaptEmail, parseEmail, looksLikeEmailJson, looksLikeRawEmail } from ".
 export type { EmailPart } from "./email.js";
 export { adaptCalendar, parseIcs, looksLikeCalendarJson } from "./calendar.js";
 export { passagesOnlyIn } from "./served.js";
-export { classifyText, scanClassifier, classifierInfo, withoutProtectiveNotices } from "./classifier.js";
+export { classifyText, scanClassifier, classifierInfo, withoutProtectiveNotices, jsonValues } from "./classifier.js";
 export { CLASSIFIER_MODEL } from "./classifier-model.js";
 export { shellTokens, shellInvocations, shellOutputSource, shellWrites, shellUploads } from "./shell-commands.js";
 export { inspectImage, helperRunner, visionHelperPath, visionHelperProblem, visionHelperSource, buildVisionHelper, buildNativeHelper } from "./image.js";
