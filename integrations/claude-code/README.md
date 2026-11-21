@@ -88,6 +88,47 @@ external drive; 4 were commands the splitter could not prove read-only. The firs
 file counted as editing it. That session guided those fixes, so it is a development measurement, not a
 held-out one. `node tools/egress-replay/replay.mjs <session.jsonl>` repeats it on your own sessions.
 
+## The developer setting: your own tool servers (0.9.28, off by default)
+
+A suspect result is withheld, and a person may ask for it anyway. When the tool is your own database or your
+own ticket tracker and you are in the middle of work, that turns one doubtful verdict into a blocked step.
+For tool servers you name, a suspect result can be delivered with a label instead:
+
+```sh
+export INGRESS_HOOK_LABEL_SUSPECT=claude_ai_Supabase,mydb__query   # in the environment Claude Code starts from
+```
+
+Each name is a tool server (`claude_ai_Supabase` covers every `mcp__claude_ai_Supabase__…` tool) or one tool
+of a server (`mydb__query`). With the hooks installed as below, put it in front of the `post-tool-use`
+command, beside `INGRESS_HOOK_SERVICE`.
+
+| The result is rated | From a server you named | From any other server |
+|---|---|---|
+| clean | stands as it is | stands as it is |
+| suspect | **delivered as the tool returned it**, with a note to the model: what it was rated and why, that it is data and not instructions, and to tell you it was flagged | withheld |
+| hostile | refused | refused |
+| could not be checked | withheld | withheld |
+
+- **It is a list of names, never a pattern.** `*` and anything else that is not a plain name is dropped, so
+  the setting cannot be turned into "label everything" by one character.
+- **Only tool-server results.** Web pages, search results, shell output, downloaded files and pictures are
+  judged as before, whatever is in the list.
+- **It is on the record.** The verdict is logged and its receipt kept like any other: tier `suspect`,
+  `overridden: true`, and the source carries `#setting:label-suspect`, so a result delivered under the setting
+  can be told from one a person asked for once.
+- **Two limits of that record.** The model gets the tool's own text; an override asked for through the engine
+  delivers text with instruction shapes neutralised, and the receipt's `deliveredDigest` is of that
+  neutralised text, not of what the model was handed. A result over a million characters is scanned in
+  pieces, so an early piece can be recorded as delivered when a later piece refuses the whole result.
+- **A person sets it.** It is read from the environment of the hook, which for most installs means the hooks'
+  settings file. An agent editing that file is put to you by the egress gate ("touches a hook that runs on
+  later events") like any other change to a hook.
+- What it costs: a suspect result from a named server reaches the model. The label tells the model how to
+  treat it; a label is advice to the model, not a control. Name a server only when what it returns is yours,
+  and not one that returns text written by strangers (a public forum, an inbox, a web search).
+
+The MCP proxy has no such setting: it withholds a suspect result from every server it fronts.
+
 ## Install
 
 ```sh

@@ -986,7 +986,11 @@ export { servedWords, compareServed };
  */
 export function buildEnvelope(source: string, tier: Tier, delivered: string, findings: Finding[], receipt: TaintReceipt, overridden = false): string {
   const b = randomBytes(6).toString("hex");
-  const kinds = [...new Set(findings.map((f) => f.kind))];
+  // a note at no weight (something recorded, deciding nothing) is not what the content was refused for: findings
+  // that count are named, and listed first
+  const weighted = findings.filter((f) => f.confidence * f.severity > 0);
+  const kinds = [...new Set((weighted.length ? weighted : findings).map((f) => f.kind))];
+  findings = [...weighted, ...findings.filter((f) => !(f.confidence * f.severity > 0))];
   const head = [
     `<<acepaste-ingress ${b}>>`,
     `source: ${source}`,
