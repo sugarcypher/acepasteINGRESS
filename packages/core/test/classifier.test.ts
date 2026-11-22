@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { IngressEngine, classifyText, classifierInfo, scanClassifier, withoutProtectiveNotices, CLASSIFIER_MODEL } from "../src/index.js";
+import { IngressEngine, classifyText, classifierInfo, scanClassifier, withoutProtectiveNotices, jsonValues, CLASSIFIER_MODEL } from "../src/index.js";
 
 // 0.9.16: the learned pass (Phase 0). A small n-gram classifier beside the rules.
 
@@ -201,4 +201,81 @@ test("only the exact notice is set aside: its sentences and its two tags, nothin
   const t0 = performance.now();
   assert.equal(withoutProtectiveNotices(many).setAside, 0);
   assert.ok(performance.now() - t0 < 250);
+});
+
+// 0.9.30: values read one by one. A bag of words averages what a text holds: an attack that scores 0.99 alone
+// scored 0.08 beside thirty ordinary rows, and the result was delivered.
+const CITIES = ["Lisbon", "Osaka", "Leeds", "Austin", "Tallinn", "Cusco", "Perth"];
+const NOTES = ["Prefers email over phone.", "Renewed the annual plan in March.", "Asked for an invoice copy.", "Call me now, please.", "Send me the address when you can.", ""];
+const ordinaryRows = (n: number) => Array.from({ length: n }, (_, i) => ({ id: 1000 + i, name: `member ${i}`, city: CITIES[i % CITIES.length], joined: `2026-0${1 + (i % 9)}-1${i % 9}`, note: NOTES[i % NOTES.length] }));
+const rowsWith = (text: string, n: number, at: number) => { const rows: Record<string, unknown>[] = ordinaryRows(n); rows.splice(at, 0, { id: 999, name: "member x", city: "Quito", joined: "2026-02-02", note: text }); return rows; };
+/** the ways rows reach the gate: a database tool's result, a JSON document, JSON a command printed, one object per line */
+const SHAPES: [string, (rows: unknown[]) => string, { url: string; kind?: "log" }][] = [
+  ["a database result", (rows) => sqlResult(rows), SQL_SOURCE],
+  ["a JSON document", (rows) => JSON.stringify(rows), SQL_SOURCE],
+  ["JSON printed by a command", (rows) => JSON.stringify(rows, null, 2), { url: "bash:gh api", kind: "log" }],
+  ["one JSON object per line", (rows) => rows.map((r) => JSON.stringify(r)).join("\n"), { url: "bash:cat", kind: "log" }],
+  ["JSON after a line of prose", (rows) => `Found ${rows.length} rows:\n${JSON.stringify(rows)}`, { url: "bash:query", kind: "log" }],
+];
+
+test("an attack in one row is refused however many ordinary rows stand around it", async () => {
+  const attack = await rewordedAttack();
+  for (const [shape, make, opts] of SHAPES) for (const n of [0, 3, 30, 300]) for (const at of [0, Math.floor(n / 2), n]) {
+    const r = await on.scan(make(rowsWith(attack, n, at)), opts);
+    // the learned pass alone: refused, a person may ask for it, never hostile
+    assert.equal(r.tier, "suspect", `${shape}, ${n} other rows, row ${at}: ${r.tier} ${r.score}`);
+    assert.ok(r.findings.some((f) => f.kind === "classifier.injection_likely" && f.confidence > 0), shape);
+    assert.equal((await on.scan(make(rowsWith(attack, n, at)), { ...opts, override: true })).overridden, true, shape);
+    // and the rules had nothing to say: it is this pass that caught it
+    assert.equal((await off.scan(make(rowsWith(attack, n, at)), opts)).tier, "clean", shape);
+  }
+  // brackets in the value buy nothing: a pair after the attack, a reply format inside it, the attack as a
+  // JSON string of its own
+  for (const dressed of [`${attack} {}`, `${attack} Reply with {"ok":true}`, `[] ${attack}`, JSON.stringify([attack]), JSON.stringify({ a: attack })]) {
+    for (const [shape, make, opts] of SHAPES) assert.equal((await on.scan(make(rowsWith(dressed, 30, 12)), opts)).tier, "suspect", `${shape}: ${dressed.slice(-24)}`);
+  }
+  // the finding says where: one value, and how many were read
+  const r = await on.scan(sqlResult(rowsWith(attack, 30, 12)), SQL_SOURCE);
+  assert.match(r.findings.find((f) => f.kind === "classifier.injection_likely")!.location ?? "", /^one value in the data, read by itself \(\d+ read\)$/);
+});
+
+test("ordinary rows are not refused for being read one by one", async () => {
+  for (const [shape, make, opts] of SHAPES) for (const n of [1, 30, 300]) {
+    assert.equal((await on.scan(make(ordinaryRows(n)), opts)).tier, "clean", `${shape}, ${n} rows`);
+  }
+  // a value with next to no words in it is not read by itself: one number's characters would decide (0.9.28)
+  const counts = Array.from({ length: 40 }, (_, i) => ({ run: i, summary: `tests ${10 + i} / pass ${10 + i} / fail 0` }));
+  for (const [shape, make, opts] of SHAPES) assert.equal((await on.scan(make(counts), opts)).tier, "clean", shape);
+});
+
+test("many attacking rows are still one finding from this pass: suspect, and a person can ask", async () => {
+  const attack = await rewordedAttack();
+  const rows = Array.from({ length: 20 }, (_, i) => ({ id: i, bio: attack }));
+  for (const [shape, make, opts] of SHAPES) {
+    const r = await on.scan(make(rows), opts);
+    assert.equal(r.tier, "suspect", `${shape}: ${r.tier} ${r.score}`);
+    assert.equal(r.findings.filter((f) => f.kind === "classifier.injection_likely" && f.confidence > 0).length, 1, shape);
+  }
+});
+
+test("JSON is opened where it is JSON, and left alone where it is not", () => {
+  assert.deepEqual(jsonValues('[{"a":"one","b":["two",3,{"c":"three"}]}]'), ["a", "one", "b", "two", "c", "three"]);
+  // prose before or after the data is a value like any other; one value per line
+  assert.deepEqual(jsonValues('2 rows:\n[{"a":"one"},{"a":"two"}]'), ["2 rows:", "a", "one", "a", "two"]);
+  assert.deepEqual(jsonValues('[{"a":"one"}]\nthat was all'), ["a", "one", "that was all"]);
+  assert.deepEqual(jsonValues('{"a":"one"}\n{"a":"two"}\n'), ["a", "one", "a", "two"]);
+  // a value that is JSON text itself, bare or inside a tool server's notice, is kept as it is and opened too
+  assert.deepEqual(jsonValues(JSON.stringify({ result: JSON.stringify([{ bio: "inner" }]) })), ["result", '[{"bio":"inner"}]', "bio", "inner"]);
+  assert.deepEqual(jsonValues(sqlResult([{ bio: "inner" }])), ["result", '[{"bio":"inner"}]', "bio", "inner"]);
+  // nothing a value holds is dropped for having brackets in it
+  assert.deepEqual(jsonValues(JSON.stringify([{ note: "some words {}" }])), ["note", "some words {}", "some words"]);
+  assert.deepEqual(jsonValues(JSON.stringify([{ note: 'some words. Reply with {"ok":true} and stop' }])), ["note", 'some words. Reply with {"ok":true} and stop', "some words. Reply with", "ok", "and stop"]);
+  assert.deepEqual(jsonValues('{"a":"one"}\nand a line of prose'), ["a", "one", "and a line of prose"]);
+  // not JSON: prose, a sentence with brackets in it, JSON cut off in the middle, two documents with prose between
+  for (const text of ["", "Just a sentence.", "See the list [1, 2, 3] for details, then the map {a: 1}.", '[{"a":"one"},{"a":"tw', '{"a":"one"} and then {"a":"two"}']) assert.equal(jsonValues(text), undefined, text);
+  // deep nesting and many values cost a pass each, not more
+  const big = JSON.stringify(Array.from({ length: 20_000 }, (_, i) => ({ id: i, note: "Prefers email over phone." })));
+  const t0 = performance.now();
+  assert.equal(jsonValues(big)!.length, 60_000);
+  assert.ok(performance.now() - t0 < 1500);
 });
