@@ -23,6 +23,12 @@ Content reaching a model passes through states: raw bytes, the page after script
 | secrets | credentials in content (cloud, Git, registry, payment and model-provider tokens, private keys, credentials in URLs): named by kind, redacted from delivered text, excerpts, the attack log and the public feed; never logged | Kith & Revere (ported) |
 | plugin | custom detectors over any surface | new |
 
+## Privacy
+
+No telemetry, no analytics, no phoning home, and no model or outside service in the scan. The gate contacts
+only the sites you ask it to fetch, plus anything you turn on yourself. [PRIVACY.md](PRIVACY.md) lists every
+outside contact, what each one learns and when.
+
 ## Verdict policy
 
 | Tier | Delivered to the model | Overridable | Logged |

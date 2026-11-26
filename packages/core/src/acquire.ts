@@ -12,7 +12,7 @@
 
 import { Agent, ProxyAgent, fetch as undiciFetch, type Dispatcher } from "undici";
 import { checkTarget, NetPolicyError, type NetPolicy } from "./netpolicy.js";
-import type { AcquireResult, IngressConfig } from "./types.js";
+import { ENGINE_VERSION, type AcquireResult, type IngressConfig } from "./types.js";
 
 const HUMAN_HEADERS: Record<string, string> = {
   "user-agent":
@@ -27,8 +27,12 @@ const HUMAN_HEADERS: Record<string, string> = {
   "upgrade-insecure-requests": "1",
 };
 
-/** the gate's own name, used when agentUserAgents is empty */
-export const HONEST_USER_AGENT = "AcePasteIngress/0.8 (+https://acepaste.xyz/ingress)";
+/**
+ * The gate's own name, used when agentUserAgents is empty, for the retry after a site refuses AI user agents,
+ * and for blocklist downloads. It carries the major.minor version only (0.9, not 0.9.30), so it stays current
+ * without telling a site exactly which release you run. INGRESS_SELF_UA replaces it entirely.
+ */
+export const HONEST_USER_AGENT = process.env.INGRESS_SELF_UA?.trim() || `AcePasteIngress/${ENGINE_VERSION.split(".").slice(0, 2).join(".")} (+https://acepaste.xyz/ingress)`;
 
 const AGENT_HEADERS: Record<string, string> = {
   "user-agent": HONEST_USER_AGENT,
