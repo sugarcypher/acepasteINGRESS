@@ -370,7 +370,7 @@ server.listen(PORT, HOST, () => process.stderr.write(JSON.stringify({ event: "in
 
 // The blocklists the egress gate uses go stale. On a person's machine (a loopback bind) this service is the one
 // process that is always running, so it starts the refresh (a separate, detached process) when it starts and
-// looks again every six hours, when INGRESS_BLOCKLIST_AUTO=on (off by default since 0.9.31). Nothing here waits for it. A hosted
+// looks again every six hours. Nothing here waits for it. INGRESS_BLOCKLIST_AUTO=off turns it off. A hosted
 // deployment gates content for others and brokers nobody's actions: it has no use for the lists.
 if (isLoopbackBind(HOST)) {
   startBlocklistRefresh();

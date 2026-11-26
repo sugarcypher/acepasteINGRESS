@@ -61,8 +61,7 @@ test("blocklist refresh starts one detached update, never twice at once, never w
   const now = Date.parse("2026-11-20T12:00:00Z");
   const started: string[][] = [];
   const spawnImpl = (_command: string, args: string[]) => { started.push(args); };
-  const go = (at: number, env: Record<string, string | undefined> = { INGRESS_BLOCKLIST_AUTO: "on" }) => startBlocklistRefresh({ dir, env, now: () => at, cli: "/x/cli.js", spawnImpl });
-  assert.equal(go(now, {}), "off", "unset means off");
+  const go = (at: number, env: Record<string, string | undefined> = {}) => startBlocklistRefresh({ dir, env, now: () => at, cli: "/x/cli.js", spawnImpl });
   assert.equal(go(now, { INGRESS_BLOCKLIST_AUTO: "off" }), "off");
   assert.equal(existsSync(dir), false, "turned off, it leaves no trace");
   assert.equal(go(now), "started");
@@ -77,8 +76,8 @@ test("blocklist refresh starts one detached update, never twice at once, never w
   const dir2 = fresh();
   mkdirSync(dir2, { recursive: true });
   for (const f of BLOCKLIST_FEEDS) writeFileSync(join(dir2, `${f.name}.txt`), list(6));
-  assert.equal(startBlocklistRefresh({ dir: dir2, env: { INGRESS_BLOCKLIST_AUTO: "on" }, cli: "/x/cli.js", spawnImpl }), "fresh");
+  assert.equal(startBlocklistRefresh({ dir: dir2, env: {}, cli: "/x/cli.js", spawnImpl }), "fresh");
   // a process that cannot be started is a refresh that did not happen, not an error for the caller
-  assert.equal(startBlocklistRefresh({ dir: fresh(), env: { INGRESS_BLOCKLIST_AUTO: "on" }, now: () => now, cli: "/x/cli.js", spawnImpl: () => { throw new Error("spawn EAGAIN"); } }), "failed");
-  assert.equal(startBlocklistRefresh({ dir: fresh(), env: { INGRESS_BLOCKLIST_AUTO: "on" }, now: () => now, cli: "/nonexistent/cli.js" }), "failed");
+  assert.equal(startBlocklistRefresh({ dir: fresh(), env: {}, now: () => now, cli: "/x/cli.js", spawnImpl: () => { throw new Error("spawn EAGAIN"); } }), "failed");
+  assert.equal(startBlocklistRefresh({ dir: fresh(), env: {}, now: () => now, cli: "/nonexistent/cli.js" }), "failed");
 });

@@ -2,13 +2,13 @@
  * Keeping the blocklists current.
  *
  * `ingress blocklist update` downloads the free lists. Until 0.9.25 a person had to run it, so an installed
- * gate had an empty list on its first day and a stale one a month later. With INGRESS_BLOCKLIST_AUTO=on the lists
- * refresh themselves: when the newest downloaded list is more than a day old (or there is none), the session-start
- * hook, the HTTP service and the MCP proxy start the same command as a separate, detached process and carry on.
- * Nothing waits for it and nothing fails because of it.
+ * gate had an empty list on its first day and a stale one a month later. Now the lists refresh themselves:
+ * when the newest downloaded list is more than a day old (or there is none), the session-start hook, the HTTP
+ * service and the MCP proxy start the same command as a separate, detached process and carry on. Nothing waits
+ * for it and nothing fails because of it. INGRESS_BLOCKLIST_AUTO=off turns that off.
  *
- * Since 0.9.31 this is off unless you turn it on. Each download tells abuse.ch, Spamhaus and Emerging Threats
- * your IP address, and the gate makes no outside contact a person did not ask for.
+ * Each download tells abuse.ch, Spamhaus and Emerging Threats your IP address and the gate's user agent, and
+ * nothing else. PRIVACY.md lists it.
  *
  * Only the addresses in BLOCKLIST_FEEDS are contacted. A download is kept only if it parses as a list: a block
  * page or an error page saved as a list would silently protect nothing.
@@ -92,9 +92,9 @@ export function claimBlocklistRefresh(dir: string, now: number): boolean {
   return false;
 }
 
-/** Automatic refresh runs only when INGRESS_BLOCKLIST_AUTO is on, 1, true or yes. Unset means off. */
+/** Automatic refresh is on unless INGRESS_BLOCKLIST_AUTO is off, 0, false or no. */
 export function blocklistAutoOn(env: Record<string, string | undefined> = process.env): boolean {
-  return /^(on|1|true|yes)$/i.test((env.INGRESS_BLOCKLIST_AUTO ?? "").trim());
+  return !/^(off|0|false|no)$/i.test((env.INGRESS_BLOCKLIST_AUTO ?? "").trim());
 }
 
 export type RefreshStart = "started" | "off" | "fresh" | "recently-tried" | "failed";

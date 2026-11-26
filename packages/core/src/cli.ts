@@ -504,7 +504,7 @@ async function provenanceCommand(a: string[]) {
  *   ingress blocklist check <host>    is this host or address on a list?
  * Lists are plain text files in <state>/blocklists; add your own there, one host, address or IPv4 range per line.
  * The broker and the egress hook refuse any action whose arguments name a listed destination.
- * With INGRESS_BLOCKLIST_AUTO=on the downloaded lists refresh themselves once a day (see blocklist-update.ts). Off by default.
+ * The downloaded lists refresh themselves once a day (see blocklist-update.ts); INGRESS_BLOCKLIST_AUTO=off stops that.
  */
 async function blocklistCommand(a: string[]) {
   const dir = join(stateDir(), "blocklists");
@@ -527,7 +527,7 @@ async function blocklistCommand(a: string[]) {
     if (hit) process.exitCode = 1;
     return;
   }
-  const auto = blocklistAutoOn() ? "refreshed automatically once a day (INGRESS_BLOCKLIST_AUTO=on)" : "automatic refresh is off; INGRESS_BLOCKLIST_AUTO=on turns it on";
+  const auto = blocklistAutoOn() ? "refreshed automatically once a day" : "automatic refresh is off (INGRESS_BLOCKLIST_AUTO)";
   if (!b.size) { console.log(`no blocklists in ${dir}\nrun: ingress blocklist update (${auto})`); return; }
   const at = blocklistsRefreshedAt(dir);
   const when = at === undefined ? "the free lists have not been downloaded" : `last refreshed ${new Date(at).toISOString().slice(0, 16).replace("T", " ")} UTC (${Math.max(0, Math.round((Date.now() - at) / 3_600_000))} hours ago)`;

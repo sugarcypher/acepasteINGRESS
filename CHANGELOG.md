@@ -8,9 +8,6 @@ behavior changes; receipts carry it so verdicts are reproducible. Releases up to
 
 Privacy defaults. Nothing about verdicts changes.
 
-- **Blocklist refresh is off by default.** Each download tells abuse.ch, Spamhaus and Emerging Threats your IP
-  address, so it now runs only when you ask: `ingress blocklist update`, or `INGRESS_BLOCKLIST_AUTO=on` for the
-  daily refresh. Lists you already downloaded keep working. `ingress blocklist` says whether refresh is on.
 - **The gate's own user agent carries the current version, to major.minor only.** It said `AcePasteIngress/0.8`
   long after 0.8, and now reads `AcePasteIngress/0.9`. A site can't tell which exact release you run.
   `INGRESS_SELF_UA` replaces the string.
