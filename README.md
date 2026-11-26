@@ -4,7 +4,7 @@
 
 ![Ingress refusing a page with white-on-white instructions, then passing a clean page](docs/demo/ingress-demo.gif)
 
-<sub>Real output from 0.9.31 on [`docs/demo/page.html`](docs/demo/page.html) and [`clean.html`](docs/demo/clean.html), trimmed to fit.</sub>
+<sub>Real output from 0.9.31 on [`docs/demo/page.html`](docs/demo/page.html) and [`clean.html`](docs/demo/clean.html), trimmed to fit, with explanatory labels added.</sub>
 
 **The problem:** a web page can hide text that a person never sees, and an AI agent reads all of it: white-on-white text, invisible Unicode, off-screen notes, or a different page served only to bots. The agent can follow those instructions, and afterward nobody can show what it read. Ingress sits in front of your agent's web fetch and refuses anything the model would receive that you would not see.
 
