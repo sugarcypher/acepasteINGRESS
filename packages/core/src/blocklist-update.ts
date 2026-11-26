@@ -7,6 +7,9 @@
  * service and the MCP proxy start the same command as a separate, detached process and carry on. Nothing waits
  * for it and nothing fails because of it. INGRESS_BLOCKLIST_AUTO=off turns that off.
  *
+ * Each download tells abuse.ch, Spamhaus and Emerging Threats your IP address and the gate's user agent, and
+ * nothing else. PRIVACY.md lists it.
+ *
  * Only the addresses in BLOCKLIST_FEEDS are contacted. A download is kept only if it parses as a list: a block
  * page or an error page saved as a list would silently protect nothing.
  */
@@ -89,6 +92,11 @@ export function claimBlocklistRefresh(dir: string, now: number): boolean {
   return false;
 }
 
+/** Automatic refresh is on unless INGRESS_BLOCKLIST_AUTO is off, 0, false or no. */
+export function blocklistAutoOn(env: Record<string, string | undefined> = process.env): boolean {
+  return !/^(off|0|false|no)$/i.test((env.INGRESS_BLOCKLIST_AUTO ?? "").trim());
+}
+
 export type RefreshStart = "started" | "off" | "fresh" | "recently-tried" | "failed";
 
 /**
@@ -98,7 +106,7 @@ export type RefreshStart = "started" | "off" | "fresh" | "recently-tried" | "fai
 export function startBlocklistRefresh(o: { dir?: string; env?: Record<string, string | undefined>; now?: () => number; cli?: string; spawnImpl?: (command: string, args: string[]) => void } = {}): RefreshStart {
   try {
     const env = o.env ?? process.env;
-    if (/^(off|0|false|no)$/i.test(env.INGRESS_BLOCKLIST_AUTO ?? "")) return "off";
+    if (!blocklistAutoOn(env)) return "off";
     const dir = o.dir ?? join(stateDir(), "blocklists");
     const now = o.now?.() ?? Date.now();
     if (!blocklistRefreshDue(dir, now)) return "fresh";

@@ -56,7 +56,7 @@ export { postToolUse, preToolUse, preToolUseAnswered, localPortProgram, userProm
 export type { HookGate, HookOptions, EgressHookOptions } from "./agent-hooks.js";
 export { oneTimeCodes, carriesCode, credentialsLeaving, hostsMentioned, Blocklist, BLOCKLIST_FEEDS, peripheralEgress, loopbackPorts, isForwarder, HomeCalls } from "./egress.js";
 export type { PeripheralEgress } from "./egress.js";
-export { updateBlocklists, blocklistsRefreshedAt, blocklistRefreshDue, claimBlocklistRefresh, startBlocklistRefresh, BLOCKLIST_MAX_AGE_MS, BLOCKLIST_RETRY_MS } from "./blocklist-update.js";
+export { updateBlocklists, blocklistsRefreshedAt, blocklistRefreshDue, claimBlocklistRefresh, startBlocklistRefresh, blocklistAutoOn, BLOCKLIST_MAX_AGE_MS, BLOCKLIST_RETRY_MS } from "./blocklist-update.js";
 export type { FeedOutcome, RefreshStart } from "./blocklist-update.js";
 export {
   startEgressProxy, decideConnection, egressProxyOptionsFromEnv, egressProxyOn, ensureEgressProxy, proxyHealth, proxySecret, sessionToken, sessionOfToken, proxyEnv,

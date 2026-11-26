@@ -4,6 +4,16 @@ Every change bumps the patch version of all three packages. The ruleset id chang
 behavior changes; receipts carry it so verdicts are reproducible. Releases up to 0.9.6 are in the
 [README](README.md#changes-in-096-2026-11-18-ruleset-20261118-3-unchanged).
 
+## 0.9.31 (2026-11-25, ruleset unchanged)
+
+Privacy defaults. Nothing about verdicts changes.
+
+- **The gate's own user agent carries the current version, to major.minor only.** It said `AcePasteIngress/0.8`
+  long after 0.8, and now reads `AcePasteIngress/0.9`. A site can't tell which exact release you run.
+  `INGRESS_SELF_UA` replaces the string.
+- **PRIVACY.md** lists every outside contact the gate can make, what each one learns and when, and what a
+  hosted service's public attack feed publishes.
+
 ## 0.9.30 (2026-11-21, ruleset 2026.11.21-3)
 
 One attacking row among ordinary rows: the learned pass now reads the values of a table one by one.
