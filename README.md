@@ -1,5 +1,28 @@
 # AcePaste Ingress
 
+**Stops your AI agent from obeying instructions that web pages hide from you.**
+
+![Ingress refusing a page with white-on-white instructions, then passing a clean page](docs/demo/ingress-demo.gif)
+
+<sub>Real output from 0.9.31 on [`docs/demo/page.html`](docs/demo/page.html) and [`clean.html`](docs/demo/clean.html), trimmed to fit.</sub>
+
+**The problem:** a web page can hide text that a person never sees, and an AI agent reads all of it: white-on-white text, invisible Unicode, off-screen notes, or a different page served only to bots. The agent can follow those instructions, and afterward nobody can show what it read. Ingress sits in front of your agent's web fetch and refuses anything the model would receive that you would not see.
+
+- **Refuses hidden instructions:** invisible Unicode, CSS-hidden or background-coloured text, and payloads in attributes, comments, SVG or `srcdoc`.
+- **Catches cloaking:** fetches twice, and can render in a throwaway browser, to catch pages that show bots something different.
+- **Signs a receipt for every verdict:** hash-chained and signed with ECDSA P-256, so you can prove later what your agent read.
+- **Quarantines sources:** block a host and see everything it already delivered.
+- **Asks a person before risky actions:** once outside content is read, side-effecting tool calls need human approval.
+- **Runs on your machine:** MCP server, CLI and library, or HTTP service. No telemetry ([PRIVACY.md](PRIVACY.md)).
+
+```bash
+npx @acepaste/ingress https://example.com      # check one page
+```
+
+For Claude Desktop, Claude Code, Cursor or any MCP client, see [As a Model Context Protocol server](#as-a-model-context-protocol-server).
+
+---
+
 A security gate between internet content and AI ingestion. One engine, many frontends.
 
 Ingress is the engineering term for traffic entering a system: this controls what enters a model's context, the way an ingress controller controls what enters a cluster. By ThinkWell Labs, from the makers of the AcePaste cleaner. Formerly AcePaste Gate. Pre-1.0: interfaces may still change.
