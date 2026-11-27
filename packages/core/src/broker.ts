@@ -28,6 +28,7 @@
 
 import { createHash, randomBytes } from "node:crypto";
 import { BurstCounter, DEFAULT_BURST, actionKey, carriesCanary, newCanary, persistenceShapes, type BurstPolicy } from "./safeguards.js";
+import { MAX_RUN_PRINTS, contentFingerprints, contentMatches as contentMatchCount, dnsExfilShapes, egressTargets, urlCarriage } from "./exfil.js";
 import { HomeCalls, carriesCode, credentialsLeaving, hostsMentioned, isForwarder, loopbackPorts, oneTimeCodes, peripheralEgress, type Blocklist } from "./egress.js";
 
 export type ActionDecision = "allow" | "require_approval" | "deny";
@@ -188,12 +189,16 @@ interface RunState {
   typed: Set<string>;
   heardPerson: boolean;
   home: HomeCalls;
+  /** fingerprints of text the run read (exfil.contentFingerprints), oldest first; never the text itself */
+  prints: Set<string>;
 }
 
 /** A run's state as plain data, so a hook that starts a new process per event can carry it between events. */
 export interface SerializedRun {
   sources: string[]; receipts: string[]; hosts: string[]; quarantined: string[]; canaries: string[];
   codes: Array<[string, number]>; mentioned: Array<[string, string]>; typed: string[]; heardPerson: boolean; home: Record<string, number[]>; burst: { at: number[]; same: Array<[string, number[]]> };
+  /** fingerprints of text the run read (absent in state saved by earlier versions) */
+  prints?: string[];
 }
 
 /** deterministic JSON: object keys sorted at every depth, so one call has one digest */
@@ -333,14 +338,14 @@ export class ActionBroker {
 
   private run(runId: string): RunState {
     let r = this.runs.get(runId);
-    if (!r) { r = { sources: new Set(), receipts: new Set(), hosts: new Set(), quarantined: new Set(), canaries: [], burst: new BurstCounter(), codes: new Map(), mentioned: new Map(), typed: new Set(), heardPerson: false, home: new HomeCalls() }; this.runs.set(runId, r); }
+    if (!r) { r = { sources: new Set(), receipts: new Set(), hosts: new Set(), quarantined: new Set(), canaries: [], burst: new BurstCounter(), codes: new Map(), mentioned: new Map(), typed: new Set(), heardPerson: false, home: new HomeCalls(), prints: new Set() }; this.runs.set(runId, r); }
     return r;
   }
 
   /** A run's state as plain data (see SerializedRun). */
   exportRun(runId: string): SerializedRun {
     const r = this.run(runId);
-    return { sources: [...r.sources].slice(-200), receipts: [...r.receipts].slice(-200), hosts: [...r.hosts].slice(-400), quarantined: [...r.quarantined], canaries: [...r.canaries], codes: [...r.codes], mentioned: [...r.mentioned].slice(-800), typed: [...r.typed].slice(-400), heardPerson: r.heardPerson, home: r.home.export(), burst: r.burst.export() };
+    return { sources: [...r.sources].slice(-200), receipts: [...r.receipts].slice(-200), hosts: [...r.hosts].slice(-400), quarantined: [...r.quarantined], canaries: [...r.canaries], codes: [...r.codes], mentioned: [...r.mentioned].slice(-800), typed: [...r.typed].slice(-400), heardPerson: r.heardPerson, home: r.home.export(), burst: r.burst.export(), prints: [...r.prints].slice(-MAX_RUN_PRINTS) };
   }
 
   /**
@@ -367,6 +372,7 @@ export class ActionBroker {
     for (const e of Array.isArray(s.mentioned) ? s.mentioned : []) if (Array.isArray(e) && typeof e[0] === "string" && typeof e[1] === "string") r.mentioned.set(e[0], e[1]);
     for (const x of strs(s.typed)) r.typed.add(x);
     if (s.heardPerson === true) r.heardPerson = true;
+    for (const x of strs(s.prints)) if (/^(?:t:)?[0-9a-f]{12}$/.test(x)) r.prints.add(x);
     r.home.import(s.home);
     r.burst.import(s.burst);
   }
@@ -405,6 +411,9 @@ export class ActionBroker {
       const now = this.deps.now?.() ?? Date.now();
       for (const c of oneTimeCodes(source.text)) r.codes.set(c, now);
       for (const h of hostsMentioned(source.text)) if (!r.mentioned.has(h) && r.mentioned.size < 2000) r.mentioned.set(h, source.ref);
+      // fingerprints, so text from this source leaving later inside an address is recognised (exfil.ts)
+      for (const f of contentFingerprints(source.text)) { r.prints.delete(f); r.prints.add(f); }
+      if (r.prints.size > MAX_RUN_PRINTS) { const drop = r.prints.size - MAX_RUN_PRINTS; let i = 0; for (const f of r.prints) { if (i++ >= drop) break; r.prints.delete(f); } }
     }
     if (source.receiptDigest) r.receipts.add(source.receiptDigest);
     const host = source.host?.toLowerCase().replace(/\.$/, "");
@@ -440,6 +449,16 @@ export class ActionBroker {
     const r = this.run(runId);
     const h = host.toLowerCase().replace(/^\[|\]$/g, "").replace(/\.$/, "");
     return { allowed: hostAllowed(h, this.policy.allowHosts), typed: typedBy(r, h), fromContent: metIn(r, h), tainted: r.sources.size > 0, heardPerson: r.heardPerson };
+  }
+
+  /**
+   * What the exfiltration guard needs to judge a model's output for this run (exfil.outcheck): hosts it fetched
+   * from or the person named, fingerprints of what it read, its markers, and verification codes still live.
+   */
+  exfilContext(runId: string): { visitedHosts: string[]; prints: Set<string>; canaries: string[]; codes: string[] } {
+    const r = this.run(runId);
+    const now = this.deps.now?.() ?? Date.now();
+    return { visitedHosts: [...new Set([...r.hosts, ...r.typed, ...this.policy.allowHosts.map((h) => h.replace(/^\./, ""))])], prints: new Set(r.prints), canaries: [...r.canaries], codes: [...r.codes].filter(([, at]) => now - at <= this.policy.codeTtlMs).map(([c]) => c) };
   }
 
   /** decide without asking anyone (for previews and tests) */
@@ -529,6 +548,41 @@ export class ActionBroker {
         const n = r.home.count(h, now);
         if (n >= this.policy.callHomeLimit) { decision = strongest(decision, "require_approval"); reasons.push(`${n} requests in ten minutes to ${h}, a host this run first met in ${provenance(h)}`); }
       }
+      // data riding out inside an address (exfil.ts): text this run read earlier, or a data-shaped host name
+      const local = (h: string) => /^(?:localhost|127(?:\.\d{1,3}){3}|::1|0\.0\.0\.0)$/.test(h);
+      const visited = (h: string) => local(h) || hostAllowed(h, this.policy.allowHosts) || (!!rule?.allowDestinations && hostAllowed(h, rule.allowDestinations)) || typedBy(r, h) || r.hosts.has(h) || [...r.hosts].some((v) => h.endsWith(`.${v}`));
+      let carriesData = false;
+      const urls = walked.strings.filter((s) => s.length <= 200_000).flatMap((s) => [...s.matchAll(/\b(?:https?|wss?|ftp):\/\/[^\s"'<>()]+/gi)].map((m) => m[0])).slice(0, 200);
+      const dnsSeen = new Set<string>();
+      for (const u of urls) {
+        const host = (() => { try { return new URL(u).hostname.toLowerCase(); } catch { return ""; } })();
+        if (!host || local(host) || hostAllowed(host, this.policy.allowHosts)) continue;
+        for (const c of urlCarriage(u, { prints: r.prints }).filter((x) => x.kind === "content" || x.kind === "dns")) {
+          if (c.kind === "dns") dnsSeen.add(host);
+          carriesData = true; decision = strongest(decision, "require_approval"); reasons.push(`a URL to ${host}: ${c.why}`);
+        }
+      }
+      // a name looked up without a URL (dig, nslookup, ping, a tool's "host" field)
+      for (const h of dest.hosts) {
+        if (dnsSeen.has(h) || local(h) || hostAllowed(h, this.policy.allowHosts)) continue;
+        const d = dnsExfilShapes(h);
+        if (d.length) { carriesData = true; decision = strongest(decision, "require_approval"); reasons.push(...d); }
+      }
+      // a call that delivers data to a host this run never fetched from and the person never named. Data here
+      // means: a file or command output (sends), a credential, an encoded or data-carrying address, or text this
+      // run read earlier in the payload. A plain message from a send tool counts only toward a host that outside
+      // content named (the shape of "email the summary to this address").
+      if (!readOnly) {
+        const payload = action.tool === "shell__run" ? [] : payloadStrings(action.args);
+        const readBack = payload.length ? Math.max(0, ...payload.map((p) => contentMatchCount(p, r.prints))) : 0;
+        const strong = carriesData || readBack >= 2 || !!action.sends?.length || creds > 0 || exfilShapes(action.args).length > 0;
+        const weak = action.tool !== "shell__run" && isSendTool(action.tool) && payload.length > 0;
+        const strangers = strong || weak ? egressTargets(action.tool, action.args).filter((h) => !visited(h) && (strong || metIn(r, h) !== undefined)) : [];
+        if (strangers.length) {
+          decision = strongest(decision, "require_approval");
+          reasons.push(`it sends data${readBack >= 2 ? " that includes text this run read earlier" : ""} to ${strangers.slice(0, 3).join(", ")}${strangers.length > 3 ? ` and ${strangers.length - 3} more` : ""}, ${strangers.length === 1 ? "a host" : "hosts"} this run never fetched from and you did not name`);
+        }
+      }
       // once a person is being asked anyway, say where each destination came from
       if (decision !== "allow") for (const h of fromContent.slice(0, 4)) reasons.push(`${h} first appeared in ${provenance(h)}${r.heardPerson ? ", not in anything you typed" : ""}`);
     }
@@ -612,6 +666,26 @@ export class ActionBroker {
     this.deps.log?.({ event: "broker.decision", at: new Date(now).toISOString(), runId: action.runId, tool: action.tool, digest: c.digest, decision: verdict.decision, permitted: verdict.permitted, reasons: verdict.reasons, approval: verdict.approval, sources: this.state(action.runId).sources, policy: policyRef });
     return { ...verdict, args: deepFreeze(JSON.parse(c.canonicalArgs)) };
   }
+}
+
+/** a tool whose own name says it delivers something somewhere (email, a message, an HTTP request) */
+function isSendTool(tool: string): boolean {
+  const words = ownName(tool).replace(/([a-z0-9])([A-Z])/g, "$1 $2").toLowerCase().split(/[^a-z0-9]+/).filter(Boolean);
+  return words.some((w) => /^(?:send|email|mail|post|publish|upload|webhook|request|http|https|fetch|notify|message|reply|forward|share|submit|curl)$/.test(w));
+}
+/** argument fields that carry a payload rather than an address */
+const PAYLOAD_FIELD = /^(?:body|content|text|message|data|payload|html|json|attachments?|subject|form|params|query|note|comment)$/i;
+/** the strings inside payload fields, at any depth */
+function payloadStrings(args: unknown): string[] {
+  const out: string[] = [];
+  const go = (x: unknown, inPayload: boolean, depth: number) => {
+    if (depth > 12 || out.length > 200) return;
+    if (typeof x === "string") { if (inPayload && x.length <= 200_000) out.push(x); }
+    else if (Array.isArray(x)) for (const y of x) go(y, inPayload, depth + 1);
+    else if (x && typeof x === "object") for (const [k, y] of Object.entries(x as Record<string, unknown>)) go(y, inPayload || PAYLOAD_FIELD.test(k), depth + 1);
+  };
+  go(args, false, 0);
+  return out;
 }
 
 function strongest(a: ActionDecision, b: ActionDecision): ActionDecision {

@@ -14,6 +14,20 @@ behavior changes; receipts carry it so verdicts are reproducible. Releases up to
   code, and risky committed MCP configs. `--diff <ref>` scans only changed files; output is human, `--json` or
   `--sarif` (SARIF 2.1.0); exit code 1 on any high finding. Local only, no network. Composite action in
   `integrations/github-action`; workflow and pre-commit examples in `docs/REPOSCAN.md`.
+- **`ingress pkgcheck`: check a package before installing it.** Looks each npm or PyPI package up on the public
+  registry and flags names that do not exist (likely made up by an AI, "slopsquatting"), versions that do not
+  exist, lookalikes of popular names (built-in list, no download), packages under 30 days old, npm install
+  scripts, PyPI releases without a wheel, missing source links, deprecation, and READMEs aimed at an AI agent.
+  Reads install lines (`npm install`, `pnpm add`, `yarn add`, `pip install`, `uv add`) with `--command` or as a
+  Claude Code hook (`--hook`). `--offline` runs only the name check. New network contacts: registry.npmjs.org and
+  pypi.org, only when you run it (PRIVACY.md). Exit code 1 on a high finding. Library export: `pkgcheck()`.
+- **Exfiltration guard: `ingress outcheck` and stronger tool-call checks.** `outcheck` reads a model's reply for
+  data hidden in image and link addresses, HTML and CSS URLs and subdomains (encoded runs, credentials, the session
+  marker, text from earlier tool results) before it is rendered; `--safe` prints the reply without them. The action
+  broker now also sends to a person: a URL that carries text the run read earlier, a DNS lookup that carries data,
+  and a call that sends data to a host the run never fetched from and the person never named. The run keeps
+  short fingerprints of what it read for this, never the text. Library exports: `outcheck()`, `urlCarriage()`,
+  `dnsExfilShapes()`.
 
 ## 0.9.33 (2026-11-27, ruleset unchanged)
 
