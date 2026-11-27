@@ -87,7 +87,7 @@ export { scanCode, extractCodeUnits, guessLang, lex } from "./codepass.js";
 export type { CodeUnit, CodeLang, CodeCoverage } from "./codepass.js";
 export { INSTRUCTION_FILE_PATTERNS, discoverInstructionFiles, readInstructionBytes, approveInstructionFile, checkInstructionFiles, loadInstructionFiles } from "./instructions.js";
 export type { InstructionFile, InstructionCheck, InstructionStatus, ApprovalEntry } from "./instructions.js";
-export { auditEnvironment, formatAudit, readChromiumExtensions } from "./audit.js";
+export { auditEnvironment, formatAudit, readChromiumExtensions, mcpConfigLocations } from "./audit.js";
 export type { AuditReport, AuditCheck, AuditOptions } from "./audit.js";
 export * from "./audit-parsers.js";
 export * from "./audit-local.js";
@@ -99,3 +99,5 @@ export { apiscan, formatApiscan, parseApiscanArgs, parseOpenApiJson, APISCAN_NOT
 export type { ApiScanFinding, ApiScanReport, ApiScanOptions, ApiScanFetch, ApiScanGate, ApiScanSeverity, ApiScanCheck } from "./apiscan.js";
 export { toolDefinitionText, toolDefinitionItems, reviewToolDefinitions, heldDescription, confirmServerTools, describeServerTools } from "./tooldefs.js";
 export type { ToolDefinition, ToolHold, ToolReview, ServerToolReview, DefinitionGate } from "./tooldefs.js";
+export { mcpscan, formatMcpscan, parseMcpscanArgs, serversFromConfig, checkServerConfig, checkDefinitionText, checkToolNames, definitionItems, comparePin, pinnedServerOf, toolListFingerprint, textDiff, loadPins, pinsPath, listServer, launchLine, showInvisible, MCPSCAN_CONNECT_NOTICE } from "./mcpscan.js";
+export type { McpScanFinding, McpScanReport, McpScanOptions, McpScanGate, McpScanSeverity, McpScanCheck, McpServerConfig, McpServerListing, McpScanServerResult, DefinitionItem } from "./mcpscan.js";

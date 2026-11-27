@@ -6,6 +6,15 @@ behavior changes; receipts carry it so verdicts are reproducible. Releases up to
 
 ## Unreleased
 
+- **`ingress mcpscan`: tool-poisoning and rug-pull scanner for the MCP servers your AI apps use.** Reads the
+  same client configs as `ingress audit` (plus `--config <file>` and this folder's `.mcp.json`) and flags
+  download-and-run launch commands, unpinned `npx`/`uvx` packages, credentials in the config (names only) and
+  plain-http servers. With `--connect` it starts each server (runs its code), lists tools, prompts and resources,
+  and never calls a tool; `--url` lists one remote server's tools (streamable HTTP or SSE). Every description goes
+  through the engine, plus checks for orders aimed at the model, cross-tool shadowing and look-alike tool names.
+  Tool lists are pinned in the state directory (`mcpscan-pins.json`); later scans report added, removed and
+  changed tools with a text diff, and `ingress mcpscan pin` accepts the current state. `--json`; exit 1 on high.
+  Library export: `mcpscan()`; `mcpConfigLocations()` is shared with the audit.
 - **`ingress apiscan <base-url>`: a gentle security check for HTTP APIs you own.** Only GET, HEAD and OPTIONS,
   no request bodies or attack payloads, about 60 requests at most with a pause between them, and the gate's own
   user agent. It checks transport (HTTPS redirect, certificate, HSTS), security headers, CORS, routes that answer

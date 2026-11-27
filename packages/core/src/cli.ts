@@ -10,9 +10,12 @@
  * ingress --keygen                  print a new ECDSA P-256 key pair for receipt signing
  * ingress apiscan <base-url> [--spec openapi.json|url] [--auth-header "Name: value"] [--burst] [--json] [--max-requests N]
  *                                   non-destructive security check of an HTTP API you own or may test (GET/HEAD/OPTIONS only)
+ * ingress mcpscan [pin] [--connect] [--config file] [--url URL [--header "Name: value"]] [--json] [--timeout S]
+ *                                   MCP tool-poisoning and rug-pull scanner (see mcpscan.ts)
  */
 import { readFileSync } from "node:fs";
 import { apiscan, formatApiscan, parseApiscanArgs, APISCAN_NOTICE } from "./apiscan.js";
+import { mcpscan, formatMcpscan, parseMcpscanArgs, MCPSCAN_CONNECT_NOTICE } from "./mcpscan.js";
 import { IngressEngine } from "./engine.js";
 import { HONEST_USER_AGENT } from "./acquire.js";
 import { summarize, cloakingConfigFromEnv } from "./summary.js";
@@ -55,6 +58,7 @@ async function main() {
   const chunksIn = async () => { const c: Buffer[] = []; for await (const x of process.stdin) c.push(x as Buffer); return Buffer.concat(c).toString("utf8"); };
   if (args[0] === "instructions") return instructionsCommand(args.slice(1));
   if (args[0] === "apiscan") return apiscanCommand(args.slice(1));
+  if (args[0] === "mcpscan") return mcpscanCommand(args.slice(1));
   if (args[0] === "hook") return hookCommand(args[1], await chunksIn());
   if (args[0] === "tools") return toolsCommand(args.slice(1));
   if (args[0] === "blocklist") return blocklistCommand(args.slice(1));
@@ -229,7 +233,7 @@ async function main() {
   let result;
   if (flag("text")) result = await engine.scan(await chunksIn(), { override });
   else if (url) result = await engine.fetch(url, { override });
-  else { console.error("usage: ingress <url> | ingress --text < file   [--json | --summary] [--no-cloaking] [--human-fetch=http|browser] [--override] [--sandbox=always|escalate|off] [--policy=file.json] | ingress --verify < receipt.json | ingress apiscan <base-url> [--spec openapi.json] [--auth-header \"Name: value\"] [--burst] [--json] [--max-requests N]"); process.exit(2); }
+  else { console.error("usage: ingress <url> | ingress --text < file   [--json | --summary] [--no-cloaking] [--human-fetch=http|browser] [--override] [--sandbox=always|escalate|off] [--policy=file.json] | ingress --verify < receipt.json | ingress apiscan <base-url> [--spec openapi.json] [--auth-header \"Name: value\"] [--burst] [--json] [--max-requests N] | ingress mcpscan [--connect] [--config file] [--url URL] [--json]"); process.exit(2); }
 
   if (flag("json")) { console.log(JSON.stringify(result, null, 2)); return; }
   if (flag("summary")) { console.log(JSON.stringify(summarize(result))); if (result.tier === "unreachable") process.exitCode = 1; return; }
@@ -638,5 +642,31 @@ async function apiscanCommand(a: string[]) {
   let r;
   try { r = await apiscan(p.base, p.opts); } catch (e) { console.error(`ingress apiscan: ${(e as Error).message}`); process.exit(2); }
   console.log(p.json ? JSON.stringify(r, null, 2) : formatApiscan(r));
+  if (r.summary.high) process.exitCode = 1;
+}
+
+function mcpscanUsage(): string { return `usage: ingress mcpscan [--config file] [--connect] [--json] [--timeout seconds]
+       ingress mcpscan --url https://host/mcp [--header "Name: value"] [--json]
+       ingress mcpscan pin --connect | --url <url>     accept the current tool lists as the new pins
+Checks the MCP servers in your AI clients' config files (Claude Desktop, Claude Code, Cursor, Windsurf, VS Code,
+Gemini CLI, ./.mcp.json) for tool poisoning: hidden instructions in tool descriptions, invisible characters,
+orders about other tools, look-alike tool names, and tools that changed since they were pinned (rug pulls).
+Without --connect only the config files are read. --connect starts each server (runs its code) to read its tools.
+Exit 1 when any finding is high.`; }
+
+/**
+ *   ingress mcpscan [pin] [--connect] [--config file] [--url URL] [--header "Name: value"] [--json] [--timeout S]
+ * Tool-poisoning and rug-pull scan of configured MCP servers. Config only unless --connect (which starts the
+ * servers) or --url (one remote server, tools/list only). Exit 1 when any finding is high. See mcpscan.ts.
+ */
+async function mcpscanCommand(a: string[]) {
+  if (a.includes("--help") || a.includes("-h")) { console.log(mcpscanUsage()); return; }
+  const p = parseMcpscanArgs(a);
+  if (p.error) { console.error(`ingress mcpscan: ${p.error}\n${mcpscanUsage()}`); process.exit(2); }
+  if (p.opts.connect) console.error(`note: ${MCPSCAN_CONNECT_NOTICE}`);
+  let r;
+  try { r = await mcpscan(p.opts); } catch (e) { console.error(`ingress mcpscan: ${(e as Error).message}`); process.exit(2); }
+  if (p.opts.pin && !p.json) console.error(`pinned ${r.servers.filter((s) => s.pin === "pinned").length} server(s); later scans compare with these tool lists`);
+  console.log(p.json ? JSON.stringify(r, null, 2) : formatMcpscan(r));
   if (r.summary.high) process.exitCode = 1;
 }

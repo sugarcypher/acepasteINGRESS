@@ -186,13 +186,7 @@ export async function auditEnvironment(o: AuditOptions = {}): Promise<AuditRepor
   }
 
   // ---------- agent configuration ----------
-  const mcpConfigs: Array<[string, string]> = [
-    ["Claude Desktop", os === "darwin" ? join(home, "Library/Application Support/Claude/claude_desktop_config.json") : join(home, ".config/Claude/claude_desktop_config.json")],
-    ["Claude Code", join(home, ".claude.json")], ["Claude Code settings", join(home, ".claude/settings.json")],
-    ["Cursor", join(home, ".cursor/mcp.json")], ["Windsurf", join(home, ".codeium/windsurf/mcp_config.json")],
-    ["VS Code", os === "darwin" ? join(home, "Library/Application Support/Code/User/mcp.json") : join(home, ".config/Code/User/mcp.json")],
-    ["Gemini CLI", join(home, ".gemini/settings.json")],
-  ];
+  const mcpConfigs = mcpConfigLocations(home, os);
   for (const [label, p] of mcpConfigs) {
     const j = json(p);
     if (!j) { note("agent-config", label, "not present"); continue; }
@@ -284,6 +278,17 @@ export async function auditEnvironment(o: AuditOptions = {}): Promise<AuditRepor
   const order = { high: 0, review: 1, info: 2 } as const;
   findings.sort((a, b) => order[a.severity] - order[b.severity]);
   return { at: new Date().toISOString(), platform: os, summary: summarizeAudit(findings), findings, checked };
+}
+
+/** where MCP clients keep their server lists (label, path); shared by the audit and `ingress mcpscan` */
+export function mcpConfigLocations(home: string = homedir(), os: string = platform()): Array<[string, string]> {
+  return [
+    ["Claude Desktop", os === "darwin" ? join(home, "Library/Application Support/Claude/claude_desktop_config.json") : join(home, ".config/Claude/claude_desktop_config.json")],
+    ["Claude Code", join(home, ".claude.json")], ["Claude Code settings", join(home, ".claude/settings.json")],
+    ["Cursor", join(home, ".cursor/mcp.json")], ["Windsurf", join(home, ".codeium/windsurf/mcp_config.json")],
+    ["VS Code", os === "darwin" ? join(home, "Library/Application Support/Code/User/mcp.json") : join(home, ".config/Code/User/mcp.json")],
+    ["Gemini CLI", join(home, ".gemini/settings.json")],
+  ];
 }
 
 function tlsCheck(host: string): Promise<string | undefined> {

@@ -11,6 +11,7 @@
 - **Signs a receipt for every verdict:** hash-chained and signed with ECDSA P-256, so you can prove later what your agent read.
 - **Quarantines sources:** block a host and see everything it already delivered.
 - **Asks a person before risky actions:** once outside content is read, side-effecting tool calls need human approval.
+- **Checks your MCP servers:** `ingress mcpscan` finds poisoned tool descriptions, tools that give orders about other tools, look-alike tool names, and tools that changed after you pinned them.
 - **Checks your own APIs:** `ingress apiscan` looks for exposed files, open CORS, missing auth, leaked keys and responses an agent would obey, using only safe read requests.
 - **Runs on your machine:** MCP server, CLI and library, or HTTP service. No telemetry ([PRIVACY.md](https://github.com/sugarcypher/acepasteINGRESS/blob/main/PRIVACY.md)).
 
@@ -29,6 +30,18 @@ model.push(r.envelope);   // clean text in a provenance envelope, or a refusal w
 Verdicts: `clean` (delivered with a signed receipt), `suspect` (refused, human-overridable), `hostile` (refused, not overridable). Passes: acquire, policy, visibility, character (the production AcePaste invisible alphabet), script and supply-chain (underlight lineage), sandbox (optional headless Chromium), meaning, plugins.
 
 CLI: `npx @acepaste/ingress https://example.com` or `ingress --text < page.html`.
+
+## MCP scan
+
+`ingress mcpscan [--config file] [--connect] [--url URL [--header "Name: value"]] [--json]` checks the MCP servers
+in your AI apps' config files (Claude Desktop, Claude Code, Cursor, Windsurf, VS Code, Gemini CLI, `./.mcp.json`).
+Without `--connect` it reads only the configs: download-and-run launch commands, unpinned `npx`/`uvx` packages,
+credentials written into the file (names only) and plain-http servers. With `--connect` it starts each server
+(this runs the server's code), lists its tools, prompts and resources, and shuts it down; no tool is ever called.
+Every description is scanned for hidden instructions, invisible characters, orders aimed at the model, orders about
+another server's tools, and look-alike tool names. Each server's tool list is pinned by fingerprint in the Ingress
+state directory; later scans show tools added, removed or changed, with the old and new text. `ingress mcpscan pin
+--connect` accepts the current tools. Exit code 1 when any finding is high. In code: `mcpscan(options)`.
 
 ## API scan
 
