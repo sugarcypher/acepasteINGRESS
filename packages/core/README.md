@@ -13,6 +13,7 @@
 - **Asks a person before risky actions:** once outside content is read, side-effecting tool calls need human approval.
 - **Checks your MCP servers:** `ingress mcpscan` finds poisoned tool descriptions, tools that give orders about other tools, look-alike tool names, and tools that changed after you pinned them.
 - **Checks your own APIs:** `ingress apiscan` looks for exposed files, open CORS, missing auth, leaked keys and responses an agent would obey, using only safe read requests.
+- **Gates repos for coding agents:** `ingress reposcan` and a GitHub Action flag Trojan Source Unicode, instructions hidden in markdown, poisoned AGENTS.md files and install scripts that download and run code.
 - **Runs on your machine:** MCP server, CLI and library, or HTTP service. No telemetry ([PRIVACY.md](https://github.com/sugarcypher/acepasteINGRESS/blob/main/PRIVACY.md)).
 
 
@@ -61,5 +62,16 @@ comments and attributes, text served only to AI fetchers), with the verdict, the
 highlights, the bots-versus-browsers comparison and the receipt digest. No scripts or remote content; everything
 from the page is escaped. `ingress show --term <url|file>` prints the same in the terminal with hidden spans in red
 brackets. In code: `show()`, `renderShowHtml()`, `renderShowTerm()`.
+
+## Repo scan
+
+`ingress reposcan [dir] [--diff <git-ref>] [--json] [--sarif <file>|-]` checks a repository before a coding
+agent reads it: bidirectional and invisible Unicode (Trojan Source, tag characters, zero-width), instructions
+hidden in markdown comments, `<details>`, hidden styles, link titles and alt text, agent instruction files
+(AGENTS.md, CLAUDE.md, .cursorrules and the rest) that tell the agent to run downloads, read secrets, turn off
+safety or skip review, install scripts that download and run code, and risky MCP configs. Local only, no network.
+`--diff` scans only files changed since a git ref; `--sarif` writes SARIF 2.1.0 for GitHub code scanning. Exit
+code 1 when any finding is high. In code: `reposcan(dir, options)` and `toSarif(report)`. GitHub Action and
+pre-commit hook: https://github.com/sugarcypher/acepasteINGRESS/blob/main/docs/REPOSCAN.md
 
 Full documentation: https://github.com/sugarcypher/acepasteINGRESS

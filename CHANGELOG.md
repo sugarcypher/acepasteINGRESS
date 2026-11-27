@@ -4,6 +4,17 @@ Every change bumps the patch version of all three packages. The ruleset id chang
 behavior changes; receipts carry it so verdicts are reproducible. Releases up to 0.9.6 are in the
 [README](README.md#changes-in-096-2026-11-18-ruleset-20261118-3-unchanged).
 
+## Unreleased
+
+- **`ingress reposcan [dir]`: a repo gate for coding agents, with a GitHub Action.** Reads a working tree the way
+  an agent does and flags bidirectional and invisible Unicode (Trojan Source, tag characters, zero-width,
+  variation-selector runs) in any text or code file, instructions hidden in markdown (comments, `<details>`,
+  hidden styles, link titles, alt text; each run through the engine), agent instruction files that tell the
+  agent to run downloads, read secrets, turn off safety or skip review, install scripts that download and run
+  code, and risky committed MCP configs. `--diff <ref>` scans only changed files; output is human, `--json` or
+  `--sarif` (SARIF 2.1.0); exit code 1 on any high finding. Local only, no network. Composite action in
+  `integrations/github-action`; workflow and pre-commit examples in `docs/REPOSCAN.md`.
+
 ## 0.9.33 (2026-11-27, ruleset unchanged)
 
 - **`ingress mcpscan`: tool-poisoning and rug-pull scanner for the MCP servers your AI apps use.** Reads the

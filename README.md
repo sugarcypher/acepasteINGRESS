@@ -15,6 +15,7 @@
 - **Asks a person before risky actions:** once outside content is read, side-effecting tool calls need human approval.
 - **Checks your MCP servers:** `ingress mcpscan` finds poisoned tool descriptions, tools that give orders about other tools, look-alike tool names, and tools that changed after you pinned them.
 - **Checks your own APIs:** `ingress apiscan` looks for exposed files, open CORS, missing auth, leaked keys and responses an agent would obey, using only safe read requests.
+- **Gates repos for coding agents:** `ingress reposcan` and a GitHub Action flag Trojan Source Unicode, instructions hidden in markdown, poisoned AGENTS.md files and install scripts that download and run code.
 - **Runs on your machine:** MCP server, CLI and library, or HTTP service. No telemetry ([PRIVACY.md](PRIVACY.md)).
 
 ```bash
@@ -144,6 +145,7 @@ node packages/core/dist/src/cli.js --text < fixtures/hostile-kettle.html
 node packages/core/dist/src/cli.js --text --sandbox=always < fixtures/hostile-kettle.html
 node packages/core/dist/src/cli.js --verify < receipt.json
 node packages/core/dist/src/cli.js apiscan https://api.example.com   # an API you own; see API scan below
+node packages/core/dist/src/cli.js reposcan .                         # a repo gate for coding agents; see Repo scan below
 ```
 
 The browser sandbox needs a Chromium binary. Playwright is an optional dependency; set `INGRESS_CHROMIUM` to an existing binary to skip the download. Without one, the sandbox reports itself not-run and the static passes proceed.
@@ -273,6 +275,32 @@ ingress show --term docs/demo/page.html     # in the terminal: hidden spans in r
 ```
 
 The report is one static HTML file: inline CSS, a strict Content-Security-Policy, no scripts, fonts or remote images. Everything from the page is escaped, so a page cannot run code in its own report. A URL is fetched with the gate's normal fetch (both fingerprints when the cloaking check is on); nothing else is contacted. Without `--out` the HTML goes to stdout. The exit code is 1 when the verdict is not clean. The usual flags (`--policy=`, `--no-cloaking`, `--sandbox=`) apply. The person's view follows the engine's static model (inline styles, the page's own `<style>` blocks, colours); styles set by scripts and linked stylesheets are not drawn, though the verdict and findings still count them. The HTTP service has the same report at `GET /v1/show?url=` (same key and quota as `/v1/fetch`). Example: [`docs/demo/show-report.html`](docs/demo/show-report.html).
+
+### Repo scan: is this repository safe to hand to a coding agent?
+
+`ingress reposcan [dir]` reads a working tree the way a coding agent does and flags what a reviewer would not
+see. It runs locally, reads files and runs `git`, and makes no network connections.
+
+```sh
+ingress reposcan                       # the current directory
+ingress reposcan --diff origin/main    # only files changed since a ref, for pull requests and pre-commit hooks
+ingress reposcan --sarif out.sarif     # SARIF 2.1.0, so GitHub code scanning shows annotations
+```
+
+- **Hidden Unicode anywhere in text or code:** bidirectional overrides and isolates (Trojan Source), tag
+  characters (it spells out what they say), zero-width characters and variation-selector runs. Emoji, CJK,
+  accented names and right-to-left text are left alone.
+- **Instructions hidden in markdown:** HTML comments, collapsed `<details>`, hidden inline styles, link titles
+  and image alt text in agent files, READMEs and `docs/`, each run through the Ingress engine.
+- **Poisoned agent files:** `AGENTS.md`, `CLAUDE.md`, `.cursorrules`, `.cursor/rules`, copilot instructions and
+  the rest, when they tell the agent to pipe downloads into a shell, read secrets, turn off safety or skip review.
+- **Install scripts and MCP configs:** `postinstall` and friends that download and run code; committed MCP
+  servers that do the same, run unpinned packages or hold a literal credential.
+
+Human report, `--json` or `--sarif`; exit code 1 on any high finding. A composite GitHub Action lives in
+[`integrations/github-action`](integrations/github-action/action.yml). [docs/REPOSCAN.md](docs/REPOSCAN.md) has
+the full list of checks, a copy-paste workflow and a pre-commit hook. The action needs a release of
+`@acepaste/ingress` that includes `reposcan` on npm.
 
 ## As the metered HTTP service
 

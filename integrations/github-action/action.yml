@@ -1,0 +1,86 @@
+name: AcePaste Ingress repo gate
+description: >-
+  Scan a pull request for what coding agents read and reviewers cannot see: invisible or
+  bidirectional Unicode (Trojan Source), instructions hidden in markdown, poisoned AGENTS.md /
+  CLAUDE.md / .cursorrules files, install scripts that download and run code, and risky MCP
+  configs. Results show up as GitHub code scanning annotations.
+author: ThinkWell Labs
+branding:
+  icon: shield
+  color: green
+
+inputs:
+  base-ref:
+    description: Git ref or sha to compare against. Only files changed since it are scanned. Empty scans the whole tree.
+    required: false
+    default: ${{ github.event.pull_request.base.sha }}
+  path:
+    description: Directory to scan, relative to the workspace. Keep it at the repository root so annotations land on the right files.
+    required: false
+    default: "."
+  sarif-file:
+    description: Where to write the SARIF report.
+    required: false
+    default: ingress-reposcan.sarif
+  version:
+    description: Version of @acepaste/ingress to run (reposcan needs a release that includes it).
+    required: false
+    default: latest
+  upload:
+    description: Upload the SARIF to GitHub code scanning (needs permissions security-events write).
+    required: false
+    default: "true"
+  fail-on-high:
+    description: Fail the job when any finding is high.
+    required: false
+    default: "true"
+
+outputs:
+  sarif-file:
+    description: Path of the SARIF report.
+    value: ${{ inputs.sarif-file }}
+  exit-code:
+    description: 0 clean, 1 high findings, 2 the scan could not run.
+    value: ${{ steps.scan.outputs.exit-code }}
+
+runs:
+  using: composite
+  steps:
+    - uses: actions/setup-node@v4
+      with:
+        node-version: "20"
+
+    - id: scan
+      shell: bash
+      # inputs reach the script as environment variables, never pasted into it
+      env:
+        INGRESS_BASE: ${{ inputs.base-ref }}
+        INGRESS_PATH: ${{ inputs.path }}
+        INGRESS_SARIF: ${{ inputs.sarif-file }}
+        INGRESS_VERSION: ${{ inputs.version }}
+      run: |
+        set +e
+        args=(reposcan "$INGRESS_PATH" --sarif "$INGRESS_SARIF")
+        if [ -n "$INGRESS_BASE" ]; then
+          if ! git rev-parse --verify --quiet "${INGRESS_BASE}^{commit}" >/dev/null; then
+            git fetch --no-tags --depth=1 origin "$INGRESS_BASE" >/dev/null 2>&1
+          fi
+          args+=(--diff "$INGRESS_BASE")
+        fi
+        npx --yes "@acepaste/ingress@${INGRESS_VERSION}" "${args[@]}"
+        code=$?
+        echo "exit-code=$code" >> "$GITHUB_OUTPUT"
+        if [ "$code" -ge 2 ]; then exit "$code"; fi
+        exit 0
+
+    - if: ${{ always() && inputs.upload == 'true' && hashFiles(inputs.sarif-file) != '' }}
+      uses: github/codeql-action/upload-sarif@v3
+      with:
+        sarif_file: ${{ inputs.sarif-file }}
+        category: ingress-reposcan
+
+    - if: ${{ inputs.fail-on-high == 'true' && steps.scan.outputs.exit-code == '1' }}
+      shell: bash
+      run: |
+        echo "::error::ingress reposcan found high-severity issues. See the code scanning annotations on this pull request."
+        exit 1
