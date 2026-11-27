@@ -210,6 +210,12 @@ test("apiscan transport: http:// that answers without redirecting, and missing H
   assert.ok(calls.includes("http://api.test/"));
   assert.ok(calls.every((u) => new URL(u).host === "api.test"));
 
+  // an error over http:// is still a plaintext answer (review); a .dev name is HSTS-preloaded (info)
+  const errs: ApiScanFetch = async () => new Response('{"error":"not found"}', { status: 404, headers: { "content-type": "application/json", "x-content-type-options": "nosniff" } });
+  const d = await apiscan("https://api.example.dev/", { fetch: errs, delayMs: 0, gate: async () => ({ tier: "clean", findings: [] }) });
+  assert.ok(has(d, "transport.http_not_redirected", "review"), formatApiscan(d));
+  assert.ok(has(d, "transport.no_hsts", "info"));
+
   const good: ApiScanFetch = async (url) => url.startsWith("http:")
     ? new Response(null, { status: 301, headers: { location: url.replace("http:", "https:") } })
     : new Response("{}", { status: 200, headers: { "content-type": "application/json", "x-content-type-options": "nosniff", "strict-transport-security": "max-age=31536000" } });

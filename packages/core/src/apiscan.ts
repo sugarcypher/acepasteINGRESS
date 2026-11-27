@@ -92,6 +92,9 @@ interface Resp {
 const isLoopback = (host: string) => /^(localhost|127\.\d+\.\d+\.\d+|\[::1\]|::1)$/i.test(host);
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
+/** top-level domains on the browsers' HSTS preload list as a whole (hstspreload.org) */
+const HSTS_PRELOADED_TLDS = /\.(android|app|bank|boo|channel|chrome|dad|day|dev|esq|foo|gle|google|ing|insurance|meme|mov|new|nexus|page|phd|prof|rsvp|youtube|zip)$/i;
+
 const TLS_CODES = /CERT|SELF_SIGNED|UNABLE_TO_VERIFY|ALTNAME|UNABLE_TO_GET_ISSUER|TLS|SSL|EPROTO/i;
 
 /** parse argv after "apiscan": both --flag value and --flag=value */
@@ -293,7 +296,11 @@ export async function apiscan(baseInput: string, o: ApiScanOptions = {}): Promis
     return finish();
   }
   if (base.protocol === "https:") {
-    if (!baseResp.headers.get("strict-transport-security")) add({ id: "transport.no_hsts", check: "transport", severity: "review", title: "no Strict-Transport-Security header", endpoint: ep(baseResp), evidence: "response has no Strict-Transport-Security header", fix: "Send Strict-Transport-Security: max-age=31536000; includeSubDomains on HTTPS responses." });
+    if (!baseResp.headers.get("strict-transport-security")) {
+      // browsers already force HTTPS for every name under these top-level domains (the HSTS preload list)
+      const preloaded = HSTS_PRELOADED_TLDS.test(base.hostname);
+      add({ id: "transport.no_hsts", check: "transport", severity: preloaded ? "info" : "review", title: preloaded ? `no Strict-Transport-Security header (browsers already force HTTPS on .${base.hostname.split(".").pop()})` : "no Strict-Transport-Security header", endpoint: ep(baseResp), evidence: "response has no Strict-Transport-Security header", fix: "Send Strict-Transport-Security: max-age=31536000; includeSubDomains on HTTPS responses." });
+    }
     const plain = new URL(base.href); plain.protocol = "http:";
     const p = await request(plain.href, "GET");
     if (p && !p.error) {
@@ -301,6 +308,8 @@ export async function apiscan(baseInput: string, o: ApiScanOptions = {}): Promis
       if (p.status >= 300 && p.status < 400) {
         if (!/^https:\/\//i.test(loc)) add({ id: "transport.http_redirect_not_https", check: "transport", severity: "high", title: "http:// redirects somewhere other than https://", endpoint: ep(p), evidence: `${p.status} Location: ${loc}`, fix: "Redirect every http:// request to the same URL on https://." });
       } else if (p.status < 400) add({ id: "transport.http_not_redirected", check: "transport", severity: "high", title: "API answers over plain http:// without redirecting to https://", endpoint: ep(p), evidence: `${p.status} on http:// with no redirect`, fix: "Redirect every http:// request to https:// (or close port 80)." });
+      // an error answer still means the request, and any token in it, crossed the network unencrypted
+      else add({ id: "transport.http_not_redirected", check: "transport", severity: "review", title: "http:// requests are answered (with an error) instead of redirected to https://", endpoint: ep(p), evidence: `${p.status} on http:// with no redirect${p.status === baseResp.status ? " (the same answer as over https://)" : ""}`, fix: "Redirect every http:// request to https:// (or close port 80), so a client that uses http:// by mistake never sends its token in the clear." });
     }
   } else if (loop) notes.push("Transport checks (HTTPS redirect, TLS, HSTS) skipped: the target is on this machine.");
   else {
