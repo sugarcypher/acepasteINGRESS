@@ -17,6 +17,7 @@
  *   GET  /v1/receipts             the caller's own receipts, searchable (audit plane)
  *   GET  /v1/receipts/export      the caller's receipts as a JSON download
  *   GET  /v1/receipts/stats       counts for the caller's key
+ *   GET  /v1/show?url=            "what your agent sees": one static HTML report (same key and quota as /v1/fetch)
  *   GET  /healthz
  *   GET  /            -> the public attack feed page
  *   GET  /console     -> the audit console
@@ -43,7 +44,7 @@ import { createHash } from "node:crypto";
 import { appendFileSync, readFileSync, writeFileSync, existsSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join, normalize } from "node:path";
-import { IngressEngine, loadPolicyFile, cloakingConfigFromEnv, HONEST_USER_AGENT, checkLocalRequest, isLoopbackBind, parseScanHints, startBlocklistRefresh, startEgressProxy, egressProxyOptionsFromEnv, egressProxyOn, type IngressConfig, type IngressResult, type TaintReceipt } from "@acepaste/ingress";
+import { IngressEngine, show, renderShowHtml, SHOW_CSP, loadPolicyFile, cloakingConfigFromEnv, HONEST_USER_AGENT, checkLocalRequest, isLoopbackBind, parseScanHints, startBlocklistRefresh, startEgressProxy, egressProxyOptionsFromEnv, egressProxyOn, type IngressConfig, type IngressResult, type TaintReceipt } from "@acepaste/ingress";
 import { JsonlReceiptStore, toStored, type ReceiptStore } from "./store.js";
 
 const env = process.env;
@@ -268,6 +269,19 @@ const server = createServer(async (req, res) => {
     }
     if (req.method === "GET" && path === "/v1/receipts/stats") return send(res, 200, store.stats(a.info.name));
     if (req.method === "GET" && path === "/v1/quarantine") return send(res, 200, { items: quarantine.filter((q) => q.key === a.info.name).map(({ key: _k, ...rest }) => rest) });
+
+    // GET /v1/show?url=: the "what your agent sees" report as one static HTML page (same key, same quota as /v1/fetch)
+    if (req.method === "GET" && path === "/v1/show") {
+      const target = url.searchParams.get("url");
+      if (!target || !/^https?:\/\//i.test(target) || target.length > 4096) return send(res, 400, { error: "url required (http or https)" });
+      const ms = meter.take(a.key, a.info);
+      if (!ms.ok) return send(res, 429, { error: ms.reason }, { "retry-after": String(ms.retryAfter) });
+      const m = await show({ url: target, fetchOptions: { quarantineCheck: (u) => quarantinedFor(a.info.name, u) } }, cfg);
+      log({ event: "ingress.usage", key: a.info.name, op: "show", tier: m.tier, ms: Date.now() - started, usage: meter.usage(a.key) });
+      const html = Buffer.from(renderShowHtml(m), "utf8");
+      res.writeHead(200, { "content-type": "text/html; charset=utf-8", "content-length": html.length, "content-security-policy": SHOW_CSP, "x-content-type-options": "nosniff", "referrer-policy": "no-referrer", "cache-control": "no-store" });
+      return res.end(html);
+    }
 
     if (req.method !== "POST") return send(res, 405, { error: "method not allowed" });
 

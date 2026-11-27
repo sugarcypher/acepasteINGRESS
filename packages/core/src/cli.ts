@@ -12,10 +12,13 @@
  *                                   non-destructive security check of an HTTP API you own or may test (GET/HEAD/OPTIONS only)
  * ingress mcpscan [pin] [--connect] [--config file] [--url URL [--header "Name: value"]] [--json] [--timeout S]
  *                                   MCP tool-poisoning and rug-pull scanner (see mcpscan.ts)
+ * ingress show <url|file> [--out report.html] [--open]   what a person sees beside what your AI agent receives (one static HTML page)
+ * ingress show --term <url|file>    the same in the terminal, hidden spans in red brackets
  */
 import { readFileSync } from "node:fs";
 import { apiscan, formatApiscan, parseApiscanArgs, APISCAN_NOTICE } from "./apiscan.js";
 import { mcpscan, formatMcpscan, parseMcpscanArgs, MCPSCAN_CONNECT_NOTICE } from "./mcpscan.js";
+import { show, renderShowHtml, renderShowTerm, parseShowArgs, SHOW_USAGE } from "./show.js";
 import { IngressEngine } from "./engine.js";
 import { HONEST_USER_AGENT } from "./acquire.js";
 import { summarize, cloakingConfigFromEnv } from "./summary.js";
@@ -59,6 +62,7 @@ async function main() {
   if (args[0] === "instructions") return instructionsCommand(args.slice(1));
   if (args[0] === "apiscan") return apiscanCommand(args.slice(1));
   if (args[0] === "mcpscan") return mcpscanCommand(args.slice(1));
+  if (args[0] === "show") return showCommand(args.slice(1));
   if (args[0] === "hook") return hookCommand(args[1], await chunksIn());
   if (args[0] === "tools") return toolsCommand(args.slice(1));
   if (args[0] === "blocklist") return blocklistCommand(args.slice(1));
@@ -233,7 +237,7 @@ async function main() {
   let result;
   if (flag("text")) result = await engine.scan(await chunksIn(), { override });
   else if (url) result = await engine.fetch(url, { override });
-  else { console.error("usage: ingress <url> | ingress --text < file   [--json | --summary] [--no-cloaking] [--human-fetch=http|browser] [--override] [--sandbox=always|escalate|off] [--policy=file.json] | ingress --verify < receipt.json | ingress apiscan <base-url> [--spec openapi.json] [--auth-header \"Name: value\"] [--burst] [--json] [--max-requests N] | ingress mcpscan [--connect] [--config file] [--url URL] [--json]"); process.exit(2); }
+  else { console.error("usage: ingress <url> | ingress --text < file   [--json | --summary] [--no-cloaking] [--human-fetch=http|browser] [--override] [--sandbox=always|escalate|off] [--policy=file.json] | ingress --verify < receipt.json | ingress apiscan <base-url> [--spec openapi.json] [--auth-header \"Name: value\"] [--burst] [--json] [--max-requests N] | ingress mcpscan [--connect] [--config file] [--url URL] [--json] | ingress show <url|file> [--out report.html] [--open] [--term]"); process.exit(2); }
 
   if (flag("json")) { console.log(JSON.stringify(result, null, 2)); return; }
   if (flag("summary")) { console.log(JSON.stringify(summarize(result))); if (result.tier === "unreachable") process.exitCode = 1; return; }
@@ -669,4 +673,45 @@ async function mcpscanCommand(a: string[]) {
   if (p.opts.pin && !p.json) console.error(`pinned ${r.servers.filter((s) => s.pin === "pinned").length} server(s); later scans compare with these tool lists`);
   console.log(p.json ? JSON.stringify(r, null, 2) : formatMcpscan(r));
   if (r.summary.high) process.exitCode = 1;
+}
+
+/**
+ *   ingress show <url|file> [--out report.html] [--open]
+ *   ingress show --term <url|file>
+ * One static HTML report: what a person sees beside what an AI agent receives, every hidden span highlighted,
+ * with the verdict, findings, the bots-versus-browsers comparison and the receipt. Fetches with the gate's normal
+ * fetch; writes nothing anywhere but --out. Without --out the HTML goes to stdout (or a temporary file with --open).
+ * Takes the usual engine flags: --policy=, --no-cloaking, --sandbox=. Exit 1 when the verdict is not clean.
+ */
+async function showCommand(a: string[]) {
+  const p = parseShowArgs(a);
+  if (p.error || !p.target) { console.error(`${p.error ? `ingress show: ${p.error}\n` : ""}${SHOW_USAGE}`); process.exit(2); }
+  const cfg: Partial<IngressConfig> = opt("policy") ? loadPolicyFile(opt("policy")!) : {};
+  Object.assign(cfg, cloakingConfigFromEnv(process.env, HONEST_USER_AGENT));
+  if (flag("no-cloaking")) cfg.cloakingCheck = false;
+  const sb = opt("sandbox"); if (sb === "always" || sb === "escalate" || sb === "off") cfg.sandbox = sb;
+  if (process.env.INGRESS_SIGNING_KEY) cfg.signingKey = process.env.INGRESS_SIGNING_KEY;
+  const pk = process.env.INGRESS_SIGNING_PRIVATE_KEY_FILE ? readFileSync(process.env.INGRESS_SIGNING_PRIVATE_KEY_FILE, "utf8") : process.env.INGRESS_SIGNING_PRIVATE_KEY;
+  if (pk) cfg.signingPrivateKey = pk;
+  const isUrl = /^https?:\/\//i.test(p.target);
+  if (!isUrl && !existsSync(p.target)) { console.error(`ingress show: no such file ${p.target}\n${SHOW_USAGE}`); process.exit(2); }
+  let m;
+  try { m = await show(isUrl ? { url: p.target } : { file: p.target }, cfg); } catch (e) { console.error(`ingress show: ${(e as Error).message}`); process.exit(2); }
+  if (m.tier !== "clean") process.exitCode = 1;
+  if (p.term) {
+    const color = !process.env.NO_COLOR && (flag("color") || !!process.stdout.isTTY);
+    console.log(renderShowTerm(m, { color }));
+    return;
+  }
+  const html = renderShowHtml(m);
+  let out = p.out;
+  if (!out && p.open) out = join(mkdtempSync(join(tmpdir(), "ingress-show-")), "report.html");
+  if (!out) { process.stdout.write(html); return; }
+  writeFileSync(out, html);
+  console.error(`wrote ${out} (${m.tier}, score ${m.score.toFixed(2)})`);
+  if (p.open) {
+    // the report is a local file opened by the system's own viewer; nothing is sent anywhere
+    const opener = process.platform === "darwin" ? ["open", [out]] : process.platform === "win32" ? ["cmd", ["/c", "start", "", out]] : ["xdg-open", [out]];
+    try { execFileSync(opener[0] as string, opener[1] as string[], { stdio: "ignore", timeout: 10_000 }); } catch { console.error(`could not open it automatically; open ${out} in a browser`); }
+  }
 }

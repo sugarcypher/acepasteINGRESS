@@ -23,6 +23,13 @@ behavior changes; receipts carry it so verdicts are reproducible. Releases up to
   something an AI agent would read as instructions (the same scan as `--text`). Human report or `--json`;
   exit code 1 on any high finding. Library export: `apiscan()`. YAML specs are not read yet.
 
+- **`ingress show <url|file>`: see what your agent sees.** One static HTML report with what a person sees beside
+  what an AI agent receives, every hidden span highlighted in place and colour-coded (CSS-hidden, colour match,
+  invisible Unicode as `⟨U+200B⟩` badges, comments/attributes/srcdoc/SVG, cloaked text), the verdict, findings
+  linked to their highlights, the bots-versus-browsers diff and the receipt digest. No scripts, strict CSP, all page
+  content escaped. `--term` prints hidden spans in red brackets. The HTTP service adds `GET /v1/show?url=`. The
+  engine gains a read-only `onAcquired` hook so callers can see which copies a fetch judged. Ruleset unchanged.
+
 ## 0.9.32 (2026-11-26, ruleset unchanged)
 
 Documentation and listing only. Nothing about verdicts changes.
