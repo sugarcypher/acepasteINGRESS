@@ -1,23 +1,24 @@
 # @acepaste/ingress
 
-**Stops your AI agent from obeying instructions that web pages hide from you.**
+**Stops your AI agent from obeying hidden instructions in web pages, files, repos and MCP tools, and catches data leaks.**
 
 ![Ingress refusing a page with white-on-white instructions, then passing a clean page](https://raw.githubusercontent.com/sugarcypher/acepasteINGRESS/main/docs/demo/ingress-demo.gif)
 
-**The problem:** a web page can hide text that a person never sees, and an AI agent reads all of it: white-on-white text, invisible Unicode, off-screen notes, or a different page served only to bots. The agent can follow those instructions, and afterward nobody can show what it read. Ingress sits in front of your agent's web fetch and refuses anything the model would receive that you would not see.
+**The problem:** an AI agent reads everything, including what a person never sees: white-on-white text on a web page, invisible Unicode in a repo, a hidden layer in a PDF, a poisoned tool description in an MCP server. It can follow those instructions, slip your data out inside a link or an image, or install a package an AI made up, and afterward nobody can show what it read. Ingress checks what goes into your agent and what comes out, and refuses anything the model would receive that you would not see.
 
-- **Refuses hidden instructions:** invisible Unicode, CSS-hidden or background-coloured text, and payloads in attributes, comments, SVG or `srcdoc`.
-- **Catches cloaking:** fetches twice, and can render in a throwaway browser, to catch pages that show bots something different.
-- **Signs a receipt for every verdict:** hash-chained and signed with ECDSA P-256, so you can prove later what your agent read.
+- **Refuses hidden instructions in web pages:** invisible Unicode, CSS-hidden or same-colour text, payloads in attributes, comments, SVG or `srcdoc`, and pages that show bots something different. `ingress https://example.com`
+- **Shows you what your agent sees:** `ingress show` writes one HTML page with what a person sees beside what the agent receives, hidden text highlighted. `ingress show https://example.com --open`
+- **Checks files and knowledge bases:** `ingress filescan` finds hidden text in PDFs, Word, Excel, PowerPoint and images; `ingress corpusscan` checks a whole RAG folder and moves hostile files aside. `ingress corpusscan ./docs --quarantine ./held`
+- **Checks your MCP servers:** `ingress mcpscan` finds poisoned tool descriptions, look-alike tool names and tools that changed since you pinned them. `ingress mcpscan --connect`
+- **Gates repos for coding agents:** `ingress reposcan` and a GitHub Action flag Trojan Source Unicode, instructions hidden in markdown, poisoned AGENTS.md files and risky install scripts. `ingress reposcan --diff origin/main`
+- **Catches data leaving in links and images:** `ingress outcheck` reads a model's reply for data hidden in image URLs, links and subdomains before it is rendered; the action broker does the same for tool calls. `ingress outcheck --safe < reply.md`
+- **Checks packages before install:** `ingress pkgcheck` catches made-up package names, lookalikes of popular ones and brand-new packages with install scripts. `ingress pkgcheck npm left-pad`
+- **Checks your own APIs:** `ingress apiscan` looks for exposed files, open CORS, missing auth, leaked keys and responses an agent would obey, with safe read-only requests. `ingress apiscan https://api.example.com`
+- **Signs a receipt for every verdict, and asks a person before risky actions:** hash-chained ECDSA P-256 receipts prove later what your agent read; once outside content is read, side-effecting tool calls need human approval.
 - **Quarantines sources:** block a host and see everything it already delivered.
-- **Asks a person before risky actions:** once outside content is read, side-effecting tool calls need human approval.
-- **Checks your MCP servers:** `ingress mcpscan` finds poisoned tool descriptions, tools that give orders about other tools, look-alike tool names, and tools that changed after you pinned them.
-- **Checks your own APIs:** `ingress apiscan` looks for exposed files, open CORS, missing auth, leaked keys and responses an agent would obey, using only safe read requests.
-- **Gates repos for coding agents:** `ingress reposcan` and a GitHub Action flag Trojan Source Unicode, instructions hidden in markdown, poisoned AGENTS.md files and install scripts that download and run code.
-- **Checks packages before install:** `ingress pkgcheck` catches made-up package names, lookalikes of popular ones and brand-new packages with install scripts.
-- **Stops data leaving in links and images:** `ingress outcheck` and the action broker catch data hidden in image URLs, links and subdomains.
-- **Checks files and knowledge bases:** `ingress filescan` finds hidden text in PDFs, Word, Excel, PowerPoint and images before an agent reads them; `ingress corpusscan` checks a whole RAG folder and moves hostile files aside.
 - **Runs on your machine:** MCP server, CLI and library, or HTTP service. No telemetry ([PRIVACY.md](https://github.com/sugarcypher/acepasteINGRESS/blob/main/PRIVACY.md)).
+
+Every command runs as `npx @acepaste/ingress <command>`, or as `ingress <command>` after `npm install -g @acepaste/ingress`.
 
 
 ---

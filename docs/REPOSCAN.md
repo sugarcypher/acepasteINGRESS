@@ -53,8 +53,7 @@ base commit is present.
 
 ## GitHub Action
 
-> **This works only once a release of `@acepaste/ingress` that includes `reposcan` is on npm.** Until then,
-> the action stops with a usage error.
+> `reposcan` needs `@acepaste/ingress` 0.10.0 or later. The action runs 0.10.0 unless you set `version`.
 
 Copy this into `.github/workflows/ingress-reposcan.yml`:
 
@@ -76,12 +75,12 @@ jobs:
           fetch-depth: 0     # diff mode needs the base commit
       - uses: sugarcypher/acepasteINGRESS/integrations/github-action@main
         # with:
-        #   version: latest        # pin a version of @acepaste/ingress
+        #   version: "0.10.0"      # default; "latest" follows new releases
         #   fail-on-high: "true"
         #   base-ref: ""           # empty scans the whole tree
 ```
 
-The action runs `npx @acepaste/ingress@latest reposcan --diff <base sha> --sarif ingress-reposcan.sarif`, then
+The action runs `npx @acepaste/ingress@0.10.0 reposcan --diff <base sha> --sarif ingress-reposcan.sarif`, then
 uploads the SARIF with `github/codeql-action/upload-sarif`, so findings appear as annotations on the pull
 request and under Security → Code scanning. The job fails when anything is high.
 

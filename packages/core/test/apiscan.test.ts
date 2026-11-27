@@ -4,6 +4,7 @@ import { createServer, type Server, type IncomingMessage, type ServerResponse } 
 import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { ENGINE_VERSION } from "../src/types.js";
 import { apiscan, formatApiscan, parseApiscanArgs, parseOpenApiJson, HONEST_USER_AGENT, type ApiScanFetch, type ApiScanReport } from "../src/index.js";
 
 // a live-looking Stripe key built at run time, so this file holds no credential-shaped literal
@@ -120,7 +121,9 @@ test("apiscan: only GET, HEAD and OPTIONS, never a body, the honest user agent, 
     assert.equal(s.bodyBytes, 0);
     assert.equal(s.ua, HONEST_USER_AGENT);
   }
-  assert.ok(HONEST_USER_AGENT.startsWith("AcePasteIngress/0.9"));
+  // major.minor only (0.10, not 0.10.0), taken from ENGINE_VERSION so a minor bump cannot leave it stale
+  assert.match(HONEST_USER_AGENT, /^AcePasteIngress\/\d+\.\d+ \(/);
+  assert.ok(HONEST_USER_AGENT.startsWith(`AcePasteIngress/${ENGINE_VERSION.split(".").slice(0, 2).join(".")} `));
   assert.equal(vulnReport.requestsUsed, vulnS.seen.length);
   assert.ok(vulnReport.requestsUsed <= 100);
   // the auth header went to the API, never to the exposed-file probes

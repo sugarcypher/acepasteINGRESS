@@ -1,8 +1,8 @@
 {
   "name": "@acepaste/ingress-mcp",
-  "version": "0.9.33",
+  "version": "0.10.0",
   "mcpName": "io.github.sugarcypher/acepaste-ingress",
-  "description": "AcePaste Ingress as a Model Context Protocol server: gated fetch and scan, an action broker with human approval, and a proxy that puts other MCP servers behind it.",
+  "description": "AcePaste Ingress as an MCP server: your agent reads web pages through it and never sees hidden instructions; risky actions need your approval.",
   "type": "module",
   "main": "dist/server.js",
   "bin": {
@@ -14,7 +14,7 @@
     "test": "tsc -p tsconfig.json && node --test \"test/*.test.mjs\""
   },
   "dependencies": {
-    "@acepaste/ingress": "0.9.33",
+    "@acepaste/ingress": "0.10.0",
     "@modelcontextprotocol/sdk": "^1.12.0",
     "zod": "^4.6.7"
   },
@@ -42,11 +42,23 @@
   "keywords": [
     "prompt-injection",
     "ai-security",
+    "ai-agents",
+    "agent-security",
     "llm",
     "mcp",
     "model-context-protocol",
+    "mcp-security",
+    "tool-poisoning",
+    "data-exfiltration",
+    "rag-security",
+    "pdf",
+    "trojan-source",
     "unicode",
     "supply-chain",
+    "slopsquatting",
+    "github-action",
+    "api-security",
+    "security-scanner",
     "acepaste"
   ],
   "files": [

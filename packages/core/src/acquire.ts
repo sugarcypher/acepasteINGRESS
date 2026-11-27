@@ -29,7 +29,7 @@ const HUMAN_HEADERS: Record<string, string> = {
 
 /**
  * The gate's own name, used when agentUserAgents is empty, for the retry after a site refuses AI user agents,
- * and for blocklist downloads. It carries the major.minor version only (0.9, not 0.9.30), so it stays current
+ * and for blocklist downloads. It carries the major.minor version only (0.10, not 0.10.0), so it stays current
  * without telling a site exactly which release you run. INGRESS_SELF_UA replaces it entirely.
  */
 export const HONEST_USER_AGENT = process.env.INGRESS_SELF_UA?.trim() || `AcePasteIngress/${ENGINE_VERSION.split(".").slice(0, 2).join(".")} (+https://acepaste.xyz/ingress)`;

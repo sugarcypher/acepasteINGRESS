@@ -23,9 +23,9 @@ inputs:
     required: false
     default: ingress-reposcan.sarif
   version:
-    description: Version of @acepaste/ingress to run (reposcan needs a release that includes it).
+    description: Version of @acepaste/ingress to run (0.10.0 or later; "latest" follows new releases).
     required: false
-    default: latest
+    default: "0.10.0"
   upload:
     description: Upload the SARIF to GitHub code scanning (needs permissions security-events write).
     required: false
