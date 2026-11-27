@@ -4,7 +4,7 @@ Every change bumps the patch version of all three packages. The ruleset id chang
 behavior changes; receipts carry it so verdicts are reproducible. Releases up to 0.9.6 are in the
 [README](README.md#changes-in-096-2026-11-18-ruleset-20261118-3-unchanged).
 
-## Unreleased
+## 0.9.33 (2026-11-27, ruleset unchanged)
 
 - **`ingress apiscan <base-url>`: a gentle security check for HTTP APIs you own.** Only GET, HEAD and OPTIONS,
   no request bodies or attack payloads, about 60 requests at most with a pause between them, and the gate's own

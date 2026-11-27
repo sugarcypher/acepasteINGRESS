@@ -1,6 +1,6 @@
 {
   "name": "@acepaste/ingress",
-  "version": "0.9.32",
+  "version": "0.9.33",
   "description": "AcePaste Ingress engine: acquire, visibility, character, script, supply-chain, sandbox, meaning, verdict, envelope, receipts. The CLI also includes apiscan, a non-destructive security scan for HTTP APIs you own.",
   "type": "module",
   "main": "dist/src/index.js",

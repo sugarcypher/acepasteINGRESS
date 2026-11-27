@@ -8,13 +8,13 @@
     "source": "github",
     "subfolder": "packages/mcp"
   },
-  "version": "0.9.32",
+  "version": "0.9.33",
   "packages": [
     {
       "registryType": "npm",
       "registryBaseUrl": "https://registry.npmjs.org",
       "identifier": "@acepaste/ingress-mcp",
-      "version": "0.9.32",
+      "version": "0.9.33",
       "transport": {
         "type": "stdio"
       }
