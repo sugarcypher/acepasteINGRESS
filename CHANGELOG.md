@@ -1,43 +1,11 @@
 # Changelog
 
-Every change bumps the patch version of all three packages. The ruleset id changes only when a detector's
+Every change bumps the version of all three packages together: the patch for fixes, the minor for new features
+(0.10.0). The ruleset id changes only when a detector's
 behavior changes; receipts carry it so verdicts are reproducible. Releases up to 0.9.6 are in the
 [README](README.md#changes-in-096-2026-11-18-ruleset-20261118-3-unchanged).
 
-## Unreleased
-
-- **`ingress reposcan [dir]`: a repo gate for coding agents, with a GitHub Action.** Reads a working tree the way
-  an agent does and flags bidirectional and invisible Unicode (Trojan Source, tag characters, zero-width,
-  variation-selector runs) in any text or code file, instructions hidden in markdown (comments, `<details>`,
-  hidden styles, link titles, alt text; each run through the engine), agent instruction files that tell the
-  agent to run downloads, read secrets, turn off safety or skip review, install scripts that download and run
-  code, and risky committed MCP configs. `--diff <ref>` scans only changed files; output is human, `--json` or
-  `--sarif` (SARIF 2.1.0); exit code 1 on any high finding. Local only, no network. Composite action in
-  `integrations/github-action`; workflow and pre-commit examples in `docs/REPOSCAN.md`.
-- **`ingress pkgcheck`: check a package before installing it.** Looks each npm or PyPI package up on the public
-  registry and flags names that do not exist (likely made up by an AI, "slopsquatting"), versions that do not
-  exist, lookalikes of popular names (built-in list, no download), packages under 30 days old, npm install
-  scripts, PyPI releases without a wheel, missing source links, deprecation, and READMEs aimed at an AI agent.
-  Reads install lines (`npm install`, `pnpm add`, `yarn add`, `pip install`, `uv add`) with `--command` or as a
-  Claude Code hook (`--hook`). `--offline` runs only the name check. New network contacts: registry.npmjs.org and
-  pypi.org, only when you run it (PRIVACY.md). Exit code 1 on a high finding. Library export: `pkgcheck()`.
-- **Exfiltration guard: `ingress outcheck` and stronger tool-call checks.** `outcheck` reads a model's reply for
-  data hidden in image and link addresses, HTML and CSS URLs and subdomains (encoded runs, credentials, the session
-  marker, text from earlier tool results) before it is rendered; `--safe` prints the reply without them. The action
-  broker now also sends to a person: a URL that carries text the run read earlier, a DNS lookup that carries data,
-  and a call that sends data to a host the run never fetched from and the person never named. The run keeps
-  short fingerprints of what it read for this, never the text. Library exports: `outcheck()`, `urlCarriage()`,
-  `dnsExfilShapes()`.
-- **`ingress filescan <file...>` and `ingress corpusscan <dir>`: check attachments and knowledge bases before an
-  agent reads them.** filescan separates what a person sees in a PDF, Word, Excel, PowerPoint or image file from
-  what only an extractor reads (white, tiny, off-page, covered or invisible-mode text, hidden runs, sheets, rows and
-  shapes, comments, notes, alt text, metadata, scripts and macros) and runs every piece through the engine;
-  `--clean-out` writes the visible text, re-checked on its own. corpusscan walks a folder with a concurrency limit
-  and size caps, and `--quarantine` moves (or `--copy` copies) hostile files aside with a manifest of hashes and
-  verdicts; nothing is deleted. New dependency-free readers: `pdf.ts`, `office.ts`, `zipread.ts`. Library exports:
-  `filescan()`, `corpusscan()`, `IngressEngine.scanDocument()`. No network requests.
-
-## 0.9.33 (2026-11-27, ruleset unchanged)
+## 0.10.0 (2026-11-27, ruleset unchanged)
 
 - **`ingress mcpscan`: tool-poisoning and rug-pull scanner for the MCP servers your AI apps use.** Reads the
   same client configs as `ingress audit` (plus `--config <file>` and this folder's `.mcp.json`) and flags
@@ -48,6 +16,48 @@ behavior changes; receipts carry it so verdicts are reproducible. Releases up to
   Tool lists are pinned in the state directory (`mcpscan-pins.json`); later scans report added, removed and
   changed tools with a text diff, and `ingress mcpscan pin` accepts the current state. `--json`; exit 1 on high.
   Library export: `mcpscan()`; `mcpConfigLocations()` is shared with the audit.
+- **`ingress show <url|file>`: see what your agent sees.** One static HTML report with what a person sees beside
+  what an AI agent receives, every hidden span highlighted in place and colour-coded (CSS-hidden, colour match,
+  invisible Unicode as `⟨U+200B⟩` badges, comments/attributes/srcdoc/SVG, cloaked text), the verdict, findings
+  linked to their highlights, the bots-versus-browsers diff and the receipt digest. No scripts, strict CSP, all page
+  content escaped. `--term` prints hidden spans in red brackets. The HTTP service adds `GET /v1/show?url=`. The
+  engine gains a read-only `onAcquired` hook so callers can see which copies a fetch judged. Ruleset unchanged.
+- **`ingress reposcan [dir]`: a repo gate for coding agents, with a GitHub Action.** Reads a working tree the way
+  an agent does and flags bidirectional and invisible Unicode (Trojan Source, tag characters, zero-width,
+  variation-selector runs) in any text or code file, instructions hidden in markdown (comments, `<details>`,
+  hidden styles, link titles, alt text; each run through the engine), agent instruction files that tell the
+  agent to run downloads, read secrets, turn off safety or skip review, install scripts that download and run
+  code, and risky committed MCP configs. `--diff <ref>` scans only changed files; output is human, `--json` or
+  `--sarif` (SARIF 2.1.0); exit code 1 on any high finding. Local only, no network. Composite action in
+  `integrations/github-action`; workflow and pre-commit examples in `docs/REPOSCAN.md`.
+- **Exfiltration guard: `ingress outcheck` and stronger tool-call checks.** `outcheck` reads a model's reply for
+  data hidden in image and link addresses, HTML and CSS URLs and subdomains (encoded runs, credentials, the session
+  marker, text from earlier tool results) before it is rendered; `--safe` prints the reply without them. The action
+  broker now also sends to a person: a URL that carries text the run read earlier, a DNS lookup that carries data,
+  and a call that sends data to a host the run never fetched from and the person never named. The run keeps
+  short fingerprints of what it read for this, never the text. Library exports: `outcheck()`, `urlCarriage()`,
+  `dnsExfilShapes()`.
+- **`ingress pkgcheck`: check a package before installing it.** Looks each npm or PyPI package up on the public
+  registry and flags names that do not exist (likely made up by an AI, "slopsquatting"), versions that do not
+  exist, lookalikes of popular names (built-in list, no download), packages under 30 days old, npm install
+  scripts, PyPI releases without a wheel, missing source links, deprecation, and READMEs aimed at an AI agent.
+  Reads install lines (`npm install`, `pnpm add`, `yarn add`, `pip install`, `uv add`) with `--command` or as a
+  Claude Code hook (`--hook`). `--offline` runs only the name check. New network contacts: registry.npmjs.org and
+  pypi.org, only when you run it (PRIVACY.md). Exit code 1 on a high finding. Library export: `pkgcheck()`.
+- **`ingress filescan <file...>` and `ingress corpusscan <dir>`: check attachments and knowledge bases before an
+  agent reads them.** filescan separates what a person sees in a PDF, Word, Excel, PowerPoint or image file from
+  what only an extractor reads (white, tiny, off-page, covered or invisible-mode text, hidden runs, sheets, rows and
+  shapes, comments, notes, alt text, metadata, scripts and macros) and runs every piece through the engine;
+  `--clean-out` writes the visible text, re-checked on its own. corpusscan walks a folder with a concurrency limit
+  and size caps, and `--quarantine` moves (or `--copy` copies) hostile files aside with a manifest of hashes and
+  verdicts; nothing is deleted. New dependency-free readers: `pdf.ts`, `office.ts`, `zipread.ts`. Library exports:
+  `filescan()`, `corpusscan()`, `IngressEngine.scanDocument()`. No network requests.
+- **Version 0.10.0.** New commands are new features, so this is a minor bump. The gate's own user agent carries
+  major.minor only and now reads `AcePasteIngress/0.10` (it is derived from `ENGINE_VERSION`; PRIVACY.md and the
+  apiscan section of the README say so). `INGRESS_SELF_UA` still replaces it.
+
+## 0.9.33 (2026-11-27, ruleset unchanged)
+
 - **`ingress apiscan <base-url>`: a gentle security check for HTTP APIs you own.** Only GET, HEAD and OPTIONS,
   no request bodies or attack payloads, about 60 requests at most with a pause between them, and the gate's own
   user agent. It checks transport (HTTPS redirect, certificate, HSTS), security headers, CORS, routes that answer
@@ -55,13 +65,6 @@ behavior changes; receipts carry it so verdicts are reproducible. Releases up to
   version headers, credentials in responses, rate limiting (only with `--burst`), and whether a response is
   something an AI agent would read as instructions (the same scan as `--text`). Human report or `--json`;
   exit code 1 on any high finding. Library export: `apiscan()`. YAML specs are not read yet.
-
-- **`ingress show <url|file>`: see what your agent sees.** One static HTML report with what a person sees beside
-  what an AI agent receives, every hidden span highlighted in place and colour-coded (CSS-hidden, colour match,
-  invisible Unicode as `⟨U+200B⟩` badges, comments/attributes/srcdoc/SVG, cloaked text), the verdict, findings
-  linked to their highlights, the bots-versus-browsers diff and the receipt digest. No scripts, strict CSP, all page
-  content escaped. `--term` prints hidden spans in red brackets. The HTTP service adds `GET /v1/show?url=`. The
-  engine gains a read-only `onAcquired` hook so callers can see which copies a fetch judged. Ruleset unchanged.
 
 ## 0.9.32 (2026-11-26, ruleset unchanged)
 

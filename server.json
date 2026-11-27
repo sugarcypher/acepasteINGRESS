@@ -2,19 +2,19 @@
   "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
   "name": "io.github.sugarcypher/acepaste-ingress",
   "title": "AcePaste Ingress",
-  "description": "Stops your AI agent from obeying instructions that web pages hide from you.",
+  "description": "Stops AI agents obeying hidden instructions in web pages, files, repos and MCP tools; catches leaks.",
   "repository": {
     "url": "https://github.com/sugarcypher/acepasteINGRESS",
     "source": "github",
     "subfolder": "packages/mcp"
   },
-  "version": "0.9.33",
+  "version": "0.10.0",
   "packages": [
     {
       "registryType": "npm",
       "registryBaseUrl": "https://registry.npmjs.org",
       "identifier": "@acepaste/ingress-mcp",
-      "version": "0.9.33",
+      "version": "0.10.0",
       "transport": {
         "type": "stdio"
       }

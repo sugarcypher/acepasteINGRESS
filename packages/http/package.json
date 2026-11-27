@@ -1,7 +1,7 @@
 {
   "name": "@acepaste/ingress-http",
-  "version": "0.9.33",
-  "description": "AcePaste Ingress as a metered HTTP service: /v1/fetch, /v1/scan, /v1/verify, /v1/feed.",
+  "version": "0.10.0",
+  "description": "AcePaste Ingress as an HTTP service: checks pages and text for hidden instructions before your AI agent reads them, with signed receipts.",
   "type": "module",
   "main": "dist/server.js",
   "bin": {
@@ -12,7 +12,7 @@
     "start": "node dist/server.js"
   },
   "dependencies": {
-    "@acepaste/ingress": "0.9.33"
+    "@acepaste/ingress": "0.10.0"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",
@@ -44,11 +44,23 @@
   "keywords": [
     "prompt-injection",
     "ai-security",
+    "ai-agents",
+    "agent-security",
     "llm",
     "mcp",
     "model-context-protocol",
+    "mcp-security",
+    "tool-poisoning",
+    "data-exfiltration",
+    "rag-security",
+    "pdf",
+    "trojan-source",
     "unicode",
     "supply-chain",
+    "slopsquatting",
+    "github-action",
+    "api-security",
+    "security-scanner",
     "acepaste"
   ]
 }
