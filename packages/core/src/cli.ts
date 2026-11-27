@@ -8,8 +8,11 @@
  * ingress --policy=file.json
  * ingress --verify < receipt.json   verify a receipt's digest and signature (INGRESS_VERIFY_PUBLIC_KEY=file.pem for ECDSA, INGRESS_SIGNING_KEY for HMAC)
  * ingress --keygen                  print a new ECDSA P-256 key pair for receipt signing
+ * ingress apiscan <base-url> [--spec openapi.json|url] [--auth-header "Name: value"] [--burst] [--json] [--max-requests N]
+ *                                   non-destructive security check of an HTTP API you own or may test (GET/HEAD/OPTIONS only)
  */
 import { readFileSync } from "node:fs";
+import { apiscan, formatApiscan, parseApiscanArgs, APISCAN_NOTICE } from "./apiscan.js";
 import { IngressEngine } from "./engine.js";
 import { HONEST_USER_AGENT } from "./acquire.js";
 import { summarize, cloakingConfigFromEnv } from "./summary.js";
@@ -51,6 +54,7 @@ const url = args.find((a) => /^https?:\/\//.test(a));
 async function main() {
   const chunksIn = async () => { const c: Buffer[] = []; for await (const x of process.stdin) c.push(x as Buffer); return Buffer.concat(c).toString("utf8"); };
   if (args[0] === "instructions") return instructionsCommand(args.slice(1));
+  if (args[0] === "apiscan") return apiscanCommand(args.slice(1));
   if (args[0] === "hook") return hookCommand(args[1], await chunksIn());
   if (args[0] === "tools") return toolsCommand(args.slice(1));
   if (args[0] === "blocklist") return blocklistCommand(args.slice(1));
@@ -225,7 +229,7 @@ async function main() {
   let result;
   if (flag("text")) result = await engine.scan(await chunksIn(), { override });
   else if (url) result = await engine.fetch(url, { override });
-  else { console.error("usage: ingress <url> | ingress --text < file   [--json | --summary] [--no-cloaking] [--human-fetch=http|browser] [--override] [--sandbox=always|escalate|off] [--policy=file.json] | ingress --verify < receipt.json"); process.exit(2); }
+  else { console.error("usage: ingress <url> | ingress --text < file   [--json | --summary] [--no-cloaking] [--human-fetch=http|browser] [--override] [--sandbox=always|escalate|off] [--policy=file.json] | ingress --verify < receipt.json | ingress apiscan <base-url> [--spec openapi.json] [--auth-header \"Name: value\"] [--burst] [--json] [--max-requests N]"); process.exit(2); }
 
   if (flag("json")) { console.log(JSON.stringify(result, null, 2)); return; }
   if (flag("summary")) { console.log(JSON.stringify(summarize(result))); if (result.tier === "unreachable") process.exitCode = 1; return; }
@@ -616,4 +620,23 @@ async function instructionsCommand(a: string[]) {
   const files = checkInstructionFiles(dir);
   if (!files.length) { console.log("no instruction files found"); return; }
   for (const f of files) console.log(`${f.status.padEnd(9)} ${f.inDependency ? "[dependency] " : ""}${f.relPath}  ${f.sha256.slice(0, 12)}`);
+}
+
+/**
+ *   ingress apiscan <base-url> [--spec openapi.json|url] [--auth-header "Name: value"] [--burst] [--json] [--max-requests N]
+ * A non-destructive security check of an HTTP API you own or are authorized to test: GET, HEAD and OPTIONS only,
+ * no request bodies, no payloads, about 60 requests by default. Exit 1 when any finding is high. See apiscan.ts.
+ */
+async function apiscanCommand(a: string[]) {
+  const p = parseApiscanArgs(a);
+  if (p.error || !p.base) {
+    console.error(`${p.error ? `ingress apiscan: ${p.error}\n` : ""}usage: ingress apiscan <base-url> [--spec openapi.json|url] [--auth-header "Name: value"] [--burst] [--json] [--max-requests N]\n${APISCAN_NOTICE}`);
+    process.exit(2);
+  }
+  // the human report opens with the notice; with --json it goes to stderr so stdout stays machine-readable
+  if (p.json) console.error(`note: ${APISCAN_NOTICE}`);
+  let r;
+  try { r = await apiscan(p.base, p.opts); } catch (e) { console.error(`ingress apiscan: ${(e as Error).message}`); process.exit(2); }
+  console.log(p.json ? JSON.stringify(r, null, 2) : formatApiscan(r));
+  if (r.summary.high) process.exitCode = 1;
 }

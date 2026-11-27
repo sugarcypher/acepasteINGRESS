@@ -95,5 +95,7 @@ export { diffSnapshots, confirmState, BaselineStore, SnapshotStore, stateDir, fi
 export type { TrackedItem, Snapshot, GroupChange, SnapshotDiff, Baseline, ConfirmState } from "./changes.js";
 export { auditSnapshot, auditItemKey, trackAudit, confirmAuditArea, formatAuditChanges, AUDIT_VOLATILE, AUDIT_NEEDS_CONFIRMATION } from "./audit-changes.js";
 export type { AuditAttention, AuditChanges } from "./audit-changes.js";
+export { apiscan, formatApiscan, parseApiscanArgs, parseOpenApiJson, APISCAN_NOTICE, APISCAN_DEFAULT_BUDGET, APISCAN_BURST_SIZE } from "./apiscan.js";
+export type { ApiScanFinding, ApiScanReport, ApiScanOptions, ApiScanFetch, ApiScanGate, ApiScanSeverity, ApiScanCheck } from "./apiscan.js";
 export { toolDefinitionText, toolDefinitionItems, reviewToolDefinitions, heldDescription, confirmServerTools, describeServerTools } from "./tooldefs.js";
 export type { ToolDefinition, ToolHold, ToolReview, ServerToolReview, DefinitionGate } from "./tooldefs.js";

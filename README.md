@@ -13,6 +13,7 @@
 - **Signs a receipt for every verdict:** hash-chained and signed with ECDSA P-256, so you can prove later what your agent read.
 - **Quarantines sources:** block a host and see everything it already delivered.
 - **Asks a person before risky actions:** once outside content is read, side-effecting tool calls need human approval.
+- **Checks your own APIs:** `ingress apiscan` looks for exposed files, open CORS, missing auth, leaked keys and responses an agent would obey, using only safe read requests.
 - **Runs on your machine:** MCP server, CLI and library, or HTTP service. No telemetry ([PRIVACY.md](PRIVACY.md)).
 
 ```bash
@@ -141,6 +142,7 @@ node packages/core/dist/src/cli.js https://example.com
 node packages/core/dist/src/cli.js --text < fixtures/hostile-kettle.html
 node packages/core/dist/src/cli.js --text --sandbox=always < fixtures/hostile-kettle.html
 node packages/core/dist/src/cli.js --verify < receipt.json
+node packages/core/dist/src/cli.js apiscan https://api.example.com   # an API you own; see API scan below
 ```
 
 The browser sandbox needs a Chromium binary. Playwright is an optional dependency; set `INGRESS_CHROMIUM` to an existing binary to skip the download. Without one, the sandbox reports itself not-run and the static passes proceed.
@@ -211,6 +213,33 @@ Every report ends with what was checked and what was not (Safari's settings are 
 ### Agent instruction files
 
 `ingress instructions <dir>` lists the files coding agents load as guidance (AGENTS.md, CLAUDE.md, GEMINI.md, .cursorrules, .cursor/rules, .windsurfrules, .clinerules, .roo rules, copilot-instructions, CONVENTIONS.md, .claude commands and agents), including any inside dependencies, with their approval status. `ingress instructions approve <dir> <file>` approves one file's exact bytes; it runs only in an interactive terminal and asks you to type part of the file's fingerprint. Approvals live in `~/.acepaste-ingress/`, signed with a local key, never in the repository. The `ingress_instructions` tool then returns approved versions as guidance and everything else as untrusted data. It enforces only where the agent loads instructions through it; turn off a runtime's native loading where you can.
+
+### API scan: is your own API safe to point an agent at?
+
+`ingress apiscan <base-url>` checks an HTTP API you own, or are allowed to test, for common security mistakes. **Only point it at APIs you own or are authorized to test.**
+
+```sh
+ingress apiscan https://api.example.com
+ingress apiscan https://api.example.com/v1 --spec openapi.json --auth-header "Authorization: Bearer $TOKEN"
+ingress apiscan https://api.example.com --burst --json --max-requests 80
+```
+
+It is gentle by design: only `GET`, `HEAD` and `OPTIONS` requests, never a request body, never an attack payload, never a password guess. It sends about 60 requests at most (`--max-requests` sets the ceiling), pauses between them, gives up on a slow request after 10 seconds, and names itself honestly as `AcePasteIngress/0.9`. It talks only to the host in the URL you give (and the spec URL, if you give one) and never follows a redirect elsewhere.
+
+What it checks, each finding marked high, review or info, with the endpoint, a short piece of evidence (credentials redacted) and a one-line fix:
+
+- **Transport:** `http://` that does not redirect to `https://`, certificate problems, missing HSTS.
+- **Headers:** missing `X-Content-Type-Options`, JSON with a wrong or missing `Content-Type`, and authenticated responses that shared caches may keep.
+- **CORS:** sends `Origin: https://evil.example`; a reflected origin or `*` with credentials is high, a reflected origin alone is review.
+- **Broken auth (with `--spec`):** every `GET` the spec says needs auth is requested once without your auth header (path values filled with `1`). An answer with data is high.
+- **Exposed files:** `/.env`, `/.git/config`, `/.git/HEAD`, `/actuator`, `/actuator/env`, `/debug`, `/server-status`, `/phpinfo.php`, `/swagger.json`, `/openapi.json`, `/api-docs`, `/graphql` (a plain GET, no query), `/.DS_Store`, `/backup.zip`, `/config.json`. Each file's contents are checked, so a catch-all page that answers 200 for everything is not reported.
+- **Verbose errors:** stack traces, database errors and framework debug pages on a missing path and a badly typed parameter.
+- **Version disclosure:** versions in `Server` and `X-Powered-By`.
+- **Secrets in responses:** the same credential detectors the gate uses.
+- **Rate limiting (only with `--burst`):** about 20 quick GETs to the base URL; no `429` and no `RateLimit`/`Retry-After` header is review.
+- **Content an agent would obey:** every JSON or text response goes through the Ingress engine, the same scan as `ingress --text`. A hostile or suspect verdict means this API returns content an AI agent would read as instructions.
+
+It prints a report grouped by severity and a summary line, or JSON with `--json`. The exit code is 1 when any finding is high. Specs must be OpenAPI 3 or Swagger 2 **JSON**; YAML is not read (convert it first). The library export is `apiscan()` from `@acepaste/ingress`.
 
 ## As the metered HTTP service
 
