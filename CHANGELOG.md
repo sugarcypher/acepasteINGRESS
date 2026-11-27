@@ -4,6 +4,16 @@ Every change bumps the patch version of all three packages. The ruleset id chang
 behavior changes; receipts carry it so verdicts are reproducible. Releases up to 0.9.6 are in the
 [README](README.md#changes-in-096-2026-11-18-ruleset-20261118-3-unchanged).
 
+## Unreleased
+
+- **`ingress apiscan <base-url>`: a gentle security check for HTTP APIs you own.** Only GET, HEAD and OPTIONS,
+  no request bodies or attack payloads, about 60 requests at most with a pause between them, and the gate's own
+  user agent. It checks transport (HTTPS redirect, certificate, HSTS), security headers, CORS, routes that answer
+  without auth (with a JSON OpenAPI spec), exposed files and debug paths (with soft-404 checks), verbose errors,
+  version headers, credentials in responses, rate limiting (only with `--burst`), and whether a response is
+  something an AI agent would read as instructions (the same scan as `--text`). Human report or `--json`;
+  exit code 1 on any high finding. Library export: `apiscan()`. YAML specs are not read yet.
+
 ## 0.9.32 (2026-11-26, ruleset unchanged)
 
 Documentation and listing only. Nothing about verdicts changes.
