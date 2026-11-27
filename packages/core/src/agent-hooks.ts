@@ -197,6 +197,8 @@ async function postToolUseInner(event: Json, gate: HookGate, o: HookOptions, see
       // command output is terminal output: read as a terminal would show it, at open-channel trust
       const text = out + (err ? `\n--- stderr ---\n${err}` : "");
       seen.push({ ref: bashSource });
+      // the hosts the command itself fetched from join what the session has visited (the exfiltration guard's allowlist)
+      for (const m of String(input.command ?? "").slice(0, 20_000).matchAll(/\bhttps?:\/\/[^\s"'<>()|;&]+/gi)) { const h = hostOf(m[0]); if (h) seen.push({ ref: bashSource, host: h }); }
       for (const h of carried) seen.push({ ref: bashSource, host: h }); // where its programs really went joins what the session has contacted
       const env = await refusal(gate, text, bashSource, { kind: "log", source: { channel: "shell command output", trust: 5 } });
       if (!env) seen.push({ ref: bashSource, text });
@@ -505,6 +507,17 @@ function remember(event: Json, o: HookOptions, items: Array<{ ref: string; text?
     for (const it of items) b.ingest(session, it);
     saveRun(dir, session, b.exportRun(session));
   } catch { /* memory between calls is best effort; the gating itself already happened */ }
+}
+
+/**
+ * What the exfiltration guard (exfil.outcheck) needs to judge a model's reply in this session: the hosts it
+ * fetched from or the person named, fingerprints of what it read, its marker and live verification codes.
+ * Empty when the session is unknown.
+ */
+export function sessionExfilContext(session: string, dir: string = stateDir()): ReturnType<ActionBroker["exfilContext"]> {
+  const b = new ActionBroker({});
+  b.importRun(session, loadRun(dir, session));
+  return b.exfilContext(session);
 }
 
 /** The program listening on a local TCP port, by asking lsof. Undefined when nothing can be learned. */

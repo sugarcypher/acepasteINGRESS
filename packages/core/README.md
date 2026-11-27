@@ -14,6 +14,8 @@
 - **Checks your MCP servers:** `ingress mcpscan` finds poisoned tool descriptions, tools that give orders about other tools, look-alike tool names, and tools that changed after you pinned them.
 - **Checks your own APIs:** `ingress apiscan` looks for exposed files, open CORS, missing auth, leaked keys and responses an agent would obey, using only safe read requests.
 - **Gates repos for coding agents:** `ingress reposcan` and a GitHub Action flag Trojan Source Unicode, instructions hidden in markdown, poisoned AGENTS.md files and install scripts that download and run code.
+- **Checks packages before install:** `ingress pkgcheck` catches made-up package names, lookalikes of popular ones and brand-new packages with install scripts.
+- **Stops data leaving in links and images:** `ingress outcheck` and the action broker catch data hidden in image URLs, links and subdomains.
 - **Runs on your machine:** MCP server, CLI and library, or HTTP service. No telemetry ([PRIVACY.md](https://github.com/sugarcypher/acepasteINGRESS/blob/main/PRIVACY.md)).
 
 
@@ -73,5 +75,22 @@ safety or skip review, install scripts that download and run code, and risky MCP
 `--diff` scans only files changed since a git ref; `--sarif` writes SARIF 2.1.0 for GitHub code scanning. Exit
 code 1 when any finding is high. In code: `reposcan(dir, options)` and `toSarif(report)`. GitHub Action and
 pre-commit hook: https://github.com/sugarcypher/acepasteINGRESS/blob/main/docs/REPOSCAN.md
+
+## Package check
+
+`ingress pkgcheck <npm|pypi> <name>[@version]... [--json] [--offline]` looks each package up on the public
+registry before you install it. High: not on the registry (often a name an AI made up, "slopsquatting"), a version
+that does not exist, a name one edit from a popular package. Also flagged: first published under 30 days ago, npm
+install scripts, PyPI releases without a wheel, no source repository, deprecation, and a README aimed at an AI
+agent. `--command "<install line>"` and `--hook` (a Claude Code PreToolUse event on stdin) read `npm install`,
+`pnpm add`, `yarn add`, `pip install` and `uv add` lines. Contacts only registry.npmjs.org and pypi.org;
+`--offline` contacts nothing. Exit code 1 on a high finding. In code: `pkgcheck(specs, options)`.
+
+## Exfiltration guard
+
+`ingress outcheck [--session <id>] [--safe] [--json] < reply` reads a model's reply for data hidden in image and
+link addresses, HTML and CSS URLs, and subdomains (encoded runs, credentials, the session marker, text from earlier
+tool results) before a chat window renders it. Exit code 1 when hostile; `--safe` prints the reply with those
+addresses taken out. In code: `outcheck(text, options)`. The action broker applies the same checks to tool calls.
 
 Full documentation: https://github.com/sugarcypher/acepasteINGRESS

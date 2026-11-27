@@ -97,6 +97,12 @@ export { auditSnapshot, auditItemKey, trackAudit, confirmAuditArea, formatAuditC
 export type { AuditAttention, AuditChanges } from "./audit-changes.js";
 export { apiscan, formatApiscan, parseApiscanArgs, parseOpenApiJson, APISCAN_NOTICE, APISCAN_DEFAULT_BUDGET, APISCAN_BURST_SIZE } from "./apiscan.js";
 export type { ApiScanFinding, ApiScanReport, ApiScanOptions, ApiScanFetch, ApiScanGate, ApiScanSeverity, ApiScanCheck } from "./apiscan.js";
+export { outcheck, formatOutcheck, outputAddresses, urlCarriage, dnsExfilShapes, contentFingerprints, contentMatches, decodedCarriage, egressTargets } from "./exfil.js";
+export type { OutcheckOptions, OutcheckResult, OutcheckFinding, OutputElement, ExfilKind, CarriageContext } from "./exfil.js";
+export { pkgcheck, formatPkgcheck, parsePkgcheckArgs, parsePkgArg, parseInstallCommands, similarPopular, editDistance, normalizePypi, pkgcheckHookReply, PKGCHECK_REGISTRIES } from "./pkgcheck.js";
+export type { PkgSpec, PkgReport, PkgFinding, PkgCheckOptions, PkgFetch, PkgGate, PkgSeverity, Ecosystem, InstallCommand } from "./pkgcheck.js";
+export { NPM_TOP, PYPI_TOP } from "./pkgcheck-top.js";
+export { sessionExfilContext } from "./agent-hooks.js";
 export { toolDefinitionText, toolDefinitionItems, reviewToolDefinitions, heldDescription, confirmServerTools, describeServerTools } from "./tooldefs.js";
 export type { ToolDefinition, ToolHold, ToolReview, ServerToolReview, DefinitionGate } from "./tooldefs.js";
 export { mcpscan, formatMcpscan, parseMcpscanArgs, serversFromConfig, checkServerConfig, checkDefinitionText, checkToolNames, definitionItems, comparePin, pinnedServerOf, toolListFingerprint, textDiff, loadPins, pinsPath, listServer, launchLine, showInvisible, MCPSCAN_CONNECT_NOTICE } from "./mcpscan.js";
