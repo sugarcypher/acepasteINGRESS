@@ -101,3 +101,5 @@ export { toolDefinitionText, toolDefinitionItems, reviewToolDefinitions, heldDes
 export type { ToolDefinition, ToolHold, ToolReview, ServerToolReview, DefinitionGate } from "./tooldefs.js";
 export { mcpscan, formatMcpscan, parseMcpscanArgs, serversFromConfig, checkServerConfig, checkDefinitionText, checkToolNames, definitionItems, comparePin, pinnedServerOf, toolListFingerprint, textDiff, loadPins, pinsPath, listServer, launchLine, showInvisible, MCPSCAN_CONNECT_NOTICE } from "./mcpscan.js";
 export type { McpScanFinding, McpScanReport, McpScanOptions, McpScanGate, McpScanSeverity, McpScanCheck, McpServerConfig, McpServerListing, McpScanServerResult, DefinitionItem } from "./mcpscan.js";
+export { show, buildShowModel, renderShowHtml, renderShowTerm, parseShowArgs, describeInvisible, escapeHtml, SHOW_CSP, SHOW_KIND_LABEL, SHOW_USAGE } from "./show.js";
+export type { ShowModel, ShowKind, ShowPiece, ShowSegment, ShowFinding, ShowInput, ShowArgs } from "./show.js";

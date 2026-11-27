@@ -262,6 +262,18 @@ It finds the config files of Claude Desktop, Claude Code (including per-project 
 
 Output is a report by severity (high, review, info) or `--json`; the exit code is 1 when anything is high. The MCP proxy in `@acepaste/ingress-mcp` already holds back any proxied tool whose definition changed since it was confirmed (`ingress tools confirm <server>`); `mcpscan` is the same idea for the servers your AI apps start directly. The library export is `mcpscan()` from `@acepaste/ingress`.
 
+### See what your agent sees
+
+`ingress show` draws one page two ways, side by side: **what a person sees** and **what your AI agent receives**. Every piece of text a person would not see is highlighted where it sits, colour-coded by how it is hidden: hidden by CSS (or moved off-screen), a colour that matches the background (or text too small to read), invisible Unicode (shown as badges such as `⟨U+200B⟩`, and tag characters spelled out), comments, attributes, `srcdoc` and SVG text, and passages served only to AI fetchers. Above it are the verdict and score; below it are the findings in plain English, each linking to its highlight, the bots-versus-browsers comparison when it ran, and the receipt digest.
+
+```sh
+ingress show https://example.com/page --out report.html --open
+ingress show docs/demo/page.html --out docs/demo/show-report.html
+ingress show --term docs/demo/page.html     # in the terminal: hidden spans in red brackets
+```
+
+The report is one static HTML file: inline CSS, a strict Content-Security-Policy, no scripts, fonts or remote images. Everything from the page is escaped, so a page cannot run code in its own report. A URL is fetched with the gate's normal fetch (both fingerprints when the cloaking check is on); nothing else is contacted. Without `--out` the HTML goes to stdout. The exit code is 1 when the verdict is not clean. The usual flags (`--policy=`, `--no-cloaking`, `--sandbox=`) apply. The person's view follows the engine's static model (inline styles, the page's own `<style>` blocks, colours); styles set by scripts and linked stylesheets are not drawn, though the verdict and findings still count them. The HTTP service has the same report at `GET /v1/show?url=` (same key and quota as `/v1/fetch`). Example: [`docs/demo/show-report.html`](docs/demo/show-report.html).
+
 ## As the metered HTTP service
 
 ```sh

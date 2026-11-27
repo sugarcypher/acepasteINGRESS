@@ -53,4 +53,13 @@ agent would read as instructions. It sends only GET, HEAD and OPTIONS requests, 
 about 60 at most, to the URL you give. Exit code 1 when any finding is high. In code: `apiscan(url, options)`.
 YAML specs are not read; convert them to JSON.
 
+## See what your agent sees
+
+`ingress show <url|file> [--out report.html] [--open]` writes one static HTML page with what a person sees beside
+what your AI agent receives. Hidden text is highlighted in place by kind (CSS, colour match, invisible Unicode,
+comments and attributes, text served only to AI fetchers), with the verdict, the findings linked to their
+highlights, the bots-versus-browsers comparison and the receipt digest. No scripts or remote content; everything
+from the page is escaped. `ingress show --term <url|file>` prints the same in the terminal with hidden spans in red
+brackets. In code: `show()`, `renderShowHtml()`, `renderShowTerm()`.
+
 Full documentation: https://github.com/sugarcypher/acepasteINGRESS

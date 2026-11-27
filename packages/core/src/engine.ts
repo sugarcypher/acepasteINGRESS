@@ -84,6 +84,11 @@ export interface EngineDeps {
   random?: () => number;
   /** delay between the two fetches (tests skip it) */
   sleep?: (ms: number) => Promise<void>;
+  /**
+   * Told which copies a URL fetch is about to judge: the one judged, and the browser-fingerprint copy it is
+   * compared with (when cloaking compare ran). Read-only; used by `ingress show` to draw what each reader got.
+   */
+  onAcquired?: (copies: { judged: AcquireResult; browser?: AcquireResult }) => void;
 }
 
 const sha256 = (s: string) => createHash("sha256").update(s, "utf8").digest("hex");
@@ -108,7 +113,7 @@ export interface AssembledResult {
 export class IngressEngine {
   readonly config: IngressConfig;
   private cache = new Map<string, CacheEntry>();
-  private deps: Required<Pick<EngineDeps, "now" | "log" | "sandboxImpl" | "browserAcquireImpl" | "random" | "sleep">> & Pick<EngineDeps, "fetchImpl" | "resolver">;
+  private deps: Required<Pick<EngineDeps, "now" | "log" | "sandboxImpl" | "browserAcquireImpl" | "random" | "sleep">> & Pick<EngineDeps, "fetchImpl" | "resolver" | "onAcquired">;
   private lastReceiptDigest: string | undefined;
 
   constructor(config: Partial<IngressConfig> = {}, deps: EngineDeps = {}) {
@@ -129,6 +134,7 @@ export class IngressEngine {
       browserAcquireImpl: deps.browserAcquireImpl ?? acquireWithBrowser,
       random: deps.random ?? Math.random,
       sleep: deps.sleep ?? ((ms) => new Promise((r) => setTimeout(r, ms))),
+      onAcquired: deps.onAcquired,
     };
     const [jmin, jmax] = this.config.cloakingJitterMs;
     if (!(jmin >= 0 && jmax >= jmin)) throw new Error("IngressEngine: cloakingJitterMs must be [min, max] with 0 <= min <= max");
@@ -230,6 +236,7 @@ export class IngressEngine {
     }
 
     const standIn = { agent: false };
+    this.deps.onAcquired?.({ judged: agentRes, browser: humanRes });
     const result = await this.guarded(url, kind, t0, () => this.analyze({
       url, finalUrl: agentRes.finalUrl, redirectChain: agentRes.redirectChain, raw: agentRes.body, kind,
       humanRaw: humanRes?.body, humanContentType: humanRes?.contentType, externalRules, externalColorRules, timings, t0, override: !!opts.override, extraFindings: findings, rule, standIn,
@@ -283,6 +290,7 @@ export class IngressEngine {
     let externalRules: HiddenRule[] = [];
     let externalColorRules: ColorRule[] = [];
     if (kind === "html" && this.config.fetchStylesheets) ({ hidden: externalRules, color: externalColorRules } = await this.fetchStylesheets(human.body, human.finalUrl));
+    this.deps.onAcquired?.({ judged: human });
     const result = await this.guarded(url, kind, t0, () => this.analyze({
       url, finalUrl: human.finalUrl, redirectChain: human.redirectChain, raw: human.body, kind,
       externalRules, externalColorRules, timings, t0, override: !!opts.override, extraFindings: findings, rule,
