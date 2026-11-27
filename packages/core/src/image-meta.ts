@@ -75,7 +75,7 @@ export function looksLike(b: Uint8Array): string | undefined {
 const clean = (s: string) => s.replace(/\0+$/g, "").replace(/[\0-\x08\x0b\x0c\x0e-\x1f]/g, " ").trim().slice(0, MAX_TEXT);
 
 /** XMP is XML: the values a reader might be handed are element text and attribute values. */
-function xmpTexts(xml: string): Array<{ field: string; text: string }> {
+export function xmpTexts(xml: string): Array<{ field: string; text: string }> {
   const out: Array<{ field: string; text: string }> = [];
   const seen = new Set<string>();
   const add = (field: string, text: string) => {

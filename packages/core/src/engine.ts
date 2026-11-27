@@ -380,6 +380,20 @@ export class IngressEngine {
   }
 
   /**
+   * Gate a document already split into what a person sees and what they do not (a PDF's text layer, a Word
+   * file's hidden runs, a spreadsheet's hidden sheets: see pdf.ts, office.ts, filescan.ts). Every segment,
+   * hidden or shown, goes through the same passes `scan` runs on a page's segments; the delivered text is the
+   * visible segments only. `report` is a stable description of the file, hashed into the receipt.
+   */
+  async scanDocument(doc: { segments: TextSegment[]; findings?: Finding[]; report: string }, opts: IngressOptions & { url?: string; source?: SourceInfo } = {}): Promise<IngressResult> {
+    const t0 = performance.now();
+    const url = opts.url ?? "inline:document";
+    if (opts.quarantined) return this.refuse(url, [{ pass: "policy", kind: "policy.denied_source", confidence: 1, severity: 1, message: `source is quarantined by your organization: ${opts.quarantined}`, action: "none" }], {}, t0, "text", "hostile", true);
+    const rule = url.startsWith("inline:") ? undefined : this.domainRule(url);
+    return this.guarded(url, "text", t0, () => this.analyze({ url, finalUrl: url, redirectChain: [], raw: doc.report, kind: "text", externalRules: [], timings: {}, t0, override: !!opts.override, extraFindings: doc.findings ?? [], rule, source: opts.source, adapted: { segments: doc.segments, findings: [] } }));
+  }
+
+  /**
    * Gate what the model will actually receive when several sources are combined (search
    * results, retrieved chunks, several tool results). An instruction can be split so each
    * fragment looks harmless alone: each fragment is gated, then the text that would be

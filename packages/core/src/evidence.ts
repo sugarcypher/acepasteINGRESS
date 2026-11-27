@@ -60,6 +60,7 @@ const ALTERNATIVES: Array<[string, string]> = [
   ["meaning.exfil_markdown_image", "images with ordinary tracking or cache-busting query strings"],
   ["meaning.exfil_link", "legitimate webhook or form endpoints mentioned in documentation"],
   ["cloaking.", "personalization, A/B tests, geolocation, or different layouts for different browsers"],
+  ["document.", "template leftovers, reviewer comments, speaker notes, accessibility text, print-only marks, or form automation in an ordinary document"],
   ["plugin.", "defined by the custom detector's author"],
 ];
 

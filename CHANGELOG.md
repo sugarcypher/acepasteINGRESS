@@ -28,6 +28,14 @@ behavior changes; receipts carry it so verdicts are reproducible. Releases up to
   and a call that sends data to a host the run never fetched from and the person never named. The run keeps
   short fingerprints of what it read for this, never the text. Library exports: `outcheck()`, `urlCarriage()`,
   `dnsExfilShapes()`.
+- **`ingress filescan <file...>` and `ingress corpusscan <dir>`: check attachments and knowledge bases before an
+  agent reads them.** filescan separates what a person sees in a PDF, Word, Excel, PowerPoint or image file from
+  what only an extractor reads (white, tiny, off-page, covered or invisible-mode text, hidden runs, sheets, rows and
+  shapes, comments, notes, alt text, metadata, scripts and macros) and runs every piece through the engine;
+  `--clean-out` writes the visible text, re-checked on its own. corpusscan walks a folder with a concurrency limit
+  and size caps, and `--quarantine` moves (or `--copy` copies) hostile files aside with a manifest of hashes and
+  verdicts; nothing is deleted. New dependency-free readers: `pdf.ts`, `office.ts`, `zipread.ts`. Library exports:
+  `filescan()`, `corpusscan()`, `IngressEngine.scanDocument()`. No network requests.
 
 ## 0.9.33 (2026-11-27, ruleset unchanged)
 
