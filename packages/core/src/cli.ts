@@ -14,11 +14,14 @@
  *                                   MCP tool-poisoning and rug-pull scanner (see mcpscan.ts)
  * ingress show <url|file> [--out report.html] [--open]   what a person sees beside what your AI agent receives (one static HTML page)
  * ingress show --term <url|file>    the same in the terminal, hidden spans in red brackets
+ * ingress reposcan [dir] [--diff <git-ref>] [--json] [--sarif file|-] [--max-files N]
+ *                                   repo gate for coding agents: hidden Unicode, hidden markdown, poisoned agent files, install scripts
  */
 import { readFileSync } from "node:fs";
 import { apiscan, formatApiscan, parseApiscanArgs, APISCAN_NOTICE } from "./apiscan.js";
 import { mcpscan, formatMcpscan, parseMcpscanArgs, MCPSCAN_CONNECT_NOTICE } from "./mcpscan.js";
 import { show, renderShowHtml, renderShowTerm, parseShowArgs, SHOW_USAGE } from "./show.js";
+import { reposcan, formatReposcan, toSarif, parseReposcanArgs } from "./reposcan.js";
 import { IngressEngine } from "./engine.js";
 import { HONEST_USER_AGENT } from "./acquire.js";
 import { summarize, cloakingConfigFromEnv } from "./summary.js";
@@ -63,6 +66,7 @@ async function main() {
   if (args[0] === "apiscan") return apiscanCommand(args.slice(1));
   if (args[0] === "mcpscan") return mcpscanCommand(args.slice(1));
   if (args[0] === "show") return showCommand(args.slice(1));
+  if (args[0] === "reposcan") return reposcanCommand(args.slice(1));
   if (args[0] === "hook") return hookCommand(args[1], await chunksIn());
   if (args[0] === "tools") return toolsCommand(args.slice(1));
   if (args[0] === "blocklist") return blocklistCommand(args.slice(1));
@@ -237,7 +241,7 @@ async function main() {
   let result;
   if (flag("text")) result = await engine.scan(await chunksIn(), { override });
   else if (url) result = await engine.fetch(url, { override });
-  else { console.error("usage: ingress <url> | ingress --text < file   [--json | --summary] [--no-cloaking] [--human-fetch=http|browser] [--override] [--sandbox=always|escalate|off] [--policy=file.json] | ingress --verify < receipt.json | ingress apiscan <base-url> [--spec openapi.json] [--auth-header \"Name: value\"] [--burst] [--json] [--max-requests N] | ingress mcpscan [--connect] [--config file] [--url URL] [--json] | ingress show <url|file> [--out report.html] [--open] [--term]"); process.exit(2); }
+  else { console.error("usage: ingress <url> | ingress --text < file   [--json | --summary] [--no-cloaking] [--human-fetch=http|browser] [--override] [--sandbox=always|escalate|off] [--policy=file.json] | ingress --verify < receipt.json | ingress apiscan <base-url> [--spec openapi.json] [--auth-header \"Name: value\"] [--burst] [--json] [--max-requests N] | ingress mcpscan [--connect] [--config file] [--url URL] [--json] | ingress show <url|file> [--out report.html] [--open] [--term] | ingress reposcan [dir] [--diff <git-ref>] [--json] [--sarif file|-]"); process.exit(2); }
 
   if (flag("json")) { console.log(JSON.stringify(result, null, 2)); return; }
   if (flag("summary")) { console.log(JSON.stringify(summarize(result))); if (result.tier === "unreachable") process.exitCode = 1; return; }
@@ -714,4 +718,35 @@ async function showCommand(a: string[]) {
     const opener = process.platform === "darwin" ? ["open", [out]] : process.platform === "win32" ? ["cmd", ["/c", "start", "", out]] : ["xdg-open", [out]];
     try { execFileSync(opener[0] as string, opener[1] as string[], { stdio: "ignore", timeout: 10_000 }); } catch { console.error(`could not open it automatically; open ${out} in a browser`); }
   }
+}
+
+// a function, not a const: main() runs before the bottom of this file is evaluated
+function reposcanUsage() {
+  return `usage: ingress reposcan [dir] [--diff <git-ref>] [--json] [--sarif <file>|-] [--max-files N]
+  Scans a working tree (default .) for what a coding agent reads and a reviewer cannot see:
+  invisible or bidirectional Unicode (Trojan Source), instructions hidden in markdown,
+  agent instruction files (AGENTS.md, CLAUDE.md, .cursorrules, ...) that tell the agent to run
+  network commands, read secrets, turn off safety or skip review, install scripts that download
+  and run code, and risky MCP server configs. Local only: no network connections.
+  --diff <ref>    only files changed since a git ref (a PR's base sha, origin/main, HEAD)
+  --json          the report as JSON on stdout
+  --sarif <file>  also write SARIF 2.1.0 for GitHub code scanning (- for stdout)
+  Exit code 1 when any finding is high, 2 on a usage error.`;
+}
+
+/**
+ *   ingress reposcan [dir] [--diff <git-ref>] [--json] [--sarif file|-] [--max-files N]
+ * A repo gate for coding agents. Exit 1 when any finding is high. See reposcan.ts.
+ */
+async function reposcanCommand(a: string[]) {
+  if (a.includes("--help") || a.includes("-h")) { console.log(reposcanUsage()); return; }
+  const p = parseReposcanArgs(a);
+  if (p.error) { console.error(`ingress reposcan: ${p.error}\n${reposcanUsage()}`); process.exit(2); }
+  let r;
+  try { r = await reposcan(p.dir, p.opts); } catch (e) { console.error(`ingress reposcan: ${(e as Error).message}`); process.exit(2); }
+  const sarif = p.sarif ? JSON.stringify(toSarif(r), null, 2) : undefined;
+  if (p.sarif && p.sarif !== "-") writeFileSync(p.sarif, sarif! + "\n");
+  if (p.sarif === "-") console.log(sarif);
+  else console.log(p.json ? JSON.stringify(r, null, 2) : formatReposcan(r));
+  if (r.summary.high) process.exitCode = 1;
 }

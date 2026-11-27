@@ -103,3 +103,5 @@ export { mcpscan, formatMcpscan, parseMcpscanArgs, serversFromConfig, checkServe
 export type { McpScanFinding, McpScanReport, McpScanOptions, McpScanGate, McpScanSeverity, McpScanCheck, McpServerConfig, McpServerListing, McpScanServerResult, DefinitionItem } from "./mcpscan.js";
 export { show, buildShowModel, renderShowHtml, renderShowTerm, parseShowArgs, describeInvisible, escapeHtml, SHOW_CSP, SHOW_KIND_LABEL, SHOW_USAGE } from "./show.js";
 export type { ShowModel, ShowKind, ShowPiece, ShowSegment, ShowFinding, ShowInput, ShowArgs } from "./show.js";
+export { reposcan, formatReposcan, toSarif, parseReposcanArgs, listRepoFiles, classifyRepoFile, findInvisibleUnicode, hiddenMarkdownFragments, agentInstructionHits, extractComments, showInvisibles, REPOSCAN_DEFAULT_MAX_FILES, REPOSCAN_DEFAULT_MAX_FILE_BYTES } from "./reposcan.js";
+export type { RepoScanFinding, RepoScanReport, RepoScanOptions, RepoScanGate, RepoScanSeverity, RepoScanCheck, RepoFileRole } from "./reposcan.js";
