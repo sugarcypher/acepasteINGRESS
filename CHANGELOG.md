@@ -6,10 +6,12 @@ behavior changes; receipts carry it so verdicts are reproducible. Releases up to
 
 ## 0.9.32 (2026-11-26, ruleset unchanged)
 
-Documentation only. Nothing about verdicts changes.
+Documentation and listing only. Nothing about verdicts changes.
 
 - **The npm pages now say what Ingress is for at the top:** a one-line summary, a short demo clip, the
   problem in plain words and six feature lines, matching the GitHub README.
+- **Ready for the official MCP Registry:** `@acepaste/ingress-mcp` carries
+  `mcpName: io.github.sugarcypher/acepaste-ingress`, and `server.json` describes the listing.
 
 ## 0.9.31 (2026-11-25, ruleset unchanged)
 
