@@ -16,6 +16,7 @@
 - **Gates repos for coding agents:** `ingress reposcan` and a GitHub Action flag Trojan Source Unicode, instructions hidden in markdown, poisoned AGENTS.md files and install scripts that download and run code.
 - **Checks packages before install:** `ingress pkgcheck` catches made-up package names, lookalikes of popular ones and brand-new packages with install scripts.
 - **Stops data leaving in links and images:** `ingress outcheck` and the action broker catch data hidden in image URLs, links and subdomains.
+- **Checks files and knowledge bases:** `ingress filescan` finds hidden text in PDFs, Word, Excel, PowerPoint and images before an agent reads them; `ingress corpusscan` checks a whole RAG folder and moves hostile files aside.
 - **Runs on your machine:** MCP server, CLI and library, or HTTP service. No telemetry ([PRIVACY.md](https://github.com/sugarcypher/acepasteINGRESS/blob/main/PRIVACY.md)).
 
 
@@ -92,5 +93,16 @@ agent. `--command "<install line>"` and `--hook` (a Claude Code PreToolUse event
 link addresses, HTML and CSS URLs, and subdomains (encoded runs, credentials, the session marker, text from earlier
 tool results) before a chat window renders it. Exit code 1 when hostile; `--safe` prints the reply with those
 addresses taken out. In code: `outcheck(text, options)`. The action broker applies the same checks to tool calls.
+
+## File and corpus scan
+
+`ingress filescan <file...> [--clean-out <dir>] [--json]` gates files before an agent reads them. It separates what a
+person sees from what only an extractor reads: in PDFs white, tiny, off-page, covered and invisible-mode (`Tr 3`)
+text, annotations, properties and JavaScript; in Word, Excel and PowerPoint hidden runs, white or tiny text,
+comments, notes, alt text, hidden sheets, rows and shapes, `;;;` cells, macros and remote templates; in images their
+metadata. Every piece goes through the engine. `--clean-out` writes only the visible text, re-checked on its own.
+`ingress corpusscan <dir> [--quarantine <dir> [--copy] [--suspect]]` does the same for a folder (a RAG knowledge
+base), four files at a time, and moves or copies hostile files aside with a manifest of hashes and verdicts. It never
+deletes. No network requests. In code: `filescan(path, options)`, `corpusscan(dir, options)`.
 
 Full documentation: https://github.com/sugarcypher/acepasteINGRESS

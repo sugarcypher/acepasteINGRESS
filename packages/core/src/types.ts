@@ -155,6 +155,13 @@ export type FindingKind =
   | "image.code_action"
   | "image.caption_mismatch"
   | "image.pixels_not_inspected"
+  // channel structure: documents (PDF, Office) gated by filescan
+  | "document.hidden_text"
+  | "document.metadata_text"
+  | "document.comment_text"
+  | "document.active_content"
+  | "document.embedded_content"
+  | "document.not_read"
   | "image.drawn_browser_window"
   | "image.drawn_system_dialog"
   // channel structure: video

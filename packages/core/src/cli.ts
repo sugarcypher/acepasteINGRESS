@@ -20,6 +20,10 @@
  *                                   does a model's reply carry data out in image or link addresses? exit 1 when hostile
  * ingress pkgcheck <npm|pypi> <name>[@version]... [--json] [--offline] | --command "<install line>" | --hook
  *                                   check packages on the public registry before installing them; exit 1 on a high finding
+ * ingress filescan <file...> [--clean-out <dir>] [--json]
+ *                                   gate PDF, Office, image and text files before an agent reads them (hidden text, metadata, scripts)
+ * ingress corpusscan <dir> [--quarantine <dir> [--copy]] [--clean-out <dir>]
+ *                                   gate a folder (a RAG knowledge base) file by file; set hostile files aside, never delete
  */
 import { readFileSync } from "node:fs";
 import { apiscan, formatApiscan, parseApiscanArgs, APISCAN_NOTICE } from "./apiscan.js";
@@ -28,6 +32,7 @@ import { show, renderShowHtml, renderShowTerm, parseShowArgs, SHOW_USAGE } from 
 import { reposcan, formatReposcan, toSarif, parseReposcanArgs } from "./reposcan.js";
 import { outcheck, formatOutcheck } from "./exfil.js";
 import { pkgcheck, formatPkgcheck, parsePkgcheckArgs, parseInstallCommands, pkgcheckHookReply } from "./pkgcheck.js";
+import { filescan, corpusscan, parseFileScanArgs, formatFileScan, formatCorpusScan, FILESCAN_USAGE, CORPUSSCAN_USAGE } from "./filescan.js";
 import { IngressEngine } from "./engine.js";
 import { HONEST_USER_AGENT } from "./acquire.js";
 import { summarize, cloakingConfigFromEnv } from "./summary.js";
@@ -75,6 +80,8 @@ async function main() {
   if (args[0] === "reposcan") return reposcanCommand(args.slice(1));
   if (args[0] === "outcheck") return outcheckCommand(args.slice(1), await chunksIn());
   if (args[0] === "pkgcheck") return pkgcheckCommand(args.slice(1), args.includes("--hook") ? await chunksIn() : "");
+  if (args[0] === "filescan") return filescanCommand(args.slice(1));
+  if (args[0] === "corpusscan") return corpusscanCommand(args.slice(1));
   if (args[0] === "hook") return hookCommand(args[1], await chunksIn());
   if (args[0] === "tools") return toolsCommand(args.slice(1));
   if (args[0] === "blocklist") return blocklistCommand(args.slice(1));
@@ -249,7 +256,7 @@ async function main() {
   let result;
   if (flag("text")) result = await engine.scan(await chunksIn(), { override });
   else if (url) result = await engine.fetch(url, { override });
-  else { console.error("usage: ingress <url> | ingress --text < file   [--json | --summary] [--no-cloaking] [--human-fetch=http|browser] [--override] [--sandbox=always|escalate|off] [--policy=file.json] | ingress --verify < receipt.json | ingress apiscan <base-url> [--spec openapi.json] [--auth-header \"Name: value\"] [--burst] [--json] [--max-requests N] | ingress mcpscan [--connect] [--config file] [--url URL] [--json] | ingress show <url|file> [--out report.html] [--open] [--term] | ingress reposcan [dir] [--diff <git-ref>] [--json] [--sarif file|-] | ingress outcheck [--session <id>] [--json] [--safe] < reply | ingress pkgcheck <npm|pypi> <name>[@version]... [--json] [--offline]"); process.exit(2); }
+  else { console.error("usage: ingress <url> | ingress --text < file   [--json | --summary] [--no-cloaking] [--human-fetch=http|browser] [--override] [--sandbox=always|escalate|off] [--policy=file.json] | ingress --verify < receipt.json | ingress apiscan <base-url> [--spec openapi.json] [--auth-header \"Name: value\"] [--burst] [--json] [--max-requests N] | ingress mcpscan [--connect] [--config file] [--url URL] [--json] | ingress show <url|file> [--out report.html] [--open] [--term] | ingress reposcan [dir] [--diff <git-ref>] [--json] [--sarif file|-] | ingress outcheck [--session <id>] [--json] [--safe] < reply | ingress pkgcheck <npm|pypi> <name>[@version]... [--json] [--offline] | ingress filescan <file...> [--clean-out <dir>] | ingress corpusscan <dir> [--quarantine <dir>]"); process.exit(2); }
 
   if (flag("json")) { console.log(JSON.stringify(result, null, 2)); return; }
   if (flag("summary")) { console.log(JSON.stringify(summarize(result))); if (result.tier === "unreachable") process.exitCode = 1; return; }
@@ -846,4 +853,40 @@ async function pkgcheckCommand(a: string[], stdin: string) {
   }
   console.log(p.json ? JSON.stringify({ reports, notes }, null, 2) : formatPkgcheck(reports, notes));
   if (reports.some((r) => r.summary.high)) process.exitCode = 1;
+}
+
+/**
+ *   ingress filescan <file...> [--clean-out <dir>] [--json] [--max-bytes N] [--no-vision]
+ * Gate documents, images and text files before an agent reads them. Exit 1 when any file is not clean. See filescan.ts.
+ */
+async function filescanCommand(a: string[]) {
+  const p = parseFileScanArgs(a);
+  if (p.error || !p.files.length || p.quarantine || p.copy || p.includeSuspect) { console.error(`${p.error ? `ingress filescan: ${p.error}\n` : ""}${FILESCAN_USAGE}`); process.exit(2); }
+  const results = [];
+  for (const f of p.files) {
+    const r = await filescan(f, { cleanOutDir: p.cleanOut, maxBytes: p.maxBytes, vision: p.noVision ? false : undefined, keepResult: p.json });
+    results.push(r);
+    if (!p.json) console.log(formatFileScan(r));
+  }
+  if (p.json) console.log(JSON.stringify(results.length === 1 ? results[0] : results, null, 2));
+  if (results.some((r) => r.tier === "suspect" || r.tier === "hostile")) process.exitCode = 1;
+}
+
+/**
+ *   ingress corpusscan <dir> [--quarantine <dir> [--copy] [--suspect]] [--clean-out <dir>] [--concurrency N] [--max-bytes N] [--max-files N] [--json] [--quiet]
+ * Gate every file in a folder before it is indexed; set hostile files aside. Never deletes. See filescan.ts.
+ */
+async function corpusscanCommand(a: string[]) {
+  const p = parseFileScanArgs(a);
+  if (p.error || p.files.length !== 1 || ((p.copy || p.includeSuspect) && !p.quarantine)) { console.error(`${p.error ? `ingress corpusscan: ${p.error}\n` : ""}${CORPUSSCAN_USAGE}`); process.exit(2); }
+  let r;
+  try {
+    r = await corpusscan(p.files[0], {
+      quarantineDir: p.quarantine, copy: p.copy, includeSuspect: p.includeSuspect, cleanOutDir: p.cleanOut, concurrency: p.concurrency, maxBytes: p.maxBytes, maxFiles: p.maxFiles, vision: p.noVision ? false : undefined,
+      // progress goes to stderr, so stdout stays the report
+      onProgress: p.quiet ? undefined : (done, total, f) => process.stderr.write(`[${done}/${total}] ${f.status === "scanned" ? f.tier : f.status} ${f.file}\n`),
+    });
+  } catch (e) { console.error(`ingress corpusscan: ${(e as Error).message}`); process.exit(2); }
+  console.log(p.json ? JSON.stringify(r, null, 2) : formatCorpusScan(r));
+  if (r.summary.suspect || r.summary.hostile) process.exitCode = 1;
 }

@@ -111,3 +111,8 @@ export { show, buildShowModel, renderShowHtml, renderShowTerm, parseShowArgs, de
 export type { ShowModel, ShowKind, ShowPiece, ShowSegment, ShowFinding, ShowInput, ShowArgs } from "./show.js";
 export { reposcan, formatReposcan, toSarif, parseReposcanArgs, listRepoFiles, classifyRepoFile, findInvisibleUnicode, hiddenMarkdownFragments, agentInstructionHits, extractComments, showInvisibles, REPOSCAN_DEFAULT_MAX_FILES, REPOSCAN_DEFAULT_MAX_FILE_BYTES } from "./reposcan.js";
 export type { RepoScanFinding, RepoScanReport, RepoScanOptions, RepoScanGate, RepoScanSeverity, RepoScanCheck, RepoFileRole } from "./reposcan.js";
+export { filescan, corpusscan, detectFileKind, parseFileScanArgs, formatFileScan, formatCorpusScan, FILESCAN_USAGE, CORPUSSCAN_USAGE, FILESCAN_DEFAULT_MAX_BYTES } from "./filescan.js";
+export type { FileScanResult, FileScanOptions, CorpusScanOptions, CorpusScanReport, QuarantineEntry, FileKind, DocExtract, FileScanArgs } from "./filescan.js";
+export { extractPdf } from "./pdf.js";
+export { extractOffice, extractDocx, extractXlsx, extractPptx } from "./office.js";
+export { readZip, isZip } from "./zipread.js";

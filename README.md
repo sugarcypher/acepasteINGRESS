@@ -18,6 +18,7 @@
 - **Gates repos for coding agents:** `ingress reposcan` and a GitHub Action flag Trojan Source Unicode, instructions hidden in markdown, poisoned AGENTS.md files and install scripts that download and run code.
 - **Checks packages before install:** `ingress pkgcheck` catches made-up package names, lookalikes of popular ones and brand-new packages with install scripts.
 - **Stops data leaving in links and images:** `ingress outcheck` and the action broker catch data hidden in image URLs, links and subdomains.
+- **Checks files and knowledge bases:** `ingress filescan` finds hidden text in PDFs, Word, Excel, PowerPoint and images before an agent reads them; `ingress corpusscan` checks a whole RAG folder and moves hostile files aside.
 - **Runs on your machine:** MCP server, CLI and library, or HTTP service. No telemetry ([PRIVACY.md](PRIVACY.md)).
 
 ```bash
@@ -148,6 +149,7 @@ node packages/core/dist/src/cli.js --text --sandbox=always < fixtures/hostile-ke
 node packages/core/dist/src/cli.js --verify < receipt.json
 node packages/core/dist/src/cli.js apiscan https://api.example.com   # an API you own; see API scan below
 node packages/core/dist/src/cli.js reposcan .                         # a repo gate for coding agents; see Repo scan below
+node packages/core/dist/src/cli.js filescan report.pdf --clean-out safe/   # see Files and knowledge bases below
 ```
 
 The browser sandbox needs a Chromium binary. Playwright is an optional dependency; set `INGRESS_CHROMIUM` to an existing binary to skip the download. Without one, the sandbox reports itself not-run and the static passes proceed.
@@ -332,6 +334,29 @@ ingress outcheck --session "$SESSION_ID" --json # judged with what that agent se
 It reads Markdown images and links, reference links, HTML (`src`, `srcset`, `href`, inline `style`), CSS `url()` and bare URLs, and looks in each address for long base64 or hex runs, credentials (after URL, base64 and hex decoding), the session's marker or a verification code, text from earlier tool results (recognised by fingerprints of five-word runs, never stored as text), and data-shaped subdomain labels (a DNS lookup alone delivers those). Anything a renderer fetches by itself (an image, an iframe, CSS) that carries data to a host the session never fetched from is **hostile**; the same in a link you would have to click is suspect. In code: `outcheck(text, options)`.
 
 The same checks run in the action broker on every tool call once a session has read outside content: a URL carrying earlier tool-result text, a DNS lookup carrying data, and a call that sends data (a file, a credential, encoded data, earlier tool-result text) to a host the session never fetched from and you never named all go to a person. In Claude Code that is the existing `PreToolUse` egress gate; nothing new to install.
+
+### Files and knowledge bases: filescan and corpusscan
+
+An agent that reads an attachment reads its extracted text, and that text often holds words nobody sees when they open the file. `ingress filescan` splits a file into what a person sees and what they do not, and runs every piece through the same engine as `ingress --text`.
+
+```sh
+ingress filescan invoice.pdf proposal.docx                 # verdict for each file
+ingress filescan invoice.pdf --clean-out safe/             # also write safe/invoice.pdf.clean.txt for the agent
+ingress corpusscan ./knowledge-base --quarantine ./held    # check a RAG folder before indexing it
+```
+
+What it looks for:
+
+- **PDF:** white or background-coloured text, text under 2 points, text outside the page, the invisible text mode (`Tr 3`), text covered by a filled box, text in a layer that is switched off, annotations and form fields, document properties and XMP, and JavaScript, open actions, launch actions and embedded files.
+- **Word, Excel, PowerPoint:** hidden text (`w:vanish`, also set through a style), white or tiny text, tracked deletions, comments and speaker notes, alt text, custom XML parts, hidden and very hidden sheets, hidden rows and columns, cells formatted `;;;`, strings stored in a workbook but in no cell, hidden or off-slide shapes, macros and remote templates.
+- **Images:** text in EXIF, XMP and PNG text chunks. Text in the picture itself is read only where the macOS vision helper is built (`ingress vision build`); elsewhere the report says the pixels were not read.
+- **HTML, Markdown, text, CSV, JSON, captions, audio, video:** the gate's existing readers.
+
+The verdict follows the gate's tiers (clean, suspect, hostile). Hidden text alone never makes a file hostile; an instruction inside it does. `--clean-out <dir>` writes only what a person sees, and only when that text is clean when checked on its own. The exit code is 1 when any file is suspect or hostile.
+
+`ingress corpusscan <dir>` runs filescan on every file in a folder, four at a time (`--concurrency`), skipping files over 50 MB (`--max-bytes`), and prints a summary by file (progress goes to stderr; `--quiet` turns it off). `--quarantine <dir>` moves hostile files there, keeping their folder structure, and writes a manifest with each file's SHA-256, size and verdict; `--copy` copies instead of moving, and `--suspect` sets suspect files aside too. Nothing is ever deleted, an existing file is never overwritten, and a file that changed after it was scanned is left where it is. Neither command makes a network request.
+
+Limits: encrypted PDFs are reported as not read; legacy `.doc`, `.xls` and `.ppt` files and other archives are not opened; scanned pages need OCR, which runs only through the macOS vision helper; the page or slide background is assumed to be light, so white text on a dark theme is reported (at low confidence) as hidden. In code: `filescan(path, options)` and `corpusscan(dir, options)`.
 
 ## As the metered HTTP service
 
