@@ -36,10 +36,16 @@ const outJl = join(import.meta.dirname, "..", "results", `validate-${split}.json
 const done = new Set(existsSync(outJl) ? readFileSync(outJl, "utf8").split("\n").filter(Boolean).map((l) => JSON.parse(l).id) : []);
 const todo = rows.filter((r) => !done.has(r.id)).slice(0, Number(opt("limit", 1e9)));
 
-const HOMO_BACK = { "\u0430": "a", "\u0435": "e", "\u043e": "o", "\u0440": "p", "\u0441": "c", "\u0445": "x", "\u0443": "y", "\u0456": "i", "\u0391": "A", "\u0392": "B", "\u0395": "E", "\u0397": "H", "\u0399": "I", "\u039a": "K", "\u039c": "M", "\u039f": "O", "\u03a1": "P", "\u03a4": "T" };
+const HOMO_BACK = { "\u0430": "a", "\u0435": "e", "\u043e": "o", "\u0440": "p", "\u0441": "c", "\u0445": "x", "\u0443": "y", "\u0456": "i", "\u0391": "A", "\u0392": "B", "\u0395": "E", "\u0397": "H", "\u0399": "I", "\u039a": "K", "\u039c": "M", "\u039f": "O", "\u03a1": "P", "\u03a4": "T",
+  // family C (held-out-v2) look-alikes
+  "\u0455": "s", "\u0458": "j", "\u0410": "A", "\u0412": "B", "\u0415": "E", "\u041d": "H", "\u041a": "K", "\u041c": "M", "\u041e": "O", "\u0420": "P", "\u0421": "C", "\u0422": "T", "\u0425": "X" };
 
 function inPage(probe) {
-  const norm = (s) => s.replace(/[\u200b-\u200d\u2060\u202a-\u202e\u2066-\u2069]/g, "").replace(/[\u0430\u0435\u043e\u0440\u0441\u0445\u0443\u0456\u0391\u0392\u0395\u0397\u0399\u039a\u039c\u039f\u03a1\u03a4]/g, (c) => window.__homo[c]).replace(/\s+/g, " ");
+  const homoRe = new RegExp("[" + Object.keys(window.__homo).join("") + "]", "g");
+  const norm = (s) => s.replace(/[\u200b-\u200d\u2060\u202a-\u202e\u2066-\u2069\ufeff\u00ad]/g, "").replace(homoRe, (c) => window.__homo[c]).replace(/\s+/g, " ");
+  // a clip rectangle or clip-path with no area hides its content (held-out-v2 adds circle(0) and rect(1px,1px,1px,1px))
+  const zeroClip = (c) => { const m = c.match(/^rect\(([-\d.]+)px,? ([-\d.]+)px,? ([-\d.]+)px,? ([-\d.]+)px\)/); return !!m && (+m[2] - +m[4] <= 1 || +m[3] - +m[1] <= 1); };
+  const zeroClipPath = (c) => /^inset\((5\d|[6-9]\d|100)%/.test(c) || /^(circle|ellipse)\(0(px)?[ )]/.test(c);
   const lum = (c) => { const m = c.match(/[\d.]+/g); if (!m) return null; const [r, g, b, a] = m.map(Number); if (a === 0) return null; const f = (v) => { v /= 255; return v <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4; }; return 0.2126 * f(r) + 0.7152 * f(g) + 0.0722 * f(b); };
   function check(doc, win) {
     const w = doc.createTreeWalker(doc.body ?? doc.documentElement, NodeFilter.SHOW_TEXT);
@@ -54,10 +60,12 @@ function inPage(probe) {
         if (cs.display === "none") { ok = false; why = "display"; }
         else if (cs.visibility !== "visible") { ok = false; why = "visibility"; }
         else if (parseFloat(cs.opacity) === 0) { ok = false; why = "opacity"; }
-        else if (/rect\(0px,? 0px,? 0px,? 0px\)/.test(cs.clip)) { ok = false; why = "clip"; }
-        else if (/^inset\(50%/.test(cs.clipPath)) { ok = false; why = "clip-path"; }
+        else if (/rect\(0px,? 0px,? 0px,? 0px\)/.test(cs.clip) || zeroClip(cs.clip)) { ok = false; why = "clip"; }
+        else if (/^inset\(50%/.test(cs.clipPath) || zeroClipPath(cs.clipPath)) { ok = false; why = "clip-path"; }
+        else if (/opacity\(0(\.0*)?%?\)/.test(cs.filter)) { ok = false; why = "filter-opacity"; }
       }
       if (ok && parseFloat(win.getComputedStyle(el).fontSize) < 2) { ok = false; why = "font-size"; }
+      if (ok && /rgba\([^)]*,\s*0\)$|^transparent$/.test(win.getComputedStyle(el).color)) { ok = false; why = "transparent-text"; }
       if (ok) {
         let fg = lum(win.getComputedStyle(el).color), bg = null;
         for (let e = el; e && bg === null; e = e.parentElement) bg = lum(win.getComputedStyle(e).backgroundColor);

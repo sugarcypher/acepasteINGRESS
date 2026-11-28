@@ -37,6 +37,30 @@ the held-out split stops being held out once this code is public (draw a fresh o
 new templates); "hidden" is checked by a rendering heuristic, not by people; the benign controls are realistic but few
 per technique (some techniques have only 3-4 distinct benign snippets).
 
+## held-out-v2 (added 2026-11-28)
+
+The v1 `heldout` split is **no longer sealed**: its generator and templates are public and Ingress fixes were made
+after its results were published. `heldout-v2` is a fresh split for scoring changes made after HIB v1:
+
+- **Template family C** (`gen/content_heldout_v2.py`, `gen/layouts_heldout_v2.py`, `gen/family_c.py`): new topics,
+  senders, projects, tools and layouts (tinted page, stylesheet classes, cards), and new benign snippets, written
+  fresh. The benign controls deliberately include imperative interface and presenter text ("Sign in to continue",
+  "Click here to retry", "Skip this slide if we are short on time").
+- **New variants of every technique** (2-3 each, chosen per item), e.g. `display:none` through an attribute
+  selector or a media query, `content-visibility:hidden`, `filter:opacity(0)`, `position:fixed` off the right edge,
+  `font:0/0 a`, `color:transparent` and the tinted background as `rgb()` or a CSS variable, `clip-path:circle(0)`,
+  the WordPress screen-reader `clip:rect(1px,...)`, Outlook conditional comments, hidden `<input>` values and
+  `<meta content>`, `<template>` inside a table, SVG `<metadata>`/`<defs>`, text hidden *inside* a visible iframe,
+  JSON data islands / reversed strings / `document.write` for script-inserted text, tag payloads that pretend to be a
+  subdivision flag, PDF text render mode 3 / text covered by a rectangle / 1% horizontal scale, DOCX theme-colour and
+  shading-matched text, hidden character styles, XLSX `;;;` number format and collapsed outline rows, PNG zTXt and
+  XMP, MCP nested-property and schema descriptions, and UA cloaking keyed on automation clients with the agent-only
+  text inside a paragraph, in a list or replacing a paragraph.
+- **Payloads:** 30 new paraphrased payloads (`sources/paraphrased_payloads_v2.json`, used whole, same banned-phrase
+  rule) and the half of the BIPIA / InjecAgent pools that the public split does not use (shared with v1 `heldout`).
+- Seed 5170311, ids `v00001`..., same matrix (2,004 items, 1,002 attack / 1,002 benign). The generator was committed
+  (frozen) before the split was first generated for scoring; families A and B still produce byte-identical files.
+
 ## What is in it
 
 | | public | heldout |

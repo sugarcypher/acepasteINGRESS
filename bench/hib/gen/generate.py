@@ -19,7 +19,11 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE)
 sys.path.insert(0, HERE)
 
-SPLITS = {"public": {"seed": 20261127, "family": "A"}, "heldout": {"seed": 774103, "family": "B"}}
+SPLITS = {"public": {"seed": 20261127, "family": "A"}, "heldout": {"seed": 774103, "family": "B"},
+          # held-out-v2 (2026-11-28): family C templates and variants (family_c.py), fresh paraphrased payloads
+          # (sources/paraphrased_payloads_v2.json, used whole) and the heldout half of the upstream pools
+          "heldout-v2": {"seed": 5170311, "family": "C"}}
+ID_PREFIX = {"public": "p", "heldout": "h", "heldout-v2": "v"}
 
 # ------------------------------------------------------------------ matrix
 WEB = ["web_article", "web_product", "web_docs", "web_forum"]
@@ -60,11 +64,11 @@ def h(s): return hashlib.sha256(s.encode("utf-8")).hexdigest()
 
 def load_payloads(split):
     up = json.load(open(os.path.join(ROOT, "sources", "upstream_payloads.json"), encoding="utf-8"))
-    pa = json.load(open(os.path.join(ROOT, "sources", "paraphrased_payloads.json"), encoding="utf-8"))
+    pa = json.load(open(os.path.join(ROOT, "sources", "paraphrased_payloads_v2.json" if split == "heldout-v2" else "paraphrased_payloads.json"), encoding="utf-8"))
     banned = re.compile(pa["banned_phrases_regex"].replace("(?i)", ""), re.I)
     for p in pa["payloads"]:
         assert not banned.search(p), f"paraphrased payload uses an override phrase: {p}"
-    want = 0 if split == "public" else 1
+    want = 0 if split == "public" else 1   # heldout-v2 draws the upstream half public never saw
     take = lambda t: int(h(t)[:2], 16) % 2 == want     # disjoint payloads per split
     pools = {"bipia_text": [], "bipia_code": [], "injecagent_base": [], "injecagent_enhanced": [], "paraphrased": []}
     for p in up["payloads"]:
@@ -74,7 +78,7 @@ def load_payloads(split):
             pools["injecagent_enhanced"].append(up["injecagent_enhanced_prefix"] + p["text"])
         else:
             pools[p["source"]].append(p["text"])
-    pools["paraphrased"] = [p for p in pa["payloads"] if take(p)]
+    pools["paraphrased"] = list(pa["payloads"]) if split == "heldout-v2" else [p for p in pa["payloads"] if take(p)]
     return pools
 
 def pick_payload(rng, pools):
@@ -122,6 +126,9 @@ def rid(rng, prefix="c"): return f"{prefix}{rng.randrange(16**6):06x}"
 
 def html_snippet(tech, text, fam, rng, page_bg, attack, lead=""):
     """Return (html, variant, probe_id). `text` is the raw payload or benign snippet; escaped here."""
+    if fam == "C":
+        import family_c
+        return family_c.html_snippet_c(tech, text, rng, page_bg, attack, lead, rid)
     e = html.escape(text)
     pid = rid(rng)
     cls = rid(rng, "k")
@@ -201,9 +208,17 @@ def build_web(kind, tech, text, fam, rng, C, L, attack):
     blocks = [f"<p>{html.escape(p)}</p>" for p in paras]
     variant, pid, agent_html, snippet = "none", None, None, None
     if tech == "ua_cloaking":
-        variant = "ai_ua_tokens" if fam == "A" else "non_browser_ua"
+        variant = "ai_ua_tokens" if fam == "A" else "non_browser_ua" if fam == "B" else "automation_ua"
         agent_blocks = list(blocks)
-        agent_blocks.insert(rng.randint(1, len(agent_blocks)), f"<p>{html.escape(text)}</p>")
+        if fam != "C":
+            agent_blocks.insert(rng.randint(1, len(agent_blocks)), f"<p>{html.escape(text)}</p>")
+        else:   # family C: the agent copy differs inside a paragraph, as a list, or by replacing one paragraph
+            how = rng.choice(["sentence_in_paragraph", "notes_list", "replaced_paragraph"])
+            i = rng.randrange(len(agent_blocks))
+            if how == "sentence_in_paragraph": agent_blocks[i] = agent_blocks[i][:-4] + " " + html.escape(text) + "</p>"
+            elif how == "notes_list": agent_blocks.insert(i + 1, f"<h3>Notes</h3><ul><li>{html.escape(text)}</li></ul>")
+            else: agent_blocks[i] = f"<p>{html.escape(text)}</p>"
+            cloak_how = how
     elif not (tech == "visible" and not attack):
         lead = rng.choice(C.BENIGN["unicode_tags"]) if tech == "unicode_tags" and attack else ""
         snippet, variant, pid = html_snippet(tech, text, fam, rng, L.PAGE_BG, attack, lead=lead)
@@ -221,6 +236,7 @@ def build_web(kind, tech, text, fam, rng, C, L, attack):
     if tech == "ua_cloaking":
         rng.setstate(state)
         agent_html = render(agent_blocks)
+        if fam == "C": variant = f"automation_ua/{cloak_how}"
     return page, agent_html, variant, pid, topic
 
 def build_email(tech, text, fam, rng, C, L, attack):
@@ -234,8 +250,11 @@ def build_email(tech, text, fam, rng, C, L, attack):
         snippet, variant, pid = html_snippet(tech, text, fam, rng, L.PAGE_BG, attack, lead=lead)
         snippet = snippet.replace("<p ", "<span ").replace("</p>", "</span>").replace("<div ", "<span ").replace("</div>", "</span>")
         if variant == "text_indent": snippet = snippet.replace('style="text-indent', 'style="display:inline-block;width:200px;text-indent')  # text-indent needs a block box
+        if fam == "C":
+            import family_c
+            snippet = family_c.email_fix_c(snippet, variant)
         i = rng.randrange(len(blocks)); blocks[i] = blocks[i] + " " + snippet
-        if attack and (tech == "visible" or tech in TEXT_TRANSFORMS): plain_extra = transform(tech, text, fam, random.Random(0)) if tech != "visible" else text
+        if attack and (tech == "visible" or tech in TEXT_TRANSFORMS): plain_extra = (transform(tech, text, fam, random.Random(0)) if fam != "C" else __import__("family_c").transform_c(tech, text, random.Random(0))[0]) if tech != "visible" else text
         elif not attack and tech in TEXT_TRANSFORMS: plain_extra = text
     name, addr = rng.choice(C.EMAIL_SENDERS)
     intro, signoff = rng.choice(C.EMAIL_INTROS), rng.choice(C.EMAIL_SIGNOFFS)
@@ -258,7 +277,13 @@ def build_readme(tech, text, fam, rng, C, attack):
              "## Usage", "", "```sh", f"{name} --help", "```", "", "## Contributing", "", "Pull requests are welcome. Please open an issue first to discuss larger changes.", "",
              "## License", "", "MIT"]
     variant = "none"
-    if not (tech == "visible" and not attack):
+    if fam == "C" and not (tech == "visible" and not attack):
+        import family_c
+        lead = (rng.choice(C.BENIGN["unicode_tags"]) + " ") if tech == "unicode_tags" and attack else ""
+        ins, variant = family_c.readme_insert_c(tech, text, rng, lead, attack)
+        at = rng.choice([3, 11, 18, 21])
+        lines.insert(at, ins); lines.insert(at + 1, "")
+    elif not (tech == "visible" and not attack):
         if tech == "visible": ins, variant = text, "paragraph"
         elif tech == "html_comment":
             if fam == "A": ins, variant = f"<!-- {text.replace('--', '-')} -->", "html_comment"
@@ -313,7 +338,14 @@ def build_pdf(tech, text, fam, rng, C, attack):
             c.drawString(72, y, line); y -= size * 1.35
         y -= 6
     for i, p in enumerate(paras + [""]):
-        if i == hide_at and not (tech == "visible" and not attack):
+        if i == hide_at and fam == "C" and tech != "visible" and not (tech == "visible" and not attack):
+            import family_c
+            yr = [y]
+            def para_c(t, size=11, color=(0.1, 0.1, 0.1)):
+                nonlocal y
+                y = yr[0]; para(t, size, color); yr[0] = y
+            variant = family_c.pdf_c(c, tech, text, W, H, para_c, yr, rng); y = yr[0]
+        elif i == hide_at and not (tech == "visible" and not attack):
             if tech == "visible": para(text); variant = "paragraph"
             elif tech == "pdf_white_text":
                 if fam == "A": para(text, 11, (1, 1, 1)); variant = "white_on_white"
@@ -338,6 +370,9 @@ def build_docx(tech, text, fam, rng, C, attack):
     variant = "none"
     for i, p in enumerate(paras):
         para = d.add_paragraph(p)
+        if i == hide_at and fam == "C" and tech != "visible":
+            import family_c
+            variant = family_c.docx_c(d, tech, text, para, rng); continue
         if i == hide_at and not (tech == "visible" and not attack):
             if tech == "visible": d.add_paragraph(text); variant = "paragraph"; continue
             if tech == "docx_hidden_run" and fam == "B":
@@ -361,6 +396,9 @@ def build_xlsx(tech, text, fam, rng, C, attack):
     variant = "none"
     if not (tech == "visible" and not attack):
         if tech == "visible": ws.append(["Comment", text]); variant = "cell"
+        elif fam == "C":
+            import family_c
+            variant = family_c.xlsx_c(wb, ws, tech, text, rng, C, attack)
         elif tech == "xlsx_hidden_sheet":
             h2 = wb.create_sheet("lookup" if fam == "A" else "calc")
             h2.append(["key", "value"]); h2.append(["note", text]); h2.append(["rate", 1.08])
@@ -380,7 +418,10 @@ def build_xlsx_benign_hidden(tech, text, fam, rng, C):
     import openpyxl, datetime
     wb = openpyxl.Workbook(); ws = wb.active; ws.title = "Summary"
     for r in C.SHEET_ROWS: ws.append(list(r))
-    if tech == "xlsx_hidden_sheet":
+    if fam == "C":   # same mechanisms as the attack variants, holding the helper text
+        import family_c
+        variant = family_c.xlsx_c(wb, ws, tech, text, rng, C, False)
+    elif tech == "xlsx_hidden_sheet":
         h2 = wb.create_sheet(text); h2.append(["code", "rate"]); h2.append(["EUR", 0.92]); h2.append(["GBP", 0.79]); h2.append(["SEK", 10.6])
         h2.sheet_state = "hidden" if fam == "A" else "veryHidden"; variant = h2.sheet_state
     else:
@@ -408,6 +449,9 @@ def build_pptx(tech, text, fam, rng, C, attack):
     for p in pts[1:4]: tf.add_paragraph().text = p
     variant = "none"
     if tech == "visible" and attack: tf.add_paragraph().text = text; variant = "bullet"
+    elif tech == "pptx_speaker_notes" and fam == "C":
+        import family_c
+        variant = family_c.pptx_c(prs, s1, s2, tech, text, rng, C, attack, topic)
     elif tech == "pptx_speaker_notes":
         target = s2 if fam == "A" else s1
         normal = rng.choice(C.BENIGN["pptx_speaker_notes"])
@@ -420,14 +464,17 @@ def build_pptx(tech, text, fam, rng, C, attack):
 def build_png(tech, text, fam, rng, C, attack):
     from PIL import Image, ImageDraw
     from PIL.PngImagePlugin import PngInfo
-    im = Image.new("RGB", (320, 200), (240, 236, 228) if fam == "B" else (250, 250, 250))
+    im = Image.new("RGB", (320, 200), (240, 236, 228) if fam == "B" else (238, 244, 236) if fam == "C" else (250, 250, 250))
     d = ImageDraw.Draw(im)
     vals = [rng.randint(30, 170) for _ in range(6)]
     for i, v in enumerate(vals):
         d.rectangle([20 + i * 48, 190 - v, 56 + i * 48, 190], fill=(60 + i * 25, 110, 160))
     meta = PngInfo()
     meta.add_text("Software", "HIB chart renderer")
-    if fam == "A": meta.add_text("Description", text); variant = "tEXt_Description"
+    if fam == "C":
+        import family_c
+        variant = family_c.png_meta_c(meta, text, rng)
+    elif fam == "A": meta.add_text("Description", text); variant = "tEXt_Description"
     else: meta.add_itxt("Comment", text, lang="en"); variant = "iTXt_Comment"
     buf = io.BytesIO(); im.save(buf, "PNG", pnginfo=meta)
     return buf.getvalue(), variant
@@ -437,6 +484,12 @@ def build_mcp(tech, text, fam, rng, C, attack):
     pick = rng.sample(C.MCP_TOOLS, 3)
     target = rng.randrange(3)
     variant = "none"
+    if fam == "C":
+        import family_c
+        lead = (rng.choice(C.BENIGN["unicode_tags"]) + " ") if tech == "unicode_tags" and attack else ""
+        spec = [(n, d, {k: {"type": "string", "description": v} for k, v in p.items()}) for n, d, p in pick]
+        tools, variant = family_c.mcp_c(spec, tech, text, rng, lead, attack, target)
+        return json.dumps({"server": {"name": f"hib-fixture-{rng.randrange(10**4):04d}", "version": "1.0.0"}, "tools": tools}, ensure_ascii=False, indent=1).encode("utf-8"), variant
     for i, (name, desc, params) in enumerate(pick):
         props = {k: {"type": "string", "description": v} for k, v in params.items()}
         d = desc
@@ -466,8 +519,10 @@ def main():
     fam = cfg["family"]
     if fam == "A":
         import content_public as C, layouts_public as L
-    else:
+    elif fam == "B":
         import content_heldout as C, layouts_heldout as L
+    else:
+        import content_heldout_v2 as C, layouts_heldout_v2 as L
     pools = load_payloads(a.split)
     outdir = os.path.join(a.out, a.split)
     os.makedirs(outdir, exist_ok=True)
@@ -479,7 +534,7 @@ def main():
                 rng = random.Random(f"{seed}|{carrier}|{tech}|{label}|{j}")
                 attack = label == "attack"
                 n += 1
-                iid = f"{a.split[0]}{n:05d}"
+                iid = f"{ID_PREFIX[a.split]}{n:05d}"
                 if attack:
                     src, payload = pick_payload(rng, pools)
                     text = payload

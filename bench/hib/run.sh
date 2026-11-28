@@ -5,7 +5,7 @@
 set -euo pipefail
 cd "$(dirname "$0")/../.."
 export INGRESS_REPO="$PWD"
-for split in public heldout; do
+for split in ${HIB_SPLITS:-public heldout heldout-v2}; do
   python3 bench/hib/gen/generate.py --split "$split"
   node bench/hib/score/validate.mjs --split "$split"           # needs playwright's Chromium; skip if unavailable
   node bench/hib/score/ingress.mjs --split "$split"

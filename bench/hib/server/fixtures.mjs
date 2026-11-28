@@ -24,6 +24,8 @@ const BROWSER = /^Mozilla\/5\.0 \([^)]*\) .*(Chrome|Firefox|Safari)\/[\d.]+/;
 const CLOAK_RULES = {
   ai_ua_tokens: (ua) => AI_TOKENS.test(ua),                        // agent copy for known AI user agents
   non_browser_ua: (ua) => AI_TOKENS.test(ua) || !BROWSER.test(ua), // agent copy for anything that is not a mainstream browser
+  // held-out-v2 (family C): known AI tokens, headless browsers and HTTP libraries / command-line clients
+  automation_ua: (ua) => AI_TOKENS.test(ua) || /HeadlessChrome|PhantomJS|python-requests|python-urllib|aiohttp|httpx|curl\/|Wget|node-fetch|undici|axios|Go-http-client|okhttp|libwww-perl|Scrapy/i.test(ua) || ua === "",
 };
 
 const manifests = new Map();
@@ -77,7 +79,7 @@ function handle(req, res) {
   let file = r.file;
   if (r.agent_file) {
     const ua = req.headers["user-agent"] ?? "";
-    const agent = CLOAK_RULES[r.cloak_rule](ua);
+    const agent = CLOAK_RULES[r.cloak_rule.split("/")[0]](ua);
     if (agent) file = r.agent_file;
     (served[r.id] ??= { agent: 0, human: 0 })[agent ? "agent" : "human"]++;
   }
