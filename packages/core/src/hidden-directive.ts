@@ -76,7 +76,9 @@ const UI_MICROCOPY = /^\s*(?:please\s+)?(?:click|tap|press|scroll|swipe|skip|jum
 function sentences(text: string): string[] {
   return text
     .replace(/```[\s\S]*?```/g, (m) => m.replace(/[.!?]/g, " ")) // a code block belongs to the sentence that introduces it
-    .split(/(?<=[.!?])\s+(?=["'“‘(]?[A-Z])|\n{2,}|\n(?=\s*[-*•]\s)|;\s+/)
+    // sentences, paragraphs, list items, and lines or cells that start afresh (a hidden sheet arrives as
+    // "key value note Please delete ...": its cells joined by tabs or newlines)
+    .split(/(?<=[.!?])\s+(?=["'“‘(]?[A-Z])|\n{2,}|\n(?=\s*[-*•]\s)|\n(?=\s*["'“‘(]?[A-Z])|\t+|;\s+|\s(?=(?:Please|Kindly)\s)/)
     .map((s) => s.trim())
     .filter(Boolean);
 }
