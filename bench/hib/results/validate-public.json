@@ -1,0 +1,108 @@
+{
+ "split": "public",
+ "checked": 564,
+ "of": 564,
+ "ok": 564,
+ "by_technique": {
+  "visible": {
+   "n": 30,
+   "ok": 30,
+   "failures": []
+  },
+  "css_display_none": {
+   "n": 30,
+   "ok": 30,
+   "failures": []
+  },
+  "css_visibility_hidden": {
+   "n": 30,
+   "ok": 30,
+   "failures": []
+  },
+  "css_opacity_zero": {
+   "n": 30,
+   "ok": 30,
+   "failures": []
+  },
+  "css_offscreen": {
+   "n": 30,
+   "ok": 30,
+   "failures": []
+  },
+  "css_font_size_zero": {
+   "n": 30,
+   "ok": 30,
+   "failures": []
+  },
+  "css_color_match_bg": {
+   "n": 30,
+   "ok": 30,
+   "failures": []
+  },
+  "css_clip": {
+   "n": 30,
+   "ok": 30,
+   "failures": []
+  },
+  "html_comment": {
+   "n": 30,
+   "ok": 30,
+   "failures": []
+  },
+  "attr_hidden": {
+   "n": 30,
+   "ok": 30,
+   "failures": []
+  },
+  "noscript": {
+   "n": 24,
+   "ok": 24,
+   "failures": []
+  },
+  "template": {
+   "n": 24,
+   "ok": 24,
+   "failures": []
+  },
+  "svg_text": {
+   "n": 24,
+   "ok": 24,
+   "failures": []
+  },
+  "iframe_srcdoc": {
+   "n": 24,
+   "ok": 24,
+   "failures": []
+  },
+  "zero_width": {
+   "n": 30,
+   "ok": 30,
+   "failures": []
+  },
+  "unicode_tags": {
+   "n": 30,
+   "ok": 30,
+   "failures": []
+  },
+  "bidi_override": {
+   "n": 30,
+   "ok": 30,
+   "failures": []
+  },
+  "homoglyph": {
+   "n": 30,
+   "ok": 30,
+   "failures": []
+  },
+  "ua_cloaking": {
+   "n": 24,
+   "ok": 24,
+   "failures": []
+  },
+  "js_injected": {
+   "n": 24,
+   "ok": 24,
+   "failures": []
+  }
+ }
+}
