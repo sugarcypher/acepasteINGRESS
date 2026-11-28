@@ -55,6 +55,9 @@ function inPage(probe) {
     for (const n of found) {
       const el = n.parentElement;
       let ok = true, why = "";
+      // not rendered at all: content-visibility:hidden on an ancestor, or SVG parts that never paint (held-out-v2)
+      if (el.checkVisibility && !el.checkVisibility({ contentVisibilityAuto: true })) { ok = false; why = "not-rendered"; }
+      if (ok && el.closest && el.closest("defs, metadata, svg title, svg desc")) { ok = false; why = "svg-non-rendering"; }
       for (let e = el; e && ok; e = e.parentElement) {
         const cs = win.getComputedStyle(e);
         if (cs.display === "none") { ok = false; why = "display"; }
