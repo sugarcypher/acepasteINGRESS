@@ -69,6 +69,8 @@ export type PassName =
   | "meaning"
   | "cloaking"
   | "sandbox"
+  // a render made only to read text that inline scripts insert after load (engine.ts); adds no sandbox evidence
+  | "sandbox-insertion"
   | "code"
   // structure of the channel itself: a control code that acts on the person's machine, two parts of one
   // message that disagree, a sender who is not who the content says

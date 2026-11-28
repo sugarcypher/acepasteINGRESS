@@ -16,7 +16,7 @@ import { acquire, acquireWithBrowser, AcquireError, HONEST_USER_AGENT, type Fetc
 import { analyzeHtml, rulesFromCss, colorRulesFromCss, type HiddenRule, type ColorRule } from "./visibility.js";
 import { scanCharacters } from "./character.js";
 import { countHostileInvisibles } from "./acepaste-alphabet.js";
-import { analyzeScripts } from "./script.js";
+import { analyzeScripts, insertsTextAfterLoad } from "./script.js";
 import { scanMeaning, neutralizeMeaning } from "./meaning.js";
 import { scanSupplyChain } from "./supplychain.js";
 import { scanCode } from "./codepass.js";
@@ -626,7 +626,38 @@ export class IngressEngine {
     }
 
     // sandbox
-    if (a.kind === "html" && (this.config.sandbox === "always" || (this.config.sandbox === "escalate" && maxSuspicion >= this.config.sandboxEscalateAt))) {
+    // Escalation at static suspicion, as before; and, since HIB v1, also when an inline script puts words into the
+    // page after load (a cheap static test, insertsTextAfterLoad), which suspicion alone never reached. A render
+    // made only for that second reason reads the inserted text and nothing else, so pages whose scripts merely
+    // fill in a widget do not pick up the sandbox's other evidence (blocked beacons, computed-hidden menus).
+    const escalated = this.config.sandbox === "always" || (this.config.sandbox === "escalate" && maxSuspicion >= this.config.sandboxEscalateAt);
+    const insertion = a.kind === "html" && !escalated && this.config.sandbox === "escalate" && scripts.length ? insertsTextAfterLoad(scripts) : { inserts: false, decoded: false };
+    if (a.kind === "html" && insertion.inserts) {
+      const tsb = performance.now();
+      try {
+        const sb = await this.deps.sandboxImpl({
+          html: a.raw, url: a.finalUrl.startsWith("inline:") ? "https://inline.ingress.invalid/" : a.finalUrl,
+          staticVisibleText: visibleText, timeoutMs: this.config.sandboxTimeoutMs,
+        });
+        if (sb.ran && sb.segments) {
+          passesRun.push("sandbox-insertion");
+          // what the render shows that the static page does not: delivered as page text, and when a decoder made
+          // it (base64, char codes, a reversed string) also read as concealed text, since its author hid it from
+          // anyone reading the source
+          const staticWords = new Set(cleanedSegments.map((x) => x.text).join(" ").toLowerCase().split(/\W+/).filter(Boolean));
+          const added = sb.segments.filter((x) => { const w = x.text.toLowerCase().split(/\W+/).filter((y) => y.length > 2); return w.length >= 3 && w.filter((y) => !staticWords.has(y)).length / w.length >= 0.5; });
+          for (const x of added) {
+            const text = scanCharacters(x.text).cleaned;
+            cleanedSegments.push({ ...x, text, path: `sandbox/inserted:${x.path}` });
+            if (insertion.decoded && x.visibility === "visible") cleanedSegments.push({ text, visibility: "concealed", path: `sandbox/decoded-insert:${x.path}` });
+          }
+        }
+      } catch (e) {
+        findings.push({ pass: "sandbox", kind: "sandbox.blocked_egress_attempt", confidence: 0, severity: 0, message: `insertion render failed: ${(e as Error).message}`, action: "none" });
+      }
+      timings.sandbox = performance.now() - tsb;
+    }
+    if (a.kind === "html" && escalated) {
       const tsb = performance.now();
       try {
         const sb = await this.deps.sandboxImpl({

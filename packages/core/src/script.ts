@@ -181,3 +181,24 @@ export function analyzeScripts(units: ScriptUnit[]): ScriptResult {
   }
   return { findings, maxSuspicion };
 }
+
+/**
+ * Cheap test, no execution: does an inline script put text into the page after load? (HIB v1: text a script inserts
+ * was never read, because the sandbox escalated only at static suspicion >= 0.5 and these scripts look ordinary.)
+ * True when one inline script has both a DOM text sink and a source of words: a decoder (atob, fromCharCode,
+ * fromCodePoint, decodeURIComponent, unescape, TextDecoder, a reversed string) or a string literal of six or more
+ * words. `decoded` says the words came through a decoder: an honest page has no reason to encode its own prose.
+ * External scripts are not fetched here; their insertions are left to the sandbox's other triggers.
+ */
+const INSERT_SINK = /\.(?:textContent|innerText|innerHTML|outerHTML)\s*\+?=(?!=)|\.(?:insertAdjacentHTML|insertAdjacentText|append|prepend|appendChild|replaceChildren|replaceWith)\s*\(|\bdocument\.write(?:ln)?\s*\(|\bcreateTextNode\s*\(/;
+const DECODER = /\b(?:atob|fromCharCode|fromCodePoint|decodeURIComponent|unescape|TextDecoder)\b|\.reverse\(\)\s*\.join\(/;
+const PROSE_LITERAL = /(["'`])(?:(?!\1)[^\\\n]|\\.){0,300}?\b[A-Za-z][a-z']{1,20}(?:[ ,]+[A-Za-z][a-z'’]{0,20}){5,}/;
+export function insertsTextAfterLoad(units: ReadonlyArray<ScriptUnit>): { inserts: boolean; decoded: boolean } {
+  let inserts = false, decoded = false;
+  for (const u of units) {
+    if (!u.inline || !u.source || u.source.length > 200_000 || !INSERT_SINK.test(u.source)) continue;
+    const dec = DECODER.test(u.source);
+    if (dec || PROSE_LITERAL.test(u.source)) { inserts = true; decoded = decoded || dec; }
+  }
+  return { inserts, decoded };
+}
