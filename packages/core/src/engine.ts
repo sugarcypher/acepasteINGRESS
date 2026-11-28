@@ -16,8 +16,9 @@ import { acquire, acquireWithBrowser, AcquireError, HONEST_USER_AGENT, type Fetc
 import { analyzeHtml, rulesFromCss, colorRulesFromCss, type HiddenRule, type ColorRule } from "./visibility.js";
 import { scanCharacters } from "./character.js";
 import { countHostileInvisibles } from "./acepaste-alphabet.js";
-import { analyzeScripts } from "./script.js";
+import { analyzeScripts, insertsTextAfterLoad } from "./script.js";
 import { scanMeaning, neutralizeMeaning } from "./meaning.js";
+import { readHiddenDirective } from "./hidden-directive.js";
 import { scanSupplyChain } from "./supplychain.js";
 import { scanCode } from "./codepass.js";
 import { scanSecrets, redactSecrets, collectSecrets, scrubExcerpt } from "./secrets.js";
@@ -597,6 +598,29 @@ export class IngressEngine {
           });
         }
       }
+      // What only the AI fetcher was told, judged on its own (HIB v1: a passage slipped into the agent's copy was
+      // too small for the bands above and was then read as ordinary visible text, 21% caught). Any passage of
+      // four or more words the browser never got is read the way hidden text is: no person sees it. A directive
+      // in it raises the verdict (hostile when strongly instruction-like); prose, ads, dates and counters that
+      // differ between two fetches do not.
+      // Only for the slipped-in passage: a wholly different page for AI fetchers (a lite layout, a bot page) is
+      // judged by the bands above, as before; read as hidden text, a whole page always says something.
+      if (compared && cmp.agentOnlyShare <= 0.4) {
+        const onlyAgent = passagesOnlyIn(visibleText, humanText, 3).filter((p) => servedWords(p).length >= 4 && !trivialDifference(p));
+        if (onlyAgent.length) {
+          const reading = [...onlyAgent, onlyAgent.join(" ")].map((p) => readHiddenDirective(p)).reduce((x, y) => (y.score > x.score ? y : x));
+          const shapes = reading.score >= 0.45 ? [] : this.agentOnlyShape(visibleText, humanText);
+          if (reading.score >= 0.75 || reading.score >= 0.45 || shapes.length) {
+            const strong = reading.score >= 0.75;
+            findings.push({
+              pass: "cloaking", kind: "cloaking.agent_targeted_divergence",
+              confidence: strong ? 0.92 : 0.62, severity: strong ? 0.95 : 0.85,
+              message: `text served only to the AI fetcher, absent from the browser's copy, reads as ${strong ? "an instruction to the model" : "instruction-like"} (${reading.score >= 0.45 ? reading.reasons.join("; ") : shapes.join(", ")})`,
+              excerpt: `agent-only: ${(reading.excerpt || onlyAgent[0]).slice(0, 160)}`, action: "none",
+            });
+          }
+        }
+      }
       timings.cloaking = performance.now() - tc;
       // without a browser copy the comparison answered nothing: page scripts that predict cloaking still count
       if (compared) passesRun.push("cloaking");
@@ -626,7 +650,38 @@ export class IngressEngine {
     }
 
     // sandbox
-    if (a.kind === "html" && (this.config.sandbox === "always" || (this.config.sandbox === "escalate" && maxSuspicion >= this.config.sandboxEscalateAt))) {
+    // Escalation at static suspicion, as before; and, since HIB v1, also when an inline script puts words into the
+    // page after load (a cheap static test, insertsTextAfterLoad), which suspicion alone never reached. A render
+    // made only for that second reason reads the inserted text and nothing else, so pages whose scripts merely
+    // fill in a widget do not pick up the sandbox's other evidence (blocked beacons, computed-hidden menus).
+    const escalated = this.config.sandbox === "always" || (this.config.sandbox === "escalate" && maxSuspicion >= this.config.sandboxEscalateAt);
+    const insertion = a.kind === "html" && !escalated && this.config.sandbox === "escalate" && scripts.length ? insertsTextAfterLoad(scripts) : { inserts: false, decoded: false };
+    if (a.kind === "html" && insertion.inserts) {
+      const tsb = performance.now();
+      try {
+        const sb = await this.deps.sandboxImpl({
+          html: a.raw, url: a.finalUrl.startsWith("inline:") ? "https://inline.ingress.invalid/" : a.finalUrl,
+          staticVisibleText: visibleText, timeoutMs: this.config.sandboxTimeoutMs,
+        });
+        if (sb.ran && sb.segments) {
+          passesRun.push("sandbox-insertion");
+          // what the render shows that the static page does not: delivered as page text, and when a decoder made
+          // it (base64, char codes, a reversed string) also read as concealed text, since its author hid it from
+          // anyone reading the source
+          const staticWords = new Set(cleanedSegments.map((x) => x.text).join(" ").toLowerCase().split(/\W+/).filter(Boolean));
+          const added = sb.segments.filter((x) => { const w = x.text.toLowerCase().split(/\W+/).filter((y) => y.length > 2); return w.length >= 3 && w.filter((y) => !staticWords.has(y)).length / w.length >= 0.5; });
+          for (const x of added) {
+            const text = scanCharacters(x.text).cleaned;
+            cleanedSegments.push({ ...x, text, path: `sandbox/inserted:${x.path}` });
+            if (insertion.decoded && x.visibility === "visible") cleanedSegments.push({ text, visibility: "concealed", path: `sandbox/decoded-insert:${x.path}` });
+          }
+        }
+      } catch (e) {
+        findings.push({ pass: "sandbox", kind: "sandbox.blocked_egress_attempt", confidence: 0, severity: 0, message: `insertion render failed: ${(e as Error).message}`, action: "none" });
+      }
+      timings.sandbox = performance.now() - tsb;
+    }
+    if (a.kind === "html" && escalated) {
       const tsb = performance.now();
       try {
         const sb = await this.deps.sandboxImpl({
@@ -778,7 +833,7 @@ export class IngressEngine {
     const found = [
       ...scanMeaning({ kind: "text", segments: probe, decodedPayloads: [] }),
       ...(this.config.classifier ? scanClassifier({ visible: "", segments: probe, kind: "text" }) : []),
-    ].filter((f) => f.confidence * f.severity >= 0.25);
+    ].filter((f) => f.confidence * f.severity >= 0.25 && f.kind !== "meaning.hidden_directive"); // the passage check reads directives
     return [...new Set(found.map((f) => f.kind))];
   }
 
@@ -1001,6 +1056,13 @@ export function aggregate(findings: Finding[], ctx: { cloakingCompared?: boolean
 }
 
 export { servedWords, compareServed };
+
+/** a difference between two fetches that says nothing: a time, a date, a counter, an id, an ad label */
+function trivialDifference(passage: string): boolean {
+  const words = passage.split(/\s+/).filter(Boolean);
+  const dull = words.filter((w) => /^[\d.,:/%+-]+\w{0,2}$|^[0-9a-f]{6,}$|^(?:am|pm|ago|just|now|seconds?|minutes?|hours?|days?|weeks?|today|yesterday|updated|posted|edited|views?|likes?|comments?|ad|ads|sponsored|advertisement|promoted|jan|feb|mar|apr|may|jun|jul|aug|sep|sept|oct|nov|dec|mon|tue|wed|thu|fri|sat|sun)\.?,?$/i.test(w)).length;
+  return dull / words.length >= 0.5;
+}
 
 /**
  * Spotlighting-style envelope. Random boundary so content cannot forge the

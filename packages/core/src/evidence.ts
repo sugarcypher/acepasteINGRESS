@@ -53,6 +53,7 @@ const ALTERNATIVES: Array<[string, string]> = [
   ["sandbox.webdriver_keyed_divergence", "sites that show bots a simplified page or a consent wall without hostile intent"],
   ["sandbox.computed_hidden_text", "menus, modals and responsive layouts that hide content until a user acts"],
   ["sandbox.blocked_egress_attempt", "third-party fonts, analytics or content-delivery requests the sandbox does not allow"],
+  ["meaning.hidden_directive", "a request or note meant for people that the page hides until it is opened (a collapsed panel, a template), or presenter notes"],
   ["meaning.instruction_shaped", "articles, tutorials and security research that quote instructions, or content addressed to human readers"],
   ["meaning.role_token", "documentation of chat templates, or transcripts"],
   ["meaning.system_prompt_imitation", "documentation describing system prompts"],

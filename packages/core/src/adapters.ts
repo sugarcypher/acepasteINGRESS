@@ -103,6 +103,8 @@ export function adaptMarkdown(raw: string): AdapterResult {
   // inline link/image titles and urls
   text = text.replace(/!?\[([^\]]*)\]\(([^)\s]+)(?:\s+["']([^"']*)["'])?\)/g, (m, label: string, url: string, title?: string) => {
     if (title?.trim()) segments.push({ text: title, visibility: "attribute", path: "md/link@title" });
+    // an image's alt text does not render where the image does: read it as the alt attribute it becomes
+    if (m.startsWith("!") && label.trim().split(/\s+/).length >= 4) segments.push({ text: label, visibility: "attribute", path: "md/image@alt" });
     // keep the construct for the meaning pass (markdown image exfil) by leaving it in visible text
     return m;
   });

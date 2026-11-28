@@ -7,9 +7,9 @@
 
 import type { NetPolicy } from "./netpolicy.js";
 
-export const ENGINE_VERSION = "0.10.0";
+export const ENGINE_VERSION = "0.11.0";
 /** bump whenever a detector's behavior changes; receipts carry it so verdicts are reproducible */
-export const RULESET_VERSION = "2026.11.21-3";
+export const RULESET_VERSION = "2026.11.28-1";
 
 /**
  * clean: delivered. suspect: refused, overridable. hostile: refused, not overridable.
@@ -69,6 +69,8 @@ export type PassName =
   | "meaning"
   | "cloaking"
   | "sandbox"
+  // a render made only to read text that inline scripts insert after load (engine.ts); adds no sandbox evidence
+  | "sandbox-insertion"
   | "code"
   // structure of the channel itself: a control code that acts on the person's machine, two parts of one
   // message that disagree, a sender who is not who the content says
@@ -193,6 +195,7 @@ export type FindingKind =
   | "sandbox.blocked_egress_attempt"
   // meaning pass
   | "meaning.instruction_shaped"
+  | "meaning.hidden_directive"
   | "meaning.role_token"
   | "meaning.system_prompt_imitation"
   | "meaning.tool_call_shaped"

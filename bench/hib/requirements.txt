@@ -1,0 +1,8 @@
+# exact versions used for the published results (byte-identical carriers depend on them)
+reportlab==5.1.2
+python-docx==1.2.0
+openpyxl==3.1.5
+python-pptx==1.0.2
+pillow==13.0.0
+beautifulsoup4==4.13.4
+pypdf==5.4.0

@@ -20,6 +20,7 @@
  * Evidence is cut short, credentials are redacted (secrets.ts) and invisible characters are shown as
  * ⟨U+XXXX⟩ so the report itself cannot reorder your terminal.
  */
+import { isRgiSubdivisionFlag } from "./flags.js";
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { lstatSync, readFileSync, readdirSync, realpathSync } from "node:fs";
@@ -285,6 +286,8 @@ export function findInvisibleUnicode(text: string): UnicodeHit[] {
     for (let i = 0; i < cps.length; i++) {
       const c = cps[i];
       const cp = c.codePointAt(0)!;
+      // the England, Scotland and Wales flags are written with tag characters: those exact sequences only (flags.ts)
+      if (cp === 0x1f3f4 && isRgiSubdivisionFlag(cps.slice(i, i + 7).join(""))) { flushTags(); flushVs(); i += 6; continue; }
       if (cp >= 0xe0000 && cp <= 0xe007f) { tagRun.push(i); continue; } else flushTags();
       if ((cp >= 0xfe00 && cp <= 0xfe0f) || (cp >= 0xe0100 && cp <= 0xe01ef)) { vsRun.push(i); continue; } else flushVs();
       SUSPECT_CHAR.lastIndex = 0;

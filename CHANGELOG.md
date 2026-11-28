@@ -5,6 +5,26 @@ Every change bumps the version of all three packages together: the patch for fix
 behavior changes; receipts carry it so verdicts are reproducible. Releases up to 0.9.6 are in the
 [README](README.md#changes-in-096-2026-11-18-ruleset-20261118-3-unchanged).
 
+## 0.11.0 (unreleased; ruleset 2026.11.28-1)
+
+Fixes for the HIB v1 findings. Detector behaviour changed, so the ruleset id moves to **2026.11.28-1**; the package
+version is not bumped. Results: `docs/HIB-RESULTS-fixes.md` (sealed held-out-v2: attacks caught 35.5% → 60.1%,
+false positives 4.8% → 0.0%).
+
+- **RGI subdivision flags no longer flagged.** The three RGI subdivision flag sequences (England, Scotland, Wales:
+  `gbeng`, `gbsct`, `gbwls`) are accepted; every other tag character stays hostile. This was 48 of 49 / 48 of 51
+  false positives on HIB v1.
+- **Stricter reading of hidden directives.** Text no person sees (CSS-hidden, comments, `noscript`, SVG, srcdoc,
+  hidden file parts) is read for directives with its own, stricter threshold.
+- **`<template>` scanned.** Template content is read for hidden instructions; serialized page state parked in
+  `<template>` (large JSON blobs) is skipped.
+- **Render on script-inserted text.** Pages whose inline scripts insert words after load are rendered, not only pages
+  at static suspicion >= 0.5.
+- **Cloaking passage judged.** With user-agent cloaking, the passage only the AI fetcher received is judged as hidden
+  text, and the verdict is raised when it is a directive.
+- **File carriers.** The hidden-text reading reaches every hidden file part (PDF, DOCX, XLSX, PPTX, PNG metadata);
+  markdown image alt text is read as alt text.
+
 ## 0.10.0 (2026-11-27, ruleset unchanged)
 
 - **`ingress mcpscan`: tool-poisoning and rug-pull scanner for the MCP servers your AI apps use.** Reads the
