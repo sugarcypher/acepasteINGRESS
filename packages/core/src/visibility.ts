@@ -415,6 +415,9 @@ export function analyzeHtml(html: string, externalRules: HiddenRule[] = [], exte
     }
     if (defaultTreeAdapter.isTextNode(n)) {
       const text = n.value;
+      // a framework's serialized page state parked in a <template> (a megabyte of JSON on some docs sites) is data,
+      // not hidden prose: skipped, as script bodies are
+      if (path.includes("/template") && text.length > 2000 && /^\s*[[{]/.test(text)) continue;
       if (text.trim()) {
         // colour is judged where the text is: the colour it inherits against the background it sits on
         let visibility = inherited;
