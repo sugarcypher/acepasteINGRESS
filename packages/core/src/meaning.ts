@@ -17,6 +17,7 @@
  * is tracked as an open item, not shipped as Claude-generated translations.
  */
 
+import { readHiddenDirective } from "./hidden-directive.js";
 import { scanMultilingual } from "./multilingual.js";
 import type { Finding, TextSegment } from "./types.js";
 import { variants } from "./normalize.js";
@@ -546,6 +547,20 @@ function scanMeaningInner(input: MeaningInput): Finding[] {
     for (const f of scanMultilingual(visible, false, "visible text")) findings.push(f.excerpt && isQuotedOrAttributed(visible, f.excerpt) ? { ...f, confidence: f.confidence * 0.55 } : f);
   }
   if (codeBlocks.length) scoreText(codeBlocks.join("\n"), false, "visible code block", findings, true);
+  // Text no person sees gets a stricter reading: a directive in it (who it addresses, what it asks for, what it
+  // names) has no human audience, so it is scored even when it matches no attack shape (hidden-directive.ts, after
+  // HIB v1). Image alt text is delivered but not seen, so it is read this way too.
+  // A message's header fields are metadata its software writes ("X-Privacy: If possible, encrypt your reply"), read
+  // by the existing shapes as before but not as hidden prose.
+  for (const s of input.segments) {
+    if (s.visibility === "visible" || /\/header:/.test(s.path)) continue;
+    const d = readHiddenDirective(s.text);
+    if (d.score >= 0.45) findings.push({
+      pass: "meaning", kind: "meaning.hidden_directive", confidence: d.score, severity: d.score >= 0.75 ? 0.95 : 0.6,
+      message: `text a person would not see reads as a directive to the model: ${d.reasons.join("; ")}`,
+      excerpt: d.excerpt, location: s.path, inHidden: true, action: "quarantined",
+    });
+  }
   for (const s of input.segments) {
     if (s.visibility === "visible" || (s.visibility === "attribute" && s.path.endsWith("@alt"))) continue;
     // scripts without spaces between words (Japanese, Chinese) are never "too short" by word count

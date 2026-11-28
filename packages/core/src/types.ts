@@ -193,6 +193,7 @@ export type FindingKind =
   | "sandbox.blocked_egress_attempt"
   // meaning pass
   | "meaning.instruction_shaped"
+  | "meaning.hidden_directive"
   | "meaning.role_token"
   | "meaning.system_prompt_imitation"
   | "meaning.tool_call_shaped"

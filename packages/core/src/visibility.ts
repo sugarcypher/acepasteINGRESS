@@ -519,7 +519,8 @@ export function analyzeHtml(html: string, externalRules: HiddenRule[] = [], exte
       if (vis === "visible") { const h = classHides(attr(el, "class") ?? ""); if (h) { vis = h.vis; a11y = a11y || h.a11y; } }
     }
 
-    const kids = el.childNodes;
+    // <template> content lives in its own fragment, not among the element's children: read it as hidden text
+    const kids = tag === "template" ? ((el as unknown as { content?: { childNodes: typeof el.childNodes } }).content?.childNodes ?? el.childNodes) : el.childNodes;
     for (let i = kids.length - 1; i >= 0; i--) {
       const c = kids[i];
       // the <summary> of a collapsed <details> is visible
