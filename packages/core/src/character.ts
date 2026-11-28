@@ -14,6 +14,7 @@
 import type { Finding } from "./types.js";
 import { decodePayloads } from "./normalize.js";
 import { countHostileInvisibles } from "./acepaste-alphabet.js";
+import { replaceStrayTags, strayTags } from "./flags.js";
 export { countHostileInvisibles } from "./acepaste-alphabet.js";
 
 export interface CharacterResult {
@@ -24,7 +25,6 @@ export interface CharacterResult {
   decodedPayloads: string[];
 }
 
-const TAG_RANGE = /[\u{E0000}-\u{E007F}]/gu;
 // AcePaste basic-plane invisibles minus the code points with dedicated handling below
 // (ZWJ/ZWNJ script-aware, LRM/RLM bidi-mark-aware, bidi overrides, variation selectors).
 const ZERO_WIDTH = /[\u00AD\u034F\u061C\u115F\u1160\u17B4\u17B5\u180E\u200B\u2060-\u206F\u2800\u3164\uFEFF\uFFA0]/g;
@@ -64,8 +64,10 @@ export function scanCharacters(text: string): CharacterResult {
   const lone = cleaned.match(/[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/g);
   if (lone) cleaned = cleaned.replace(/[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/g, "\uFFFD");
 
-  // 1. Unicode tag characters: the flagship vector. Decode what they spell.
-  const tags = [...text.matchAll(TAG_RANGE)];
+  // 1. Unicode tag characters: the flagship vector. Decode what they spell. The three RGI subdivision flags
+  //    (England, Scotland, Wales) are built from tag characters and are left alone, exactly and only those
+  //    sequences (flags.ts); every other tag character, including a payload dressed up as a flag, is hostile.
+  const tags = strayTags(text).map((t) => ({ 0: t.ch, index: t.index }));
   if (tags.length) {
     const spelled = tags
       .map((m) => {
@@ -84,7 +86,7 @@ export function scanCharacters(text: string): CharacterResult {
       action: "neutralized",
     });
     if (spelled.trim()) decodedPayloads.push(spelled);
-    cleaned = cleaned.replace(TAG_RANGE, "");
+    cleaned = replaceStrayTags(cleaned);
   }
 
   // 2. Bidirectional controls. Overrides (LRO/RLO) reorder what a reader sees and are never legitimate in intake.
