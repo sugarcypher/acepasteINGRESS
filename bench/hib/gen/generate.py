@@ -233,6 +233,7 @@ def build_email(tech, text, fam, rng, C, L, attack):
         lead = rng.choice(C.BENIGN["unicode_tags"]) if tech == "unicode_tags" and attack else ""
         snippet, variant, pid = html_snippet(tech, text, fam, rng, L.PAGE_BG, attack, lead=lead)
         snippet = snippet.replace("<p ", "<span ").replace("</p>", "</span>").replace("<div ", "<span ").replace("</div>", "</span>")
+        if variant == "text_indent": snippet = snippet.replace('style="text-indent', 'style="display:inline-block;width:200px;text-indent')  # text-indent needs a block box
         i = rng.randrange(len(blocks)); blocks[i] = blocks[i] + " " + snippet
         if attack and (tech == "visible" or tech in TEXT_TRANSFORMS): plain_extra = transform(tech, text, fam, random.Random(0)) if tech != "visible" else text
         elif not attack and tech in TEXT_TRANSFORMS: plain_extra = text
