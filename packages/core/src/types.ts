@@ -7,7 +7,7 @@
 
 import type { NetPolicy } from "./netpolicy.js";
 
-export const ENGINE_VERSION = "0.10.0";
+export const ENGINE_VERSION = "0.11.0";
 /** bump whenever a detector's behavior changes; receipts carry it so verdicts are reproducible */
 export const RULESET_VERSION = "2026.11.28-1";
 

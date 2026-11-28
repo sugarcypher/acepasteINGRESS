@@ -5,7 +5,7 @@ Every change bumps the version of all three packages together: the patch for fix
 behavior changes; receipts carry it so verdicts are reproducible. Releases up to 0.9.6 are in the
 [README](README.md#changes-in-096-2026-11-18-ruleset-20261118-3-unchanged).
 
-## Unreleased (ruleset 2026.11.28-1; package version stays 0.10.0)
+## 0.11.0 (unreleased; ruleset 2026.11.28-1)
 
 Fixes for the HIB v1 findings. Detector behaviour changed, so the ruleset id moves to **2026.11.28-1**; the package
 version is not bumped. Results: `docs/HIB-RESULTS-fixes.md` (sealed held-out-v2: attacks caught 35.5% → 60.1%,

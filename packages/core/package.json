@@ -1,6 +1,6 @@
 {
   "name": "@acepaste/ingress",
-  "version": "0.10.0",
+  "version": "0.11.0",
   "description": "Stops your AI agent from obeying hidden instructions in web pages, files, repos and MCP tools, and catches data leaks.",
   "type": "module",
   "main": "dist/src/index.js",
